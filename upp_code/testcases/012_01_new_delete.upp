@@ -1,20 +1,22 @@
 
-main :: ()
-	x :=* new int
-	x = 15
-	~assert(x == 15)
-	delete x
-	
-	i := 0
-	while i < 20
-		data :=* new int
-		data = 1
-		delete data
-		i = i + 1
-	
-	// new can also allocate slices with (size)
-	for i := 0; i < 10; i += 1
-		values := new{20} int
-		values[10] = 5
-		~assert(values[10] == 5)
-		delete values
+main :: fn ()
+    // There is no new/delete in the language,
+    // but a system_allocate function exists
+
+    value_count := 12
+    values: []int
+    values.data &= system_allocate(value_count * size_of(int))->cast_pointer(&int)
+    values.size = value_count
+
+    // Accessing the values is also possible
+    loop i := 0; i < values.size; i += 1
+        values[i] = i
+
+    sum := 0
+    loop value in values
+        sum += value
+    assert(sum == 66)
+
+    // System free should also work
+    system_free(values.data->cast_pointer(rawptr))
+

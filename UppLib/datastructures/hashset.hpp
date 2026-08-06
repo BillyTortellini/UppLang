@@ -19,7 +19,7 @@ void hashset_iterator_next(Hashset_Iterator<T>* iterator);
 
 
 
-const float HASHSET_RESIZE_PERCENTAGE = 0.8f;
+const float HASHSET_RESIZE_PERCENTAGE = 0.7f;
 
 int primes_find_next_suitable_for_set_size(int capacity);
 
@@ -216,7 +216,7 @@ template <typename T>
 bool hashset_insert_element(Hashset<T>* set, T value)
 {
     if ((float)(set->element_count + 1) / set->entries.size > HASHSET_RESIZE_PERCENTAGE) {
-        hashset_reserve(set, set->element_count + 1);
+        hashset_reserve(set, (int)((set->element_count + 1) / HASHSET_RESIZE_PERCENTAGE));
     }
 
     u64 hash = set->hash_function(&value);

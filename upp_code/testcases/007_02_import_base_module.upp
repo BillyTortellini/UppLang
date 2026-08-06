@@ -1,0 +1,7 @@
+
+// More built-in functions are available in the upp-module
+main :: fn ()
+    value := ~bitshift_left(1, 2)
+    assert(value == 4)
+
+

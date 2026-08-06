@@ -1,0 +1,2 @@
+b_return_100 :: fn () => int
+    return 100

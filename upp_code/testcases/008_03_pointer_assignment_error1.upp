@@ -1,0 +1,12 @@
+main :: fn ()
+    i := 0
+    pointer :&= i
+
+    // It's not possible to write to a pointer without dereference
+    pointer = 10
+    // This is done to avoid confusion between 
+    // overwriting the pointed to value, e.g. 
+    //      pointer-* = other
+    // and changing the pointer itself
+    //      pointer &= other-&
+

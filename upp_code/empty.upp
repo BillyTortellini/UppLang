@@ -1,28 +1,6 @@
-import ~usize
+adder :: fn (a: int, b: int) => int
+    return a + b
 
-Pair :: struct ($T)
-    values: [2]T
-
-Iterator :: struct ($T)
-    pair: *Pair(T)
-    index: usize
-
-make_iterator :: fn (pair: *Pair($T)) => Iterator(T)
-    return .(pair, 0)
-
-next :: fn (iterator: *Iterator($T)) => *T
-    if iterator.index >= iterator.pair.values.size
-        return nil
-    iterator.index += 1
-    return iterator.pair.values[iterator.index - 1]
-
-operators add_iterator(Pair(_), make_iterator, next, true)
-
-main :: fn
-    pair := Pair(int).(values = .[1, 2])
-    loop i in pair
-        ~print_i32(i)
-        ~print_line()
-
-
-
+main :: fn ()
+    foo: bool = 15
+    foo = adder(1, 3, 4, 5, 6)

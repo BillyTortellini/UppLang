@@ -49,10 +49,21 @@ Constant_Pool* constant_pool_create(Compilation_Data* compilation_data)
         predef.empty_string = result->add_string_assume_valid(string_create_static(""));
         predef.i32_zero = result->add_i32(0);
         predef.i32_one = result->add_i32(1);
-        predef.usize_zero = result->add_usize(0);
-        predef.usize_one = result->add_usize(1);
+        predef.u64_zero = result->add_u64(0);
+        predef.u64_one = result->add_u64(1);
+        predef.i64_zero = result->add_i64(0);
+        predef.i64_one = result->add_i64(1);
         predef.u32_zero = result->add_u32(0);
         predef.u32_one = result->add_u32(1);
+
+        predef.uint_zero = predef.u64_zero;
+        predef.uint_one = predef.u64_one;
+        predef.int_zero = predef.i64_zero;
+        predef.int_one = predef.i64_one;
+
+        // Currently upp_size is i64, so this should be fine (although this being hardcoded sucks)
+        predef.upp_size_zero = result->add_upp_size(0);
+        predef.upp_size_one = result->add_upp_size(1);
 
         void* ptr = nullptr;
         Constant_Pool_Result add_result = constant_pool_add_constant(
@@ -166,7 +177,7 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(
     {
     case Datatype_Type::PATTERN_VARIABLE:
     case Datatype_Type::UNKNOWN_TYPE: {
-        panic("Shouldn't happen");
+        *memory = 0; // Both are 1 byte long
         return;
     }
     case Datatype_Type::ENUM: return;
@@ -225,8 +236,6 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(
             return;
         }
         case Builtin_Type::C_CHAR:
-        case Builtin_Type::USIZE:
-        case Builtin_Type::ISIZE:
         case Builtin_Type::CODE_POINT:
             return;
         default: panic("");
@@ -357,54 +366,48 @@ Constant_Pool_Result constant_pool_add_constant(Constant_Pool* constant_pool, Da
     return constant_pool_result_make_success(constant);
 }
 
-Upp_Constant Constant_Pool::add_i32(i32 value)
-{
-    auto& types = this->compilation_data->type_system->predefined_types;
+Upp_Constant add_valid_primitive(Constant_Pool* pool, void* value_ptr, Datatype* datatype) {
+    assert(datatype->memory_info.value.size != 0, "");
     Constant_Pool_Result result = constant_pool_add_constant(
-        this, upcast(types.i32_type), array_create_static_as_bytes<i32>(&value, 1)
+        pool, datatype, array_create_static<byte>((byte*)value_ptr, datatype->memory_info.value.size)
     );
     assert(result.success, "");
     return result.options.constant;
 }
 
-Upp_Constant Constant_Pool::add_i64(i64 value)
-{
-    auto& types = this->compilation_data->type_system->predefined_types;
-    Constant_Pool_Result result = constant_pool_add_constant(
-        this, upcast(types.i64_type), array_create_static_as_bytes<i64>(&value, 1)
-    );
-    assert(result.success, "");
-    return result.options.constant;
+Upp_Constant Constant_Pool::add_i8(i8 value) {
+    return add_valid_primitive(this, &value, upcast(this->compilation_data->type_system->predefined_types.i8_type));
+}
+Upp_Constant Constant_Pool::add_i16(i16 value) {
+    return add_valid_primitive(this, &value, upcast(this->compilation_data->type_system->predefined_types.i16_type));
+}
+Upp_Constant Constant_Pool::add_i32(i32 value) {
+    return add_valid_primitive(this, &value, upcast(this->compilation_data->type_system->predefined_types.i32_type));
+}
+Upp_Constant Constant_Pool::add_i64(i64 value) {
+    return add_valid_primitive(this, &value, upcast(this->compilation_data->type_system->predefined_types.i64_type));
+}
+Upp_Constant Constant_Pool::add_u8(u8 value) {
+    return add_valid_primitive(this, &value, upcast(this->compilation_data->type_system->predefined_types.u8_type));
+}
+Upp_Constant Constant_Pool::add_u16(u16 value) {
+    return add_valid_primitive(this, &value, upcast(this->compilation_data->type_system->predefined_types.u16_type));
+}
+Upp_Constant Constant_Pool::add_u32(u32 value) {
+    return add_valid_primitive(this, &value, upcast(this->compilation_data->type_system->predefined_types.u32_type));
+}
+Upp_Constant Constant_Pool::add_u64(u64 value) {
+    return add_valid_primitive(this, &value, upcast(this->compilation_data->type_system->predefined_types.u64_type));
 }
 
-Upp_Constant Constant_Pool::add_u32(u32 value)
-{
-    auto& types = this->compilation_data->type_system->predefined_types;
-    Constant_Pool_Result result = constant_pool_add_constant(
-        this, upcast(types.u32_type), array_create_static_as_bytes<u32>(&value, 1)
-    );
-    assert(result.success, "");
-    return result.options.constant;
+Upp_Constant Constant_Pool::add_int(upp_size value) {
+    return add_valid_primitive(this, &value, upcast(this->compilation_data->type_system->predefined_types.int_type));
 }
-
-Upp_Constant Constant_Pool::add_u64(u64 value)
-{
-    auto& types = this->compilation_data->type_system->predefined_types;
-    Constant_Pool_Result result = constant_pool_add_constant(
-        this, upcast(types.u64_type), array_create_static_as_bytes<u64>(&value, 1)
-    );
-    assert(result.success, "");
-    return result.options.constant;
+Upp_Constant Constant_Pool::add_uint(uint value) {
+    return add_valid_primitive(this, &value, upcast(this->compilation_data->type_system->predefined_types.uint_type));
 }
-
-Upp_Constant Constant_Pool::add_usize(usize value)
-{
-    auto& types = this->compilation_data->type_system->predefined_types;
-    Constant_Pool_Result result = constant_pool_add_constant(
-        this, upcast(types.usize), array_create_static_as_bytes<usize>(&value, 1)
-    );
-    assert(result.success, "");
-    return result.options.constant;
+Upp_Constant Constant_Pool::add_upp_size(upp_size value) {
+    return this->add_int(value);
 }
 
 Upp_Constant Constant_Pool::add_f32(f32 value)
@@ -452,9 +455,11 @@ Upp_Constant Constant_Pool::add_bool(bool value)
 
 Upp_Constant Constant_Pool::add_enum_value_assume_valid(Datatype_Enum* enum_type, int value)
 {
-    assert(enum_type->base.memory_info.value.size == 4, "");
+    assert(enum_type->base.memory_info.value.size == DEFAULT_ENUM_SIZE, "");
+    assert(DEFAULT_ENUM_SIZE == 8, "Should be i64 currently");
+    i64 i64_value = (i64)value;
     Constant_Pool_Result result = constant_pool_add_constant(
-        this, upcast(enum_type), array_create_static_as_bytes<int>(&value, 1)
+        this, upcast(enum_type), array_create_static_as_bytes<i64>(&i64_value, 1)
     );
     assert(result.success, "");
     return result.options.constant;

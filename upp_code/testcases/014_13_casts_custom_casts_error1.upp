@@ -1,7 +1,6 @@
+foo :: fn (a: int)
+    z := a * 2
 
-foo::(a:int)
-	z:=a*2
-
-main::()
-	// Signature must have return type
-	context add_cast(foo,.IMPLICIT)
+main :: fn ()
+    // Signature must have correct types (return type missing here)
+    operators add_auto_cast(int, bool, foo)

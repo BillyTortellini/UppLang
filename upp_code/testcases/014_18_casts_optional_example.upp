@@ -1,52 +1,47 @@
-
-import ~Type_Handle
-import ~print_i32
-import ~print_line
 import ~print_string
 
-Optional :: struct ($T: Type_Handle)
-	value: T
-	available: bool
+Optional :: struct ($T)
+    value: T
+    available: bool
 
-optional_make_success :: (value: $T) => Optional(T)
-	return .{value = value, available = true}
+optional_make_success :: fn (value: $T) => Optional(T)
+    return .{value = value, available = true}
 
-optional_make_failure :: () => Optional($T)
-	result: Optional(T)
-	result.available = false
-	return result
+optional_make_failure :: fn () => Optional($T)
+    result: Optional(T)
+    result.available = false
+    return result
 
-invalid_cast_fn :: (value: Optional($T), something: int) => T
-	return value.value
+optional_unwrap :: fn (optional: Optional($T)) => T
+    assert(optional.available)
+    return optional.value
 
-optional_unwrap :: (optional: Optional($T)) => T
-	~assert(optional.available)
-	return optional.value
+optional_is_available :: fn (optional: Optional($T)) => bool
+    return optional.available
 
-optional_is_available :: (optional: Optional($T)) => bool
-	return optional.available
+print_optional_int :: fn (optional: Optional(int))
+    if optional.available
+        ~print_int(optional.value)
+    else
+        print_string("Optional not available")
+    print_string("\n")
 
-print_optional_int :: (optional: Optional(int))
-	if optional.available
-		print_i32(optional.value)
-	else
-		print_string("Optional not available")
-	print_line()
+optional_int_is_even :: fn (value: Optional(int)) => bool
+    if not value.available
+        return false
+    return value.value % 2 == 0
 
-main :: ()
-	val := 15
-	x := optional_make_success(val)
-	y: Optional(int) = optional_make_failure()
-	
-	context add_cast(optional_is_available, .INFERRED)
-	context add_cast(optional_unwrap, .INFERRED)
-	
-	b1: bool = cast x
-	b2: bool = cast y
-	~assert(b1)
-	~assert(!b2)
-	
-	i: int = cast x
-	~assert(i == 15)
-	//i2:int=cast y
+main :: fn ()
+    val := 15
+    x := optional_make_success(val)
+    y: Optional(int) = optional_make_failure()
 
+    operators add_auto_cast(Optional($T), bool, optional_is_available)
+    operators add_auto_cast($T, Optional(T), optional_make_success)
+
+    assert(optional_int_is_even(16))
+
+    b1: bool = x
+    b2: bool = y
+    assert(b1)
+    assert(not b2)

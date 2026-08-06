@@ -50,7 +50,7 @@ enum class Custom_Operator_Query_Node_Type
     POLYMORPHIC_DATATYPE_TYPE,
     POLYMORPHIC_STRUCT_BASE,
     PATTERN_VARIABLE,
-    CUSTOM_OPERATOR
+    CUSTOM_OPERATOR // For querying multiple results
 };
 
 struct Custom_Operator_Query_Node
@@ -85,7 +85,7 @@ struct Custom_Operator_Instance_Value
 {
     Custom_Operator* custom_op;
     Upp_Function* instance_functions[2];
-    Workload_Base* instanciation_workload; // If not null, we should wait for this
+    Workload_Base* instanciation_workload; // If not null, this means that another workload is currently working on this request
 };
 
 struct Custom_Operator_Query
@@ -129,7 +129,8 @@ struct Custom_Operator
 };
 
 Custom_Operator_Query custom_operator_query_make(
-    Custom_Operator_Type op_type, Datatype* datatype_0, bool arg_0_is_temporary, Datatype* datatype_1 = nullptr, bool arg_1_is_temporary = false
+    Custom_Operator_Type op_type, Datatype* datatype_0, bool arg_0_is_temporary, 
+    Datatype* datatype_1 = nullptr, bool arg_1_is_temporary = false
 );
 
 u64 hash_custom_operator_instance_key(Custom_Operator_Instance_Key* op);
@@ -169,6 +170,7 @@ enum class Symbol_Type
     HARDCODED_FUNCTION,
     FUNCTION,
     POLYMORPHIC_FUNCTION,
+    FAST_CALL,
 
     VARIABLE,
     GLOBAL,
@@ -190,6 +192,7 @@ struct Symbol
         Datatype* variable_type;
         Upp_Function* function;
         Poly_Function poly_function;
+        Upp_Function* fast_call_function;
         Workload_Base* waiting_for_workload;
         Symbol* alias_for;
         int unfinished_alias_index;

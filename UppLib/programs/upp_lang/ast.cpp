@@ -9,14 +9,17 @@ namespace AST
 		int index = 0;
 #define FILL(x) { if (child_index == index) {return &x->base;} else {index += 1;}}
 #define FILL_OPTIONAL(x) if (x.available) {FILL(x.value);}
-#define FILL_ARRAY(x) {if (child_index < index + x.size) {return &x[child_index - index]->base;} else {index += x.size;}}
+#define FILL_ARRAY(x) {if (child_index < index + x.size) {return upcast(x[child_index - index]);} else {index += x.size;}}
 		switch (node->type)
 		{
-		case Node_Type::SWITCH_CASE: {
-			auto sw_case = (Switch_Case*)node;
-			FILL_OPTIONAL(sw_case->value);
-			FILL_OPTIONAL(sw_case->variable_definition);
-			FILL(sw_case->block);
+		case Node_Type::MATCH_CASE: 
+		{
+			auto switch_case = (Match_Case*)node;
+			if (switch_case->case_type == Match_Case_Type::EXPRESSION) {
+				FILL(switch_case->options.expression);
+			}
+			FILL_OPTIONAL(switch_case->variable_definition);
+			FILL(switch_case->block);
 			break;
 		}
 		case Node_Type::PARAMETER: {
@@ -75,6 +78,11 @@ namespace AST
 		case Node_Type::SYMBOL_NODE: {
 			break;
 		}
+		case Node_Type::ROOT: {
+			auto module_file = (Root_Node*)node;
+			FILL_ARRAY(module_file->definitions);
+			break;
+		}
 		case Node_Type::DEFINITION: 
 		{
 			auto def = (Definition*)node;
@@ -88,6 +96,21 @@ namespace AST
 				FILL(value.symbol);
 				FILL_OPTIONAL(value.datatype_expr);
 				FILL_OPTIONAL(value.value_expr);
+				break;
+			}
+			case Definition_Type::FAST_CALL: 
+			{
+				auto& fast_call = def->options.fast_call;
+				FILL(fast_call.symbol);
+				FILL(fast_call.expression);
+				break;
+			}
+			case Definition_Type::IMPORT_BLOCK: 
+			{
+				auto& import_block = def->options.import_block;
+				FILL(import_block.symbol);
+				FILL_ARRAY(import_block.imports);
+				FILL_ARRAY(import_block.custom_operators);
 				break;
 			}
 			case Definition_Type::FUNCTION: 
@@ -121,7 +144,7 @@ namespace AST
 			case Definition_Type::IMPORT:
 			{
 				auto& import = def->options.import;
-				if (import.operator_type != Import_Operator::FILE_IMPORT) {
+				if (!import.is_file_import) {
 					FILL(import.options.path);
 				}
 				FILL_OPTIONAL(import.alias_name);
@@ -150,13 +173,6 @@ namespace AST
 				}
 				default: panic("");
 				}
-				break;
-			}
-			case Definition_Type::MODULE:
-			{
-				auto& module = def->options.module;
-				FILL_OPTIONAL(module.symbol);
-				FILL_ARRAY(module.definitions);
 				break;
 			}
 			case Definition_Type::CUSTOM_OPERATOR:
@@ -392,9 +408,9 @@ namespace AST
 				FILL_OPTIONAL(ret);
 				break;
 			}
-			case Statement_Type::SWITCH_STATEMENT: {
-				FILL(stat->options.switch_statement.condition);
-				FILL_ARRAY(stat->options.switch_statement.cases);
+			case Statement_Type::MATCH_STATEMENT: {
+				FILL(stat->options.match_statement.condition);
+				FILL_ARRAY(stat->options.match_statement.cases);
 				break;
 			}
 			default: panic("HEY");
@@ -469,7 +485,7 @@ namespace AST
 			case Literal_Type::FLOAT_VAL: string_append_formated(str, "%f", read.options.float_val); break;
 			case Literal_Type::NULL_VAL: string_append_formated(str, "null"); break;
 			case Literal_Type::STRING: string_append_formated(str, "%s", read.options.string->characters); break;
-			case Literal_Type::CODE_POINT: string_append_formated(str, "'#%d'", read.options.code_point); break;
+			case Literal_Type::CODE_POINT: string_append_formated(str, "'#%d'", read.options.codepoint); break;
 			default: panic("");
 			}
 			string_append_formated(str, "\"");
@@ -500,13 +516,17 @@ namespace AST
 			string_append_formated(str, "SYMBOL_NODE %s", ((Symbol_Node*)base)->name->characters);
 			break;
 		}
+		case Node_Type::ROOT: {
+			string_append_formated(str, "ROOT");
+			break;
+		}
 		case Node_Type::DEFINITION: 
 		{
 			string_append_formated(str, "DEFINITION ");
 			auto def = (Definition*)base;
 			switch (def->type)
 			{
-			case Definition_Type::MODULE: string_append(str, "module"); break;
+			case Definition_Type::FAST_CALL: string_append(str, "fast_call"); break;
 			case Definition_Type::VARIABLE: string_append(str, "var"); break;
 			case Definition_Type::GLOBAL: string_append(str, "global"); break;
 			case Definition_Type::CONSTANT: string_append(str, "const"); break; 
@@ -522,15 +542,15 @@ namespace AST
 			case Definition_Type::IMPORT:
 			{
 				auto& import = def->options.import;
-				string_append_formated(str, "IMPORT ");
-				if (import.operator_type == Import_Operator::FILE_IMPORT) {
-					string_append_formated(str, "\"%s\" ", import.options.file_import.relative_path->characters);
+				string_append_formated(str, "IMPORT");
+				if (import.is_transitive) {
+					string_append(str, " transitive");
 				}
-				else if (import.operator_type == Import_Operator::MODULE_IMPORT) {
-					string_append_formated(str, "~* ");
+				if (import.import_symbols_set) {
+					string_append(str, " symbols");
 				}
-				else if (import.operator_type == Import_Operator::MODULE_IMPORT_TRANSITIVE) {
-					string_append_formated(str, "~** ");
+				if (import.import_operators_set) {
+					string_append(str, " operators");
 				}
 				break;
 			}
@@ -585,7 +605,7 @@ namespace AST
 		case Node_Type::GET_OVERLOAD_ARGUMENT:
 			string_append_formated(str, "GET_OVERLOAD_ARG ");
 			break;
-		case Node_Type::SWITCH_CASE: string_append_formated(str, "SWITCH_CASE"); break;
+		case Node_Type::MATCH_CASE: string_append_formated(str, "MATCH_CASE"); break;
 		case Node_Type::CODE_BLOCK: string_append_formated(str, "CODE_BLOCK"); break;
 		case Node_Type::ARGUMENT: {
 			string_append_formated(str, "ARGUMENT");
@@ -640,7 +660,7 @@ namespace AST
 				case Literal_Type::FLOAT_VAL: string_append_formated(str, "%f", read.options.float_val); break;
 				case Literal_Type::NULL_VAL: string_append_formated(str, "null"); break;
 				case Literal_Type::STRING: string_append_formated(str, "%s", read.options.string->characters); break;
-				case Literal_Type::CODE_POINT: string_append_formated(str, "'#%d'", read.options.code_point); break;
+				case Literal_Type::CODE_POINT: string_append_formated(str, "'#%d'", read.options.codepoint); break;
 				default: panic("");
 				}
 				break;
@@ -685,7 +705,7 @@ namespace AST
 			case Statement_Type::WHILE_STATEMENT: string_append_formated(str, "WHILE_STATEMENT"); break;
 			case Statement_Type::FOR_LOOP: string_append_formated(str, "FOR_LOOP"); break;
 			case Statement_Type::FOREACH_LOOP: string_append_formated(str, "FOREACH_LOOP"); break;
-			case Statement_Type::SWITCH_STATEMENT: string_append_formated(str, "SWITCH_STATEMENT"); break;
+			case Statement_Type::MATCH_STATEMENT: string_append_formated(str, "MATCH_STATEMENT"); break;
 			case Statement_Type::BREAK_STATEMENT: string_append_formated(str, "BREAK_STATEMENT"); break;
 			case Statement_Type::CONTINUE_STATEMENT: string_append_formated(str, "CONTINUE_STATEMENT"); break;
 			case Statement_Type::RETURN_STATEMENT: string_append_formated(str, "RETURN_STATEMENT"); break;
@@ -788,14 +808,17 @@ namespace AST
 		bool type_correct(Path_Lookup* base) {
 			return base->base.type == Node_Type::PATH_LOOKUP;
 		}
+		bool type_correct(Root_Node* base) {
+			return base->base.type == Node_Type::ROOT;
+		}
 		bool type_correct(Definition* base) {
 			return base->base.type == Node_Type::DEFINITION;
 		}
 		bool type_correct(Symbol_Node* base) {
 			return base->base.type == Node_Type::SYMBOL_NODE;
 		}
-		bool type_correct(Switch_Case* base) {
-			return base->base.type == Node_Type::SWITCH_CASE;
+		bool type_correct(Match_Case* base) {
+			return base->base.type == Node_Type::MATCH_CASE;
 		}
 		bool type_correct(Statement* base) {
 			return base->base.type == Node_Type::STATEMENT;
@@ -848,14 +871,19 @@ namespace AST
 		return (Definition*) ( ((char*) node) - offsetof(Definition, options.enumeration));
     }
 
-    Definition* upcast_definition(Definition_Module* node) {
-		return (Definition*) ( ((char*) node) - offsetof(Definition, options.module));
+    Definition* upcast_definition(Definition_Import_Block* node) {
+		return (Definition*) ( ((char*) node) - offsetof(Definition, options.import_block));
     }
 
+	Definition* upcast_definition(Definition_Fast_Call* node) {
+		return (Definition*) ( ((char*) node) - offsetof(Definition, options.fast_call));
+	}
+
+	Node* upcast(Root_Node* node) { return &node->base; }
 	Node* upcast(Definition* node) { return &node->base; }
     Node* upcast(Get_Overload_Argument* node) { return &node->base; }
 	Node* upcast(Symbol_Node* node) { return &node->base; }
-    Node* upcast(Switch_Case* node) { return &node->base; }
+    Node* upcast(Match_Case* node) { return &node->base; }
     Node* upcast(Statement* node) { return &node->base; }
     Node* upcast(Signature* node) { return &node->base; }
     Node* upcast(Argument* node) { return &node->base; }
@@ -882,7 +910,8 @@ namespace AST
     Node* upcast(Definition_Import* node) { return upcast(upcast_definition(node)); }
     Node* upcast(Definition_Extern_Import* node) { return upcast(upcast_definition(node)); }
     Node* upcast(Definition_Enum* node) { return upcast(upcast_definition(node)); }
-    Node* upcast(Definition_Module* node) { return upcast(upcast_definition(node)); }
+    Node* upcast(Definition_Fast_Call* node) { return upcast(upcast_definition(node)); }
+    Node* upcast(Definition_Import_Block * node) { return upcast(upcast_definition(node)); }
 
 	Symbol_Node* Path_Lookup::last() {
 		assert(parts.size > 0, "");

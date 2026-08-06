@@ -1,23 +1,23 @@
 
-import ~address
-import ~size_of
+main :: fn ()
+    // The cast function is for normal primitive casting (ints, enums, float, Code_Point, ...)
+    // To seperate pointers and normal values, the cast_pointer function is used.
+    // cast_pointer has very similar syntax, but only casts between pointers
 
-main :: ()
-	///
-		Normal pointers don't support pointer arithmetic in upp,
-		but the Primitive 'address' type just holds a single memory address,
-		and it supports limited arithmetic with integers
-	
-	values: [3]int = .[1, 2, 3]
-	
-	ip :=* values[0]
-	ptr: address = cast_pointer ip
-	ptr = ptr + size_of(int) 
-	
-	ip =* cast_pointer ptr
-	ip = 5
-	
-	~assert(values[0] == 1)
-	~assert(values[1] == 5)
-	~assert(values[2] == 3)
-	
+    values: [3]int = .[1, 2, 3]
+                            
+    int_pointer :&= values[0]
+    // The rawpointer type is similar to C's void*, it's just a pointer
+    raw_pointer := int_pointer->cast_pointer(rawptr)
+    // To bride the gap between pointers and integers, the rawptr_to_uint and uint_to_rawptr functions exist
+    pointer_value: uint = raw_pointer->rawptr_to_uint()
+    pointer_value = pointer_value + size_of(int)->cast(uint) // Advance pointer by one element
+    
+    int_pointer &= pointer_value->uint_to_rawptr()->cast_pointer(&int)
+    assert(int_pointer == 2)
+    int_pointer-* = 5
+    
+    assert(values[0] == 1)
+    assert(values[1] == 5)
+    assert(values[2] == 3)
+    

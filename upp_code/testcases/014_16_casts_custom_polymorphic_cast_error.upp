@@ -1,8 +1,5 @@
+foo :: fn (a: $T, x: int) => bool
+    return false
 
-
-foo::(a:$T,x:int)=>bool
-	return false
-
-
-main::()
-	context add_cast(foo,.IMPLICIT)
+main :: fn ()
+    operators add_auto_cast($T, bool, foo)

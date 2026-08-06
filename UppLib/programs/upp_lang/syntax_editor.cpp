@@ -29,6 +29,7 @@
 #include "debugger.hpp"
 #include "tokenizer.hpp"
 #include "../../utility/random.hpp"
+#include "../../utility/file_io.hpp"
 
 #include "ir_code.hpp"
 
@@ -37,6 +38,221 @@
 #include "../../utility/ui_system.hpp"
 
 const int MIN_CURSOR_DISTANCE = 2;
+
+
+
+
+// WORD_POOL
+struct String_View
+{
+	char* characters;
+	u32 size;
+};
+
+String_View string_view_make(char* characters, u32 size)
+{
+	String_View result;
+	result.characters = characters;
+	result.size = size;
+	return result;
+}
+
+String_View string_view_from_cstring(const char* str)
+{
+	return string_view_make((char*)str, strlen(str));
+}
+
+String_View string_view_from_string(String string)
+{
+	return string_view_make(string.characters, (u32)string.size);
+}
+
+String string_view_to_string(String_View view)
+{
+	return string_create_static_with_size(view.characters, (int)view.size);
+}
+
+u64 hash_string_view(String_View* string_view)
+{
+	if (string_view->size == 0) return 0x2342343;
+	return hash_memory(array_create_static<byte>((byte*)string_view->characters, (int)string_view->size));
+}
+
+bool equals_string_view(String_View* a, String_View* b)
+{
+	if (a->size != b->size) return false;
+	return memory_compare(a->characters, b->characters, a->size);
+}
+
+struct String_View_Refcount
+{
+	String_View string_view;
+	u32 reference_count;
+};
+
+struct Word_Free_List
+{
+	void* next_free;
+	u32 element_size;
+};
+
+const int WORD_POOL_FREELIST_COUNT = 4;
+const int WORD_POOL_MAX_WORD_SIZE = 128;
+const int WORD_POOL_MIN_WORD_SIZE = 3;
+
+struct Word_Pool
+{
+	Arena* arena;
+	DynTable<String_View, u32> deduplication_table;
+	DynArray<String_View_Refcount> words;
+	Word_Free_List free_lists[WORD_POOL_FREELIST_COUNT];
+};
+
+Word_Free_List word_free_list_make(u32 element_size)
+{
+	Word_Free_List result;
+	result.next_free = nullptr;
+	result.element_size = element_size;
+	return result;
+}
+
+Word_Pool word_pool_create(Arena* arena)
+{
+	Word_Pool result;
+	result.arena = arena;
+	result.deduplication_table = DynTable<String_View, u32>::create(arena, hash_string_view, equals_string_view);
+	result.words = DynArray<String_View_Refcount>::create(arena);
+	result.free_lists[0] = word_free_list_make(8);
+	result.free_lists[1] = word_free_list_make(32);
+	result.free_lists[2] = word_free_list_make(64);
+	result.free_lists[3] = word_free_list_make(WORD_POOL_MAX_WORD_SIZE);
+	return result;
+}
+
+void word_pool_add_word(Word_Pool* pool, String_View word)
+{
+	if (word.size <= WORD_POOL_MIN_WORD_SIZE || word.size > WORD_POOL_MAX_WORD_SIZE) return;
+
+	DynTable_Query_Result query_result = pool->deduplication_table.query(word, true);
+	if (query_result.value_is_in_table)
+	{
+		u32 word_index = *pool->deduplication_table.query_to_value(query_result);
+		assert(word_index < pool->words.size, "");
+		String_View_Refcount& word = pool->words[word_index];
+		word.reference_count += 1;
+		return;
+	}
+
+	// Find suitable free-list
+	Word_Free_List* free_list = nullptr;
+	for (int i = 0; i < WORD_POOL_FREELIST_COUNT; i++) 
+	{
+		Word_Free_List* list = &pool->free_lists[i];
+		if (word.size <= list->element_size) {
+			free_list = list;
+			break;
+		}
+	}
+	assert(free_list != nullptr, "");
+
+	String_View allocated_view = string_view_make(nullptr, word.size);
+	if (free_list->next_free == nullptr) 
+	{
+		allocated_view.characters = (char*) pool->arena->allocate_raw(free_list->element_size, 8); // Alignment of 8 because of free-list
+	}
+	else
+	{
+		allocated_view.characters = (char*) free_list->next_free;
+		free_list->next_free = *(void**)free_list->next_free;
+	}
+	memory_copy(allocated_view.characters, word.characters, word.size);
+
+	// Add to table and dynamic_array
+	pool->deduplication_table.insert_with_query(query_result, allocated_view, pool->words.size);
+	String_View_Refcount refcount;
+	refcount.reference_count = 1;
+	refcount.string_view = allocated_view;
+	pool->words.push_back(refcount);
+}
+
+void word_pool_remove_word(Word_Pool* pool, String_View word)
+{
+	if (word.size <= WORD_POOL_MIN_WORD_SIZE || word.size > WORD_POOL_MAX_WORD_SIZE) return;
+
+	DynTable_Query_Result query_result = pool->deduplication_table.query(word, false);
+	assert(query_result.value_is_in_table, "");
+
+	// Decrease reference count
+	u32 word_index = *pool->deduplication_table.query_to_value(query_result);
+	String_View_Refcount& refcount_view = pool->words[word_index];
+	assert(refcount_view.reference_count > 0, "");
+	refcount_view.reference_count -= 1;
+	if (refcount_view.reference_count > 0) return; // Reference decreased, done here 
+
+	// Add string_view to free-list
+	Word_Free_List* free_list = nullptr;
+	for (int i = 0; i < WORD_POOL_FREELIST_COUNT; i++) {
+		Word_Free_List* list = &pool->free_lists[i];
+		if (word.size <= list->element_size) {
+			free_list = list;
+			break;
+		}
+	}
+	assert(free_list != nullptr, "");
+	*(void**)refcount_view.string_view.characters = free_list->next_free;
+	free_list->next_free = (void*)refcount_view.string_view.characters;
+
+	// Remove from hashtable
+	pool->deduplication_table.remove_with_query(query_result);
+	// Remove from dynamic-array (And update deduplication table index)
+	if (word_index != pool->words.size - 1) 
+	{
+		String_View_Refcount swap_view = pool->words[pool->words.size - 1];
+		DynTable_Query_Result query_result = pool->deduplication_table.query(swap_view.string_view, false);
+		assert(query_result.value_is_in_table, "");
+		*pool->deduplication_table.query_to_value(query_result) = word_index;
+	}
+	pool->words.swap_remove(word_index);
+}
+
+void word_pool_handle_words_from_line(Word_Pool* pool, Source_Line* line, Arena* tmp_arena, bool remove_words)
+{
+	assert(tmp_arena != pool->arena, "");
+	auto checkpoint = tmp_arena->make_checkpoint();
+	SCOPE_EXIT(checkpoint.rewind());
+
+	DynArray<Token> line_tokens = DynArray<Token>::create(tmp_arena);
+	tokenizer_tokenize_single_line(line->text, &line_tokens, 0, true);
+	for (int i = 0; i < line_tokens.size; i++) 
+	{
+		Token& token = line_tokens[i];
+		if (token.type != Token_Type::IDENTIFIER) continue;
+		String_View string_view = string_view_from_string(
+			string_create_substring_static(&line->text, token.start, token.end)
+		);
+		if (remove_words) {
+			word_pool_remove_word(pool, string_view);
+		}
+		else {
+			word_pool_add_word(pool, string_view);
+		}
+	}
+}
+
+void word_pool_handle_words_from_code(Word_Pool* pool, Source_Code* code, Arena* tmp_arena, bool remove_words) 
+{
+	for (int bundle_index = 0; bundle_index < code->bundles.size; bundle_index++)
+	{
+		Line_Bundle& bundle = code->bundles[bundle_index];
+		for (int in_bundle_index = 0; in_bundle_index < bundle.lines.size; in_bundle_index++)
+		{
+			Source_Line& line = bundle.lines[in_bundle_index];
+			word_pool_handle_words_from_line(pool, &line, tmp_arena, remove_words);
+		}
+	}
+}
+
+
 
 // Structures/Enums
 struct Error_Display
@@ -115,6 +331,8 @@ enum class Movement_Type
     PARAGRAPH_START, // {
 	BLOCK_START, // (
 	BLOCK_END, // )
+	CURSOR_INDENTATION_ITEM_START, // [
+	CURSOR_INDENTATION_ITEM_END, // ]
     GOTO_END_OF_TEXT, // G
     GOTO_START_OF_TEXT, // gg
     GOTO_LINE_NUMBER, // g43
@@ -139,6 +357,8 @@ enum class Motion_Type
     BRACKETS, // []
     QUOTATION_MARKS, // ""
     BLOCK, // b or B
+	CURSOR_INDENTATION_ITEM_FORWARDS,  // o 
+	CURSOR_INDENTATION_ITEM_BACKWARDS, // i 
     PARAGRAPH, // p or P
 };
 
@@ -208,6 +428,10 @@ enum class Normal_Command_Type
     MOVE_CURSOR_VIEWPORT_CENTER, // 'Shift-M'
     MOVE_CURSOR_VIEWPORT_BOTTOM, // 'Shift-L'
 
+    GOTO_LAST_SCREEN, // Ctrl-O
+    GOTO_NEXT_SCREEN, // Ctrl-I
+	STORE_SCREEN,   // gs
+
     // Tabs
     GOTO_NEXT_TAB, // gt
     GOTO_PREV_TAB, // gT
@@ -217,7 +441,8 @@ enum class Normal_Command_Type
     // Folding
     FOLD_MOTION, // gf
     UNFOLD_IN_BLOCK, // gF
-    FOLD_HIGHER_INDENT_IN_BLOCK, // gb
+    FOLD_HIGHER_INDENT_IN_BLOCK,   // gb
+    FOLD_MULTIPLE_SPACES_IN_BLOCK, // gB
 
     // Others
     ENTER_VISUAL_BLOCK_MODE,
@@ -227,8 +452,6 @@ enum class Normal_Command_Type
     ENTER_TEXT_SEARCH_REVERSE, // ?
     SEARCH_IDENTIFER_UNDER_CURSOR, // *
     VISUALIZE_MOTION, // not sure
-    GOTO_LAST_JUMP, // Ctrl-O
-    GOTO_NEXT_JUMP, // Ctrl-I
     ADD_INDENTATION, // >
     REMOVE_INDENTATION, // <
     TOGGLE_LINE_BREAKPOINT, // gp
@@ -282,7 +505,7 @@ enum class Suggestion_Type
 struct Editor_Suggestion
 {
     Suggestion_Type type;
-    String* text;
+    String_View text;
     union {
         struct {
             Datatype_Struct* structure;
@@ -335,6 +558,36 @@ struct Compiler_Thread_Data
     bool build_code;
 };
 
+enum class Toggle_Option
+{
+	AUTO_FORMAT_WHILE_EDITING,
+	SHOW_FOLDS_INLINE,
+	AUTO_INSERT_PARENTHESIS,
+	DISPLAY_LEADING_SPACES_INDICATOR,
+	SNEAK_AS_DEFAULT,
+	WORD_COMPLETION_INSTEAD_OF_CODE_COMPLETION,
+	HIDE_ERRORS_UNTIL_COMPILATION,
+
+	MAX_ENUM_VALUE
+};
+
+const char* toggle_option_as_string(Toggle_Option option)
+{
+	// These strings are used in the UI and when saving the session file, so there shouldn't be any spaces
+	switch (option)
+	{
+	case Toggle_Option::AUTO_FORMAT_WHILE_EDITING:                  return "Auto_Format_While_Editing";
+	case Toggle_Option::SHOW_FOLDS_INLINE:                          return "Show_Folds_Inline";
+	case Toggle_Option::AUTO_INSERT_PARENTHESIS:                    return "Auto_Insert_Parenthesis";
+	case Toggle_Option::DISPLAY_LEADING_SPACES_INDICATOR:           return "Display_Leading_Spaces_Indicator";
+	case Toggle_Option::SNEAK_AS_DEFAULT:                           return "Sneak_Movement_As_Default";
+	case Toggle_Option::WORD_COMPLETION_INSTEAD_OF_CODE_COMPLETION: return "Word_Completion_over_Code_Completion";
+	case Toggle_Option::HIDE_ERRORS_UNTIL_COMPILATION:              return "Hide_Errors_Until_Compilation";
+	default: panic("");
+	}
+	return "";
+}
+
 struct Syntax_Editor
 {
 	// Generic stuff
@@ -342,6 +595,8 @@ struct Syntax_Editor
     Input* input;
     Directory_Crawler* directory_crawler;
 	Arena arena; // For rendering and other misc things
+	Word_Pool word_pool;
+	Arena word_pool_arena;
 
 	// Tabs
     Dynamic_Array<Editor_Tab*> tabs;
@@ -376,6 +631,7 @@ struct Syntax_Editor
     String fuzzy_search_text;
     Line_Editor search_text_edit;
     int last_code_completion_tab;
+	bool last_code_completion_was_with_words;
     Dynamic_Array<Editor_Suggestion> suggestions; // Used both for fuzzy-find and code-completion
 
     String search_text;
@@ -385,8 +641,6 @@ struct Syntax_Editor
 
 	// Error mode 
     Dynamic_Array<int> error_indices_sorted;
-    Text_Index navigate_error_mode_cursor_before;
-    int navigate_error_mode_tab_before;
     int navigate_error_cam_start;
     int navigate_error_index;
 
@@ -432,14 +686,14 @@ struct Syntax_Editor
 	Hashtable<Analysis_Pass*, bool> filtered_passes;
 
 	// Editor options
-	bool auto_format_during_edits;
-	bool show_folds_inline;
-	bool auto_insert_parenthesis;
-	bool show_leading_spaces;
-	bool sneak_search;
+	bool toggle_options[(int)Toggle_Option::MAX_ENUM_VALUE];
+	bool hide_error_mode_display_errors;
 
 	Editor_Tab& open_tab() {
 		return *tabs[open_tab_index];
+	}
+	bool get_option_value(Toggle_Option option) {
+		return toggle_options[(int)option];
 	}
 };
 
@@ -462,6 +716,8 @@ int line_get_whitespace_indentation(int line_index);
 int line_is_empty(int line_index, bool count_comment_as_empty);
 int line_count_leading_spaces(Source_Line* line);
 int line_count_leading_spaces(int line_index);
+void recent_screen_handle_line_insert(Editor_Tab* tab, int line_index);
+void recent_screen_handle_line_delete(Editor_Tab* tab, int line_index);
 
 String line_index_get_text(int line_index, Editor_Tab* tab = nullptr)
 {
@@ -533,7 +789,7 @@ namespace Folds
 		int child_start_index = -1;
 		for (int i = 0; i < child_count; i++) 
 		{
-			Code_Fold child = folds[i];
+			Code_Fold child = folds[insert_index + i];
 
 			// Find next free child index
 			int new_child_index = 1;
@@ -567,12 +823,43 @@ namespace Folds
 		folds.insert_ordered(result, insert_index);
 
 		// Move cursor out of fold if inline-fold
-		if (syntax_editor.show_folds_inline) {
+		if (syntax_editor.get_option_value(Toggle_Option::SHOW_FOLDS_INLINE)) {
 			Line_Area area = Folds::get_line_area(tab.cursor.line);
 			if (area.inside_fold) {
 				tab.cursor.line = area.interval.min - 1;
 			}
 		}
+	}
+
+	void print_code_fold_recursive(Editor_Tab* tab, int fold_index, bool is_child_fold, int indentation)
+	{
+		if (fold_index == -1) return;
+
+		for (int i = 0; i < indentation; i++) {
+			printf("  ");
+		}
+		
+		DynArray<Code_Fold>* folds = is_child_fold ? &tab->child_folds : &tab->folds;
+		Code_Fold* fold = &(*folds)[fold_index];
+		printf("Fold #%3d (%3d-%3d):\n", fold_index, fold->interval.min, fold->interval.max);
+
+		print_code_fold_recursive(tab, fold->child_folds_start, true, indentation + 1);
+		if (is_child_fold) {
+			print_code_fold_recursive(tab, fold->next_index, is_child_fold, indentation);
+		}
+	}
+
+	void print_folds(Editor_Tab* tab)
+	{
+		return;
+		printf("Folds: \n");
+		for (int i = 0; i < tab->folds.size; i++){
+			print_code_fold_recursive(tab, i, false, 0);
+		}
+		printf("\n");
+		printf("Free-Children: (Capacity #%lld)\n", tab->child_folds.size);
+		print_code_fold_recursive(tab, tab->next_free_child_fold, true, 1);
+		printf("\n");
 	}
 
 	void free_child_fold_recursive(Editor_Tab* tab, int child_index, bool recursive)
@@ -658,7 +945,7 @@ namespace Folds
 
 	Line_Area get_line_area(int line_index, int& nearby_fold_index) 
 	{
-		auto& tab = syntax_editor.open_tab();
+		Editor_Tab& tab = syntax_editor.open_tab();
 		auto& folds = tab.folds;
 
 		if (folds.size == 0) {
@@ -736,9 +1023,9 @@ namespace Folds
 		// Positive steps means moving downwards
 		void move(int steps, bool handle_folds = true) 
 		{
-			auto& tab = syntax_editor.open_tab();
+			Editor_Tab& tab = syntax_editor.open_tab();
 			auto& folds = tab.folds;
-			bool inline_folds = syntax_editor.show_folds_inline;
+			bool inline_folds = syntax_editor.get_option_value(Toggle_Option::SHOW_FOLDS_INLINE);
 	
 			if (!handle_folds) {
 				line_index = line_index + steps;
@@ -831,7 +1118,7 @@ namespace Folds
 	
 		int visible_distance_to(int to_line_index)
 		{
-			bool inline_folds = syntax_editor.show_folds_inline;
+			bool inline_folds = syntax_editor.get_option_value(Toggle_Option::SHOW_FOLDS_INLINE);
 			DynArray<Code_Fold>& folds = syntax_editor.open_tab().folds;
 	
 			int start = math_minimum(line_index, to_line_index);
@@ -1227,6 +1514,8 @@ namespace Parsing
         case '{': index += 1; return parse_result_success(movement_make(Movement_Type::PARAGRAPH_START, repeat_count));
         case '(': index += 1; return parse_result_success(movement_make(Movement_Type::BLOCK_START, repeat_count));
         case ')': index += 1; return parse_result_success(movement_make(Movement_Type::BLOCK_END, repeat_count));
+        case '[': index += 1; return parse_result_success(movement_make(Movement_Type::CURSOR_INDENTATION_ITEM_START, repeat_count));
+        case ']': index += 1; return parse_result_success(movement_make(Movement_Type::CURSOR_INDENTATION_ITEM_END, repeat_count));
         case 'n': index += 1; return parse_result_success(movement_make(Movement_Type::REPEAT_TEXT_SEARCH, repeat_count));
         case 'N': index += 1; return parse_result_success(movement_make(Movement_Type::REPEAT_TEXT_SEARCH_REVERSE, repeat_count));
 
@@ -1254,7 +1543,7 @@ namespace Parsing
                 panic("");
             }
 
-			if (syntax_editor.sneak_search) 
+			if (syntax_editor.get_option_value(Toggle_Option::SNEAK_AS_DEFAULT)) 
 			{
 				if (index + 2 >= cmd.size) {
 				    return parse_result_completable<Movement>();
@@ -1360,6 +1649,10 @@ namespace Parsing
             // case 'P': return parse_result_success(motion_make(Motion_Type::PARAGRAPH_WITH_INDENT, repeat_count, contains_edges));
         case 'b':
         case 'B': return parse_result_success(motion_make(Motion_Type::BLOCK, repeat_count, contains_edges));
+        case 'o':
+        case 'O': return parse_result_success(motion_make(Motion_Type::CURSOR_INDENTATION_ITEM_FORWARDS, repeat_count, contains_edges));
+        case 'i':
+        case 'I': return parse_result_success(motion_make(Motion_Type::CURSOR_INDENTATION_ITEM_BACKWARDS, repeat_count, contains_edges));
         case 'P':
         case 'p': return parse_result_success(motion_make(Motion_Type::PARAGRAPH, repeat_count, contains_edges));
         }
@@ -1464,8 +1757,10 @@ namespace Parsing
                     );
                 }
                 case 'b': return parse_result_success(normal_mode_command_make(Normal_Command_Type::FOLD_HIGHER_INDENT_IN_BLOCK, repeat_count));
+                case 'B': return parse_result_success(normal_mode_command_make(Normal_Command_Type::FOLD_MULTIPLE_SPACES_IN_BLOCK, repeat_count));
                 case 'F': return parse_result_success(normal_mode_command_make(Normal_Command_Type::UNFOLD_IN_BLOCK, repeat_count));
                 case 'p': return parse_result_success(normal_mode_command_make(Normal_Command_Type::TOGGLE_LINE_BREAKPOINT, 1));
+                case 's': return parse_result_success(normal_mode_command_make(Normal_Command_Type::STORE_SCREEN, 1));
                 }
             }
         }
@@ -1659,7 +1954,7 @@ namespace Text_Editing
 
 	Text_Index add_padding_to_index(Text_Index index, bool is_cursor, bool handle_spaces_as_well = true)
 	{
-		auto& tab = syntax_editor.open_tab();
+		Editor_Tab& tab = syntax_editor.open_tab();
 		auto code = tab.code;
 		history_start_complex_command(&tab.history);
 		SCOPE_EXIT(history_stop_complex_command(&tab.history));
@@ -1698,7 +1993,7 @@ namespace Text_Editing
 	}
 
 	Text_Index add_padding_to_cursor(bool handle_spaces_as_well = true) {
-		auto& tab = syntax_editor.open_tab();
+		Editor_Tab& tab = syntax_editor.open_tab();
 		tab.cursor = add_padding_to_index(tab.cursor, true, handle_spaces_as_well);
 		return tab.cursor;
 	}
@@ -1706,7 +2001,7 @@ namespace Text_Editing
     void particles_add_in_range(Text_Range range, vec3 base_color)
     {
         auto& editor = syntax_editor;
-        auto& tab = editor.open_tab();
+        Editor_Tab& tab = editor.open_tab();
 
 		auto& display_lines = editor.display_lines;
 		if (display_lines.size == 0) return;
@@ -1770,7 +2065,7 @@ namespace Text_Editing
 
     void insert_text_in_line(Text_Index index, String str, bool with_particles)
     {
-		auto& tab = syntax_editor.open_tab();
+		Editor_Tab& tab = syntax_editor.open_tab();
 		history_start_complex_command(&tab.history);
 		SCOPE_EXIT(history_stop_complex_command(&tab.history));
 
@@ -1790,7 +2085,7 @@ namespace Text_Editing
 
     void delete_text_in_line(Text_Index index, int char_end, bool with_particles)
     {
-		auto& tab = syntax_editor.open_tab();
+		Editor_Tab& tab = syntax_editor.open_tab();
 
 		// Check that range is inside code
 		if (index.line < 0 || index.line >= tab.code->line_count) return;
@@ -1867,7 +2162,7 @@ namespace Text_Editing
     void delete_text_range(Text_Range range, bool is_line_motion, bool with_particles)
     {
         auto& editor = syntax_editor;
-        auto& tab = syntax_editor.open_tab();
+        Editor_Tab& tab = syntax_editor.open_tab();
         auto code = tab.code;
         auto history = &tab.history;
     
@@ -1950,9 +2245,27 @@ namespace Text_Editing
 		}
 	}
 
+	void update_editor_data_before_text_insert(Editor_Tab* editor_tab, int line_index)
+	{
+		syntax_editor.hide_error_mode_display_errors = false;
+		word_pool_handle_words_from_line(&syntax_editor.word_pool, source_code_get_line(editor_tab->code, line_index), &syntax_editor.arena, true);
+	}
+
+	void update_editor_data_after_text_insert(Editor_Tab* editor_tab, int line_index)
+	{
+		word_pool_handle_words_from_line(&syntax_editor.word_pool, source_code_get_line(editor_tab->code, line_index), &syntax_editor.arena, false);
+	}
+
+	void update_editor_data_before_line_insert(Editor_Tab* editor_tab, int line_index)
+	{
+		syntax_editor.hide_error_mode_display_errors = false;
+	}
+
 	void update_editor_data_after_line_insert(Editor_Tab* editor_tab, int line_index)
 	{
 		Editor_Tab& tab = *editor_tab;
+
+		recent_screen_handle_line_insert(editor_tab, line_index);
 
 		// Update folds
 		for (int i = 0; i < tab.folds.size; i += 1)
@@ -1972,15 +2285,6 @@ namespace Text_Editing
 			}
 		}
 
-		// Update jump indices
-		for (int i = 0; i < tab.jump_list.size; i += 1)
-		{
-			int& jump = tab.jump_list[i].line;
-			if (line_index <= jump) {
-				jump += 1;
-			}
-		}
-
 		// Update breakpoints
 		for (int i = 0; i < tab.breakpoints.size; i += 1)
 		{
@@ -1991,9 +2295,17 @@ namespace Text_Editing
 		}
 	}
 
+	void update_editor_data_before_line_delete(Editor_Tab* editor_tab, int line_index)
+	{
+		syntax_editor.hide_error_mode_display_errors = false;
+		word_pool_handle_words_from_line(&syntax_editor.word_pool, source_code_get_line(editor_tab->code, line_index), &syntax_editor.arena, true);
+	}
+
 	void update_editor_data_after_line_delete(Editor_Tab* editor_tab, int line_index)
 	{
 		Editor_Tab& tab = *editor_tab;
+
+		recent_screen_handle_line_delete(editor_tab, line_index);
 
 		// Handle folds
 		DynArray<Code_Fold>& folds = tab.folds;
@@ -2027,30 +2339,8 @@ namespace Text_Editing
 			}
 		}
 
-		// Update jump list
-		int insert_at = 0;
-		for (int i = 0; i < tab.jump_list.size; i++)
-		{
-			int& jump = tab.jump_list[i].line;
-			if (line_index < jump) {
-				jump -= 1;
-			}
-			else if (line_index <= jump) { // Remove if deleted
-				continue;
-			}
-
-			// Remove if this jump is same as previous jump
-			if (insert_at > 0 && tab.jump_list[insert_at - 1].line == jump) {
-				continue;
-			}
-
-			tab.jump_list[insert_at] = tab.jump_list[i];
-			insert_at += 1;
-		}
-		tab.jump_list.size = insert_at;
-
 		// Update breakpoints
-		insert_at = 0;
+		int insert_at = 0;
 		for (int i = 0; i < tab.breakpoints.size; i += 1)
 		{
 			Line_Breakpoint& breakpoint = tab.breakpoints[i];
@@ -2080,6 +2370,11 @@ namespace Auto_Format
 			return;
 		}
 
+		auto get_token_type = [&](int offset) -> Token_Type {
+			int i = token_index + offset;
+			if (i < 0 || i >= tokens.size) return Token_Type::INVALID;
+			return tokens[i].type;
+		};
 		auto test_token = [&](Token_Type type, int offset) {
 			int i = token_index + offset;
 			if (i < 0 || i >= tokens.size) return false;
@@ -2099,6 +2394,11 @@ namespace Auto_Format
 		bool no_space_if_next_is_parenthesis = false;
 		switch (token.type)
 		{
+		case Token_Type::IMPORT: {
+			out_space_before = true;
+			out_space_after = true;
+			return;
+		}
 		case Token_Type::COMMENT: {
 			out_space_before = true;
 			out_space_after = false;
@@ -2141,7 +2441,9 @@ namespace Auto_Format
 
 		// Operators that always have spaces before and after
 		case Token_Type::DOUBLE_COLON:
-		case Token_Type::COLON_EQUALS:
+		case Token_Type::DEFINE_INFER_POINTER:
+		case Token_Type::DEFINE_INFER_VALUE:
+		case Token_Type::DEFINE_INFER_RAW:
 		case Token_Type::PLUS:
 		case Token_Type::SLASH:
 		case Token_Type::LESS_THAN:
@@ -2171,24 +2473,19 @@ namespace Auto_Format
 		case Token_Type::UNINITIALIZED:
 		case Token_Type::ADDRESS_OF:
 		case Token_Type::DEREFERENCE:
-		case Token_Type::POSTFIX_CALL_ARROW:
+		case Token_Type::FAST_CALL_ARROW:
 		case Token_Type::DOLLAR: {
 			out_space_after = false;
 			out_space_before = false;
 			break;
 		}
 
-		 // Special case for : = and : : 
-		case Token_Type::ASSIGN: {
+		case Token_Type::ASSIGN_VALUE: 
+		case Token_Type::ASSIGN_RAW: 
+		case Token_Type::ASSIGN_POINTER: 
+		{
 			out_space_after = true;
 			out_space_before = true;
-			if (token_index - 1 >= 0) {
-				auto& prev = tokens[token_index - 1];
-				if (prev.type == Token_Type::COLON || prev.type == Token_Type::DOT) {
-					out_space_before = false;
-					out_ignore_lex_changes = true;
-				}
-			}
 			break;
 		}
 
@@ -2196,11 +2493,8 @@ namespace Auto_Format
 		case Token_Type::COLON:
 		case Token_Type::GLOBAL_KEYWORD:
 		case Token_Type::COMPTIME_KEYWORD:
-		case Token_Type::MODULE:
 		case Token_Type::FUNCTION_KEYWORD:
 		case Token_Type::COMMA:
-		case Token_Type::TILDE_STAR:
-		case Token_Type::TILDE_STAR_STAR:
 		case Token_Type::SEMI_COLON: {
 			out_space_after = true;
 			out_space_before = false;
@@ -2293,7 +2587,7 @@ namespace Auto_Format
 	void auto_format_line(int tab_index, int line_index)
 	{
 		auto& editor = syntax_editor;
-		auto& tab = syntax_editor.open_tab();
+		Editor_Tab& tab = syntax_editor.open_tab();
 		auto code = tab.code;
 
 		if (line_index < 0 || line_index >= code->line_count) return;
@@ -2347,12 +2641,13 @@ namespace Auto_Format
 							i += 2;
 							continue;
 						}
-						if (i == '"') {
+						if (c == '"') {
 							break;
 						}
 						i += 1;
 					}
-					trimmed_text.append(string_create_substring_static(&text, start, i + 1));
+					String substring = string_create_substring_static(&text, start, i + 1); // Without closing "
+					trimmed_text.append(substring);
 					continue;
 				}
 				// Handle comments
@@ -2582,7 +2877,7 @@ int fold_interval_get_indentation(ibox1 interval)
 }
 
 // If the line is not-empty, returns the leading-space-count, otherwise it is estimated from prev/next non-empty line
-int line_estimate_indentation(int line_index)
+int line_estimate_leading_spaces(int line_index)
 {
 	Editor_Tab& tab = syntax_editor.open_tab();
 
@@ -2631,6 +2926,10 @@ int line_estimate_indentation(int line_index)
 	return 0;
 }
 
+int line_estimate_indentation(int line_index) {
+	return line_estimate_leading_spaces(line_index) / 4;
+}
+
 
 
 // Suggestions
@@ -2638,14 +2937,22 @@ Editor_Suggestion suggestion_make_symbol(Symbol* symbol) {
 	Editor_Suggestion result;
 	result.type = Suggestion_Type::SYMBOL;
 	result.options.symbol = symbol;
-	result.text = symbol->id;
+	result.text = string_view_from_string(*symbol->id);
+	return result;
+}
+
+Editor_Suggestion suggestion_make_string_view(String_View view, Syntax_Color color = Syntax_Color::TEXT) {
+	Editor_Suggestion result;
+	result.type = Suggestion_Type::ID;
+	result.text = view;
+	result.options.id_color = color;
 	return result;
 }
 
 Editor_Suggestion suggestion_make_id(String* id, Syntax_Color color = Syntax_Color::TEXT) {
 	Editor_Suggestion result;
 	result.type = Suggestion_Type::ID;
-	result.text = id;
+	result.text = string_view_from_string(*id);
 	result.options.id_color = color;
 	return result;
 }
@@ -2654,7 +2961,7 @@ Editor_Suggestion suggestion_make_file(int file_index) {
 	Editor_Suggestion result;
 	result.type = Suggestion_Type::FILE;
 	result.options.file_index_in_crawler = file_index;
-	result.text = &directory_crawler_get_content(syntax_editor.directory_crawler)[file_index].name;
+	result.text = string_view_from_string(directory_crawler_get_content(syntax_editor.directory_crawler)[file_index].name);
 	return result;
 }
 
@@ -2663,7 +2970,7 @@ Editor_Suggestion suggestion_make_struct_member(Datatype_Struct* struct_type, Da
 	result.type = Suggestion_Type::STRUCT_MEMBER;
 	result.options.struct_member.structure = struct_type;
 	result.options.struct_member.member_type = member_type;
-	result.text = id;
+	result.text = string_view_from_string(*id);
 	return result;
 }
 
@@ -2671,7 +2978,7 @@ Editor_Suggestion suggestion_make_enum_member(Datatype_Enum* enum_type, String* 
 	Editor_Suggestion result;
 	result.type = Suggestion_Type::ENUM_MEMBER;
 	result.options.enum_member.enumeration = enum_type;
-	result.text = id;
+	result.text = string_view_from_string(*id);
 	return result;
 }
 
@@ -2712,21 +3019,27 @@ int syntax_editor_add_tab(String file_path)
 {
 	auto& editor = syntax_editor;
 
+	String new_filepath = string_copy(file_path);
+	SCOPE_EXIT(string_destroy(&new_filepath)); // Note: on success capacity is set to 0, so it wont be destroyed
+    file_io_relative_to_full_path(&new_filepath);
+
 	// Check if file is already open in another tab
 	for (int i = 0; i < editor.tabs.size; i++) {
 		Editor_Tab* tab = editor.tabs[i];
-		if (string_equals(&file_path, &tab->filepath)) return i;
+		if (string_equals(&new_filepath, &tab->filepath)) return i;
 	}
 
 	// Return current tab if file cannot be loaded
-	if (!file_io_check_if_file_exists(file_path.characters)) {
+	if (!file_io_check_if_file_exists(new_filepath.characters)) {
 		return editor.open_tab_index;
 	}
 
 	// Create new tab
 	Editor_Tab* tab = new Editor_Tab;
-	tab->filepath = string_copy(file_path);
+	tab->filepath = new_filepath;
+	new_filepath.capacity = 0; // Take ownership
 	tab->code = source_code_load_from_file(tab->filepath);
+	word_pool_handle_words_from_code(&editor.word_pool, tab->code, &editor.arena, false);
 
 	tab->requires_recompile = true;
 	tab->history = code_history_create(tab);
@@ -2740,7 +3053,6 @@ int syntax_editor_add_tab(String file_path)
 	tab->move_cursor_horizontal_on_vertical_movement = false;
 	tab->move_to_horizontal_start = false;
 	tab->cam_start = 0;
-	tab->last_jump_index = -1;
 
 	tab->arena = Arena::create();
 	tab->folds = DynArray<Code_Fold>::create(&tab->arena);
@@ -2748,7 +3060,8 @@ int syntax_editor_add_tab(String file_path)
 	tab->child_folds = DynArray<Code_Fold>::create(&tab->arena);
 
 	tab->breakpoints = DynArray<Line_Breakpoint>::create(&tab->arena);
-	tab->jump_list = DynArray<Text_Index>::create(&tab->arena);
+	tab->screen_count = 0;
+	tab->current_screen_index = 0;
 
 	dynamic_array_push_back(&syntax_editor.tabs, tab);
 	return syntax_editor.tabs.size - 1;
@@ -2758,7 +3071,17 @@ void editor_tab_destroy(Editor_Tab* tab)
 {
 	code_history_destroy(&tab->history);
 	tab->arena.destroy();
-	source_code_destroy(tab->code);
+	for (int i = 0; i < syntax_editor.editor_compilation_data->compilation_units.size; i += 1) {
+		Compilation_Unit* unit = syntax_editor.editor_compilation_data->compilation_units[i];
+		if (unit->code == tab->code) {
+			tab->code = nullptr;
+			break;
+		}
+	}
+	if (tab->code != nullptr) {
+		source_code_destroy(tab->code);
+		tab->code = nullptr;
+	}
 	string_destroy(&tab->filepath);
 	delete tab;
 }
@@ -2820,6 +3143,8 @@ void syntax_editor_close_tab(int tab_index, bool force_close = false)
 
 	syntax_editor_save_text_file();
 
+	word_pool_handle_words_from_code(&editor.word_pool, editor.tabs[tab_index]->code, &editor.arena, true);
+
 	Editor_Tab* tab = editor.tabs[tab_index];
 	editor_tab_destroy(editor.tabs[tab_index]);
 	dynamic_array_remove_ordered(&editor.tabs, tab_index);
@@ -2848,9 +3173,13 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 	gui_initialize(text_renderer, window);
 	ui_system_initialize();
 
+	syntax_editor.word_pool_arena = Arena::create();
+	syntax_editor.word_pool = word_pool_create(&syntax_editor.word_pool_arena);
+
 	syntax_editor.debugger = debugger_create();
 	syntax_editor.fiber_pool = fiber_pool_create();
 	syntax_editor.last_code_completion_tab = -1;
+	syntax_editor.last_code_completion_was_with_words = false;
 	syntax_editor.compile_count = 0;
 	syntax_editor.random = random_make_time_initalized();
 	syntax_editor.last_update_time = timer_current_time_in_seconds();
@@ -2910,7 +3239,7 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 	// Init compiler thread info
 	syntax_editor.editor_compilation_data = compilation_data_create(syntax_editor.fiber_pool);
 	auto& compiler_thread_data = syntax_editor.compiler_thread_data;
-	compiler_thread_data.compilation_data = compilation_data_create(syntax_editor.fiber_pool);
+	compiler_thread_data.compilation_data = nullptr;
 	compiler_thread_data.build_code = false;
 	compiler_thread_data.compiler_main_unit = nullptr;
 	compiler_thread_data.work_started = false;
@@ -2928,11 +3257,114 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 	syntax_editor.main_tab_index = 0;
 
 	// Default settings
-	syntax_editor.auto_format_during_edits = true;
-	syntax_editor.show_folds_inline = true;
-	syntax_editor.auto_insert_parenthesis = true;
-	syntax_editor.show_leading_spaces = false;
-	syntax_editor.sneak_search = false;
+	syntax_editor.hide_error_mode_display_errors = false;
+	{
+		for (int i = 0; i < (int)Toggle_Option::MAX_ENUM_VALUE; i++) {
+			syntax_editor.toggle_options[i] = false;
+		}
+		syntax_editor.toggle_options[(int)Toggle_Option::AUTO_FORMAT_WHILE_EDITING] = true;
+		syntax_editor.toggle_options[(int)Toggle_Option::SHOW_FOLDS_INLINE] = true;
+		syntax_editor.toggle_options[(int)Toggle_Option::AUTO_INSERT_PARENTHESIS] = true;
+		syntax_editor.toggle_options[(int)Toggle_Option::DISPLAY_LEADING_SPACES_INDICATOR] = false;
+		syntax_editor.toggle_options[(int)Toggle_Option::SNEAK_AS_DEFAULT] = false;
+		syntax_editor.toggle_options[(int)Toggle_Option::WORD_COMPLETION_INSTEAD_OF_CODE_COMPLETION] = true;
+		syntax_editor.toggle_options[(int)Toggle_Option::HIDE_ERRORS_UNTIL_COMPILATION] = true;
+	}
+
+	// Add default words
+	{
+		auto helper_add_word = [](const char* word) {
+			word_pool_add_word(&syntax_editor.word_pool, string_view_from_cstring(word));
+		};
+
+		helper_add_word("loop");
+		helper_add_word("match");
+		helper_add_word("case");
+		helper_add_word("default");
+		helper_add_word("defer");
+		helper_add_word("defer_assign");
+		helper_add_word("instanciate");
+		helper_add_word("bake");
+		helper_add_word("get_overload");
+		helper_add_word("get_overload_poly");
+		helper_add_word("return");
+
+		helper_add_word("import");
+		helper_add_word("symbols");
+		helper_add_word("dot_calls");
+
+		helper_add_word("operators");
+		helper_add_word("add_dotcall");
+		helper_add_word("add_array_access");
+		helper_add_word("add_iterator");
+		helper_add_word("add_auto_cast");
+		helper_add_word("add_default_value");
+		helper_add_word("add_binop_addition");
+		helper_add_word("add_binop_subtraction");
+		helper_add_word("add_binop_multiply");
+		helper_add_word("add_binop_divide");
+		helper_add_word("add_binop_modulo");
+		helper_add_word("add_binop_equal");
+		helper_add_word("add_binop_not_equal");
+		helper_add_word("add_binop_less");
+		helper_add_word("add_binop_less_equal");
+		helper_add_word("add_binop_greater");
+		helper_add_word("add_binop_greater_equal");
+		helper_add_word("add_unop_not");
+		helper_add_word("add_unop_negate");
+
+		helper_add_word("size");
+		helper_add_word("data");
+		helper_add_word("int");
+		helper_add_word("float");
+		helper_add_word("bool");
+		helper_add_word("String");
+		helper_add_word("Any");
+		helper_add_word("uint");
+		helper_add_word("int");
+		helper_add_word("rawptr");
+		helper_add_word("Type_Handle");
+		helper_add_word("codepoint");
+		helper_add_word("c_string");
+		helper_add_word("c_char");
+
+		Type_System* type_system = syntax_editor.editor_compilation_data->type_system;
+		for (int i = 0; i < type_system->types.size; i++)
+		{
+			Datatype* datatype = type_system->types[i];
+			switch (datatype->type)
+			{
+			case Datatype_Type::ENUM: 
+			{
+				Datatype_Enum* enum_type = downcast<Datatype_Enum>(datatype);
+				helper_add_word(enum_type->name->characters);
+				for (int j = 0; j < enum_type->members.size; j++)
+				{
+					Enum_Member& member = enum_type->members[j];
+					helper_add_word(member.name->characters);
+				}
+				break;
+			}
+			case Datatype_Type::STRUCT:
+			{
+				Datatype_Struct* structure = downcast<Datatype_Struct>(datatype);
+				helper_add_word(structure->name->characters);
+				for (int j = 0; j < structure->members.size; j++)
+				{
+					Struct_Member& member = structure->members[j];
+					helper_add_word(member.name->characters);
+				}
+				break;
+			}
+			default: break;
+			}
+		}
+
+		for (int i = 0; i < (int)Hardcoded_Type::MAX_ENUM_VALUE; i++) {
+			auto info = hardcoded_type_get_info((Hardcoded_Type)i);
+			helper_add_word(info.symbol_name);
+		}
+	}
 }
 
 void syntax_editor_destroy()
@@ -2980,6 +3412,8 @@ void syntax_editor_destroy()
 	hashtable_destroy(&editor.filtered_passes);
 
 	fiber_pool_destroy(editor.fiber_pool);
+
+	editor.word_pool_arena.destroy();
 }
 
 void syntax_editor_save_text_file()
@@ -3062,7 +3496,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 		}
 	}
 
-	// Get latest compiler work (Check semaphore if compilation was finished)
+	// Check compiler-thread status (Check semaphore if compilation was finished)
 	auto& compiler_thread_data = editor.compiler_thread_data;
 	bool got_compiler_update = false;
 	if (compiler_thread_data.work_started)
@@ -3078,6 +3512,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 		}
 	}
 
+	// Early-exit if nothing needs to be done
 	if (!should_compile && !got_compiler_update) {
 		return;
 	}
@@ -3085,52 +3520,40 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 
 
 
-	// Update editor-compilation-data if we got an compiler update
+	// Replace editor_compilation_data with new_data, delete old data
 	if (got_compiler_update)
 	{
 		Compilation_Data* old_data = editor.editor_compilation_data;
 		Compilation_Data* updated_data = compiler_thread_data.compilation_data;
-		Compilation_Data* next_compiler_data = compilation_data_create(editor.fiber_pool);
 
 		editor.editor_compilation_data = updated_data;
-		compiler_thread_data.compilation_data = next_compiler_data;
+		compiler_thread_data.compilation_data = nullptr;
 
 		// Destroy old data
 		for (int i = 0; i < old_data->compilation_units.size; i++)
 		{
 			Compilation_Unit* old_unit = old_data->compilation_units[i];
-			bool code_was_transferred = false;
+			bool code_still_in_use = false;
 			for (int j = 0; j < updated_data->compilation_units.size; j++) 
 			{
-				Compilation_Unit* new_unit = old_data->compilation_units[j];
-				if (old_unit->code == new_unit->code) {
-					code_was_transferred = true;
+				Compilation_Unit* updated_unit = updated_data->compilation_units[j];
+				if (old_unit->code == updated_unit->code) {
+					code_still_in_use = true;
 					break;
 				}
 			}
-
-			if (code_was_transferred) {
-				old_unit->code = nullptr; // So it does not get deleted here
+			for (int j = 0; j < editor.tabs.size && !code_still_in_use; j++) {
+				auto& tab = editor.tabs[j];
+				if (old_unit->code == tab->code) {
+					code_still_in_use = true;
+					break;
+				}
+			}
+			if (code_still_in_use) {
+				old_unit->code = nullptr; // So it does not get deleted
 			}
 		}
 		compilation_data_destroy(old_data);
-
-		// Move compilation-units from updated data to next data
-		for (int i = 0; i < editor.editor_compilation_data->compilation_units.size; i++)
-		{
-			Compilation_Unit* old_unit = editor.editor_compilation_data->compilation_units[i];
-
-			int tab_index = compilation_unit_find_tab_index(old_unit);
-			// Remove units if they weren't used during compilation and are also not open in any tab
-			if (old_unit->upp_module == nullptr && tab_index == -1) {
-				continue;
-			}
-
-			// Create new unit and move source-code over
-			Compilation_Unit* new_unit = compilation_data_add_compilation_unit_unique(compiler_thread_data.compilation_data, old_unit->filepath, false, false);
-			assert(new_unit->code == nullptr && old_unit->code != nullptr, "All units from old code should be unique");
-			new_unit->code = old_unit->code;
-		}
 
 		sort_error_indices();
 		dynamic_array_reset(&editor.suggestions);
@@ -3138,33 +3561,24 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 		editor.compile_count += 1;
 	}
 
-	// Update all versions of source-code (And potentially swap in new versions)
-	Compilation_Unit* main_compilation_unit = nullptr;
+	// Bring all Source_Code up-to-date (Also make sure editor_compilation_data contains all files of editor)
 	{
-		Compilation_Data* compilation_data = editor.compiler_thread_data.compilation_data;
+		Compilation_Data* compilation_data = editor.editor_compilation_data;
 		for (int i = 0; i < editor.tabs.size; i++)
 		{
 			Editor_Tab& tab = *editor.tabs[i];
 
 			Compilation_Unit* unit = compilation_data_add_compilation_unit_unique(compilation_data, tab.filepath, false, false);
-			if (i == compile_tab_index) {
-				main_compilation_unit = unit;
-			}
-
-			// Handle first compile of new files
-			if (unit->code == nullptr) 
+			auto now = history_get_timestamp(&tab.history);
+			if (unit->code == nullptr) // If this is the first compilation_unit for this file, just copy it over
 			{
 				unit->code = source_code_copy(tab.code);
-				if (got_compiler_update) {
-					auto swap = tab.code;
-					tab.code = unit->code;
-					unit->code = tab.code;
-				}
+				tab.last_compiler_synchronized = now;
+				tab.requires_recompile = false;
 				continue;
 			}
 
-			// Update compiler source-code version with changes
-			auto now = history_get_timestamp(&tab.history);
+			// Update Source_Code with changes
 			if (tab.last_compiler_synchronized.node_index != now.node_index || tab.requires_recompile)
 			{
 				Dynamic_Array<Code_Change> changes = dynamic_array_create<Code_Change>();
@@ -3174,27 +3588,81 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 					code_change_apply(unit->code, &changes[i], true, nullptr); // Note: This does not go through history
 				}
 
-				tab.last_compiler_synchronized = history_get_timestamp(&tab.history);
+				tab.last_compiler_synchronized = now;
 				tab.requires_recompile = false;
-			}
-
-			// Swap out source-code so we get newest analysis infos
-			if (got_compiler_update) 
-			{
-				Source_Code* swap = tab.code;
-				tab.code = unit->code;
-				unit->code = swap;
 			}
 		}
 	}
 
+	// Swap in infos from compiler
+	if (got_compiler_update)
+	{
+		Compilation_Data* compilation_data = editor.editor_compilation_data;
+		for (int i = 0; i < editor.tabs.size; i++)
+		{
+			Editor_Tab* tab = editor.tabs[i];
+			Compilation_Unit* tab_unit = nullptr;
+			for (int j = 0; j < compilation_data->compilation_units.size; j++) {
+				Compilation_Unit* unit = compilation_data->compilation_units[j];
+				if (string_equals(unit->filepath, tab->filepath)) {
+					tab_unit = unit;
+					break;
+				}
+			}
+			if (tab_unit == nullptr) {
+				continue;
+			}
+
+			// Note: Even if unit was not used (e.g. upp_module == nullptr), the editor-analysis-data is reset, so we still want to swap
+			Source_Code* swap = tab->code;
+			tab->code = tab_unit->code;
+			tab_unit->code = swap;
+		}
+	}
+
+	// Create new compilation_data and start compiler-thread
 	if (should_compile)
 	{
+		Compilation_Data* last_compilation_data = syntax_editor.editor_compilation_data;
+
+		// Create new compilation-data with already used source-code
+		Compilation_Data* next_compilation_data = compilation_data_create(syntax_editor.fiber_pool);
+		Compilation_Unit* main_compilation_unit = nullptr;
+		for (int i = 0; i < last_compilation_data->compilation_units.size; i++)
+		{
+			Compilation_Unit* last_unit = last_compilation_data->compilation_units[i];
+
+			bool open_in_editor = false;
+			bool is_main_unit = false;
+			for (int j = 0; j < editor.tabs.size; j++) {
+				Editor_Tab* tab = editor.tabs[j];
+				if (string_equals(tab->filepath, last_unit->filepath)) {
+					open_in_editor = true;
+					is_main_unit = editor.main_tab_index == j || (editor.main_tab_index == -1 && j == editor.open_tab_index);
+					break;
+				}
+			}
+
+			// Dont copy over unit if it wasn't used and it's not open
+			if (last_unit->upp_module == nullptr && !open_in_editor) {
+				continue;
+			}
+
+			Compilation_Unit* new_unit = compilation_data_add_compilation_unit_unique(next_compilation_data, last_unit->filepath, false, false);
+			assert(new_unit->code == nullptr, "must be true as this was just created");
+			new_unit->code = last_unit->code;
+			if (is_main_unit) {
+				main_compilation_unit = new_unit;
+			}
+		}
+
 		editor.last_compile_main_tab_index = compile_tab_index;
 		editor.last_compile_was_with_code_gen = generate_code;
 
 		// Start work in compile thread
+		compiler_thread_data.compilation_data = next_compilation_data;
 		compiler_thread_data.compiler_main_unit = main_compilation_unit;
+		assert(main_compilation_unit != nullptr, "");
 		compiler_thread_data.build_code = generate_code;
 		compiler_thread_data.work_started = true;
 		semaphore_increment(compiler_thread_data.compiler_wait_semaphore, 1);
@@ -3313,6 +3781,11 @@ void syntax_editor_save_state(String file_path)
 	}
 	for (int i = 0; i < editor.watch_values.size; i++) {
 		string_append_formated(&output, "watch_value=%s\n", editor.watch_values[i].name.characters);
+	}
+	for (int i = 0; i < (int)Toggle_Option::MAX_ENUM_VALUE; i++)
+	{
+		Toggle_Option option = (Toggle_Option) i;
+		string_append_formated(&output, "%s=%s\n", toggle_option_as_string(option), (syntax_editor.get_option_value(option) ? "true" : "false"));
 	}
 
 	file_io_write_file(file_path.characters, array_create_static((byte*)output.characters, output.size));
@@ -3434,7 +3907,7 @@ void syntax_editor_load_state(String file_path)
 		else if (string_equals_cstring(&setting, "breakpoint"))
 		{
 			if (last_tab_valid) {
-				auto& tab = syntax_editor.open_tab();
+				Editor_Tab& tab = syntax_editor.open_tab();
 
 				auto int_parse = string_parse_int(&value);
 				if (!int_parse.available) {
@@ -3456,8 +3929,29 @@ void syntax_editor_load_state(String file_path)
 			watch_value.show_multiline = false;
 			dynamic_array_push_back(&editor.watch_values, watch_value);
 		}
-		else {
-			logg("Unrecognized session option: %s\n", setting.characters);
+		else 
+		{
+			// Search toggle options
+			int toggle_option_index = -1;
+			for (int i = 0; i < (int)Toggle_Option::MAX_ENUM_VALUE; i++) 
+			{
+				Toggle_Option option = (Toggle_Option)i;
+				if (string_equals_cstring(&setting, toggle_option_as_string(option))) {
+					toggle_option_index = i;
+					break;
+				}
+			}
+
+			if (toggle_option_index == -1) {
+				logg("Unrecognized session option: %s\n", setting.characters);
+			}
+			else 
+			{
+				if (!string_equals_cstring(&value, "true") && !string_equals_cstring(&value, "false")) {
+					continue;
+				}
+				syntax_editor.toggle_options[toggle_option_index] = string_equals_cstring(&value, "true");
+			}
 		}
 
 		if (int_value_to_set != nullptr)
@@ -3501,7 +3995,7 @@ Error_Display error_display_make(String msg, Text_Range range, Compilation_Unit*
 char get_cursor_char(char dummy_char)
 {
 	auto& editor = syntax_editor;
-	auto& tab = syntax_editor.open_tab();
+	Editor_Tab& tab = syntax_editor.open_tab();
 	auto& c = tab.cursor;
 
 	int index = c.character;
@@ -3516,7 +4010,7 @@ char get_cursor_char(char dummy_char)
 Text_Index sanitize_index(Text_Index index) 
 {
 	auto& editor = syntax_editor;
-	auto& tab = syntax_editor.open_tab();
+	Editor_Tab& tab = syntax_editor.open_tab();
 	auto code = tab.code;
 	index.character = math_maximum(index.character, 0);
 	return index;
@@ -3524,7 +4018,7 @@ Text_Index sanitize_index(Text_Index index)
 
 void syntax_editor_sanitize_cursor() 
 {
-	auto& tab = syntax_editor.open_tab();
+	Editor_Tab& tab = syntax_editor.open_tab();
 	auto& code = tab.code;
 	auto& cursor = tab.cursor;
 	cursor.character = math_maximum(0, cursor.character);
@@ -3532,43 +4026,197 @@ void syntax_editor_sanitize_cursor()
 
 
 
-// Auto formating
-bool syntax_editor_add_position_to_jump_list()
-{
-	auto& editor = syntax_editor;
-	auto& tab = syntax_editor.open_tab();
-	auto& cursor = tab.cursor;
+// Recent Screen
+Recent_Screen recent_screen_make(Text_Index cursor, int camera_start, int visual_distance) {
+	Recent_Screen screen;
+	screen.cursor = cursor;
+	screen.cam_start = camera_start;
+	screen.visual_distance = visual_distance;
+	return screen;
+}
 
-	auto& jump_list = tab.jump_list;
-	auto& last_jump_index = tab.last_jump_index;
-	if (jump_list.size == 0) {
-		jump_list.push_back(cursor);
-		last_jump_index = 0;
-		return true;
+Recent_Screen recent_screen_make_current() {
+	Editor_Tab& tab = syntax_editor.open_tab();
+	return recent_screen_make(
+		tab.cursor, 
+		tab.cam_start, 
+		Folds::Line_Iter::create(tab.cam_start).visible_distance_to(tab.cursor.line)
+	);
+}
+
+void recent_screen_goto(Recent_Screen screen)
+{
+	Editor_Tab& tab = syntax_editor.open_tab();
+	tab.cursor = screen.cursor;
+	tab.cam_start = screen.cam_start;
+	Folds::remove_folds_on_line(tab.cursor.line);
+}
+
+bool recent_screens_are_close(Recent_Screen a, Recent_Screen b)
+{
+	const int CAM_START_CLOSENESS = 5;
+	const int LINE_CLOSENESS = 25;
+
+	// Recent screens are close if: The Cam-starts are close, and the visual distances are close
+	return
+		math_absolute(a.cam_start - b.cam_start) <= CAM_START_CLOSENESS &&
+		math_absolute(a.visual_distance - b.visual_distance) <= LINE_CLOSENESS;
+}
+
+void recent_screens_remove_too_close(Editor_Tab* tab = nullptr)
+{
+	if (tab == nullptr) {
+		tab = &syntax_editor.open_tab();
 	}
 
-	if (last_jump_index >= 0)
-	{
-		Text_Index last_pos = jump_list[last_jump_index];
-		if (math_absolute(last_pos.line - cursor.line) <= 7) {
-			return false;
-		}
+	bool delete_flags[EDITOR_TAB_MAX_RECENT_SCREEN_COUNT];
+	for (int i = 0; i < EDITOR_TAB_MAX_RECENT_SCREEN_COUNT; i++) {
+		delete_flags[i] = false;
+	}
 
-		if (last_jump_index - 1 >= 0) {
-			Text_Index pre_pre_pos = jump_list[last_jump_index - 1];
-			if (pre_pre_pos.line == cursor.line) {
-				return false;
+	for (int index_a = 0; index_a < tab->screen_count; index_a++)
+	{
+		Recent_Screen& screen_a = tab->screens[index_a];
+		if (delete_flags[index_a]) continue;
+
+		for (int index_b = index_a + 1; index_b < tab->screen_count; index_b++)
+		{
+			Recent_Screen& screen_b = tab->screens[index_b];
+			if (delete_flags[index_b]) continue;
+
+			if (recent_screens_are_close(screen_a, screen_b)) {
+				delete_flags[index_b] = true;
 			}
 		}
-		jump_list.rollback_to_size(math_minimum((int)jump_list.size, last_jump_index + 1));
-	}
-	else {
-		jump_list.rollback_to_size(math_minimum((int)jump_list.size, 1));
 	}
 
-	jump_list.push_back(cursor);
-	last_jump_index = jump_list.size - 1;
-	return true;
+	// Remove screens
+	int delete_count = 0;
+	for (int i = 0; i < tab->screen_count; i++)
+	{
+		if (delete_flags[i]) 
+		{
+			if (tab->current_screen_index > i) {
+				tab->current_screen_index -= 1;
+			}
+			delete_count += 1;
+			continue;
+		}
+		tab->screens[i - delete_count] = tab->screens[i];
+	}
+	tab->screen_count -= delete_count;
+}
+
+void recent_screens_store_screen(Recent_Screen screen)
+{
+	Editor_Tab& tab = syntax_editor.open_tab();
+
+	tab.current_screen_index = 0; // New screen will always be at 0
+	
+	// Check if any recent-screen is close
+	int close_screen_index = -1;
+	for (int i = 0; i < tab.screen_count; i++) {
+		if (recent_screens_are_close(tab.screens[i], screen)) {
+			close_screen_index = i;
+			break;
+		}
+	}
+
+	// Remove other close screen
+	if (close_screen_index != -1)
+	{
+		for (int i = close_screen_index; i + 1 < tab.screen_count; i += 1) {
+			tab.screens[i] = tab.screens[i + 1];
+		}
+		tab.screen_count -= 1;
+	}
+
+	// Add new screen if no close screen exists
+	tab.screen_count += 1;
+	tab.screen_count = math_minimum(tab.screen_count, EDITOR_TAB_MAX_RECENT_SCREEN_COUNT);
+	for (int i = tab.screen_count - 1; i > 0; i -= 1) {
+		tab.screens[i] = tab.screens[i - 1];
+	}
+	tab.screens[0] = screen;
+}
+
+void recent_screens_store_current()
+{
+	recent_screens_store_screen(recent_screen_make_current());
+}
+
+void recent_screen_handle_line_insert(Editor_Tab* tab, int line_index)
+{
+	if (tab == nullptr) tab = &syntax_editor.open_tab();
+
+	for (int i = 0; i < tab->screen_count; i++) 
+	{
+		Recent_Screen& screen = tab->screens[i];
+		bool cam_adjusted = false;
+		if (line_index <= screen.cam_start) {
+			screen.cam_start += 1;
+			cam_adjusted = true;
+		}
+		bool cursor_adjusted = false;
+		if (line_index <= screen.cursor.line) {
+			screen.cursor.line += 1;
+			cursor_adjusted = true;
+		}
+		if (cam_adjusted != cursor_adjusted) {
+			screen.visual_distance += 1;
+		}
+	}
+
+	recent_screens_remove_too_close(tab);
+	recent_screens_store_screen(recent_screen_make_current());
+}
+
+void recent_screen_handle_line_delete(Editor_Tab* tab, int line_index)
+{
+	if (tab == nullptr) tab = &syntax_editor.open_tab();
+
+	for (int i = 0; i < tab->screen_count; i++) 
+	{
+		Recent_Screen& screen = tab->screens[i];
+		bool cam_adjusted = false;
+		if (line_index < screen.cam_start) {
+			screen.cam_start -= 1;
+			cam_adjusted = true;
+		}
+		bool cursor_adjusted = false;
+		if (line_index <= screen.cursor.line) {
+			screen.cursor.line += 1;
+			cursor_adjusted = true;
+		}
+		if (cam_adjusted != cursor_adjusted) {
+			screen.visual_distance -= 1;
+		}
+	}
+
+	recent_screens_remove_too_close(tab);
+	recent_screens_store_screen(recent_screen_make_current());
+}
+
+
+
+
+
+// Auto formating
+void center_camera_on_cursor_if_cursor_not_visible()
+{
+	auto& tab = syntax_editor.open_tab();
+
+	Folds::Line_Iter line_iter = Folds::Line_Iter::create(tab.cam_start);
+	line_iter.move_to_fold_boundary(-1, true);
+
+	int distance_to_cursor = line_iter.visible_distance_to(tab.cursor.line);
+	if (distance_to_cursor >= 0 && distance_to_cursor <= syntax_editor.visible_line_count) {
+		return;
+	}
+
+	line_iter = Folds::Line_Iter::create(tab.cursor.line);
+	line_iter.move(-syntax_editor.visible_line_count / 2);
+	tab.cam_start = line_iter.line_index;
 }
 
 void syntax_editor_goto_symbol_definition(Symbol* symbol)
@@ -3576,14 +4224,16 @@ void syntax_editor_goto_symbol_definition(Symbol* symbol)
 	auto& editor = syntax_editor;
 
 	// Switch tab to file with symbol
-	auto unit = compilation_data_ast_node_to_compilation_unit(editor.editor_compilation_data, upcast(symbol->definition_node));
+	if (symbol->definition_node == nullptr) return;
+	auto unit = ast_node_to_compilation_unit(upcast(symbol->definition_node));
 	if (unit == nullptr) return;
 	int index = syntax_editor_add_tab(unit->filepath); // Doesn't add a tab if already open
 	syntax_editor_switch_tab(index);
 
-	auto& tab = syntax_editor.open_tab();
+	Editor_Tab& tab = syntax_editor.open_tab();
 	tab.cursor = code_query_text_index_at_last_synchronize(symbol->definition_node->base.range.start, editor.open_tab_index, true);
 	syntax_editor_sanitize_cursor();
+	center_camera_on_cursor_if_cursor_not_visible();
 }
 
 
@@ -3915,7 +4565,7 @@ Position_Info code_query_find_position_infos(Text_Index index, DynArray<int>* er
 	result.call_argument_index = -1;
 
 	auto& editor = syntax_editor;
-	auto& tab = syntax_editor.open_tab();
+	Editor_Tab& tab = syntax_editor.open_tab();
 
 	if (index.line < 0 || index.line >= tab.code->line_count) return result;
 
@@ -4022,7 +4672,7 @@ Position_Info code_query_find_position_infos(Text_Index index, DynArray<int>* er
 Symbol_Table* code_query_find_symbol_table_at_position(Text_Index index)
 {
 	auto& editor = syntax_editor;
-	auto& tab = syntax_editor.open_tab();
+	Editor_Tab& tab = syntax_editor.open_tab();
 
 	index = code_query_text_index_at_last_synchronize(index, editor.open_tab_index, false);
 
@@ -4062,7 +4712,7 @@ Symbol_Table* code_query_find_symbol_table_at_position(Text_Index index)
 void suggestions_fill_with_file_directory(String search_path)
 {
 	auto& editor = syntax_editor;
-	auto& tab = syntax_editor.open_tab();
+	Editor_Tab& tab = syntax_editor.open_tab();
 
 	Array<String> path_parts = string_split(search_path, '/');
 	SCOPE_EXIT(string_split_destroy(path_parts));
@@ -4223,14 +4873,16 @@ String_Path_Lookup_Info string_path_lookup_resolve(String path_lookup_text, Symb
 void code_completion_find_suggestions()
 {
 	auto& editor = syntax_editor;
-	auto& tab = syntax_editor.open_tab();
+	Editor_Tab& tab = syntax_editor.open_tab();
 	auto& suggestions = editor.suggestions;
 	auto& cursor = tab.cursor;
 
 	// Early exit if we have suggestions cached
+	bool complete_with_words = editor.get_option_value(Toggle_Option::WORD_COMPLETION_INSTEAD_OF_CODE_COMPLETION);
 	if (text_index_equal(tab.last_code_completion_query_pos, cursor) &&
 		editor.last_code_completion_tab == editor.open_tab_index &&
-		tab.last_code_completion_info_index == editor.compile_count)
+		(editor.last_code_completion_was_with_words == complete_with_words) &&
+		(complete_with_words || tab.last_code_completion_info_index == editor.compile_count))
 	{
 		return;
 	}
@@ -4238,6 +4890,50 @@ void code_completion_find_suggestions()
 	tab.last_code_completion_query_pos = cursor;
 	editor.last_code_completion_tab = editor.open_tab_index;
 	dynamic_array_reset(&suggestions);
+
+	if (complete_with_words)
+	{
+		auto helper_string_get_char = [](String str, int index) -> char {
+			if (index >= 0 && index < str.size) return str.characters[index];
+			return '\0';
+		};
+		String line_text = line_index_get_text(cursor.line);
+		int character_pos = cursor.character;
+
+		// Find word end (There could be spaces etc. after last word
+		int word_end = math_minimum(line_text.size, character_pos);
+		while (helper_string_get_char(line_text, word_end - 1) == ' ') {
+			word_end -= 1;
+		}
+		
+		// Find word start
+		int word_start = word_end - 1;
+		if (!char_group_type_contains(helper_string_get_char(line_text, word_start), Char_Group_Type::IDENTIFIER)) {
+			return;
+		}
+		while (char_group_type_contains(helper_string_get_char(line_text, word_start - 1), Char_Group_Type::IDENTIFIER)) {
+			word_start -= 1;
+		}
+
+		String_View query_word = string_view_from_string(string_create_substring_static(&line_text, word_start, word_end));
+		fuzzy_search_start_search(string_view_to_string(query_word), 10);
+		Word_Pool& word_pool = editor.word_pool;
+		for (int i = 0; i < word_pool.words.size; i++) {
+			String_View_Refcount pool_word = word_pool.words[i];
+			// Don't display current word as suggestion if it's the only instance of the word
+			if (pool_word.reference_count == 1 && equals_string_view(&query_word, &pool_word.string_view)) {
+				continue;
+			}
+			fuzzy_search_add_item(string_view_to_string(pool_word.string_view), i);
+		}
+
+		// Add results to suggestions
+		auto results = fuzzy_search_get_results(true, 3);
+		for (int i = 0; i < results.size; i++) {
+			dynamic_array_push_back(&suggestions, suggestion_make_string_view(word_pool.words[results[i].user_index].string_view));
+		}
+		return;
+	}
 
 	// Don't show suggestions on empty line
 	int whitespace_count = line_count_leading_spaces(cursor.line);
@@ -4436,7 +5132,7 @@ void code_completion_find_suggestions()
 	}
 
 	// Dot-call access
-	if (helper_test_token(operator_token_index, Token_Type::POSTFIX_CALL_ARROW) && symbol_table != nullptr)
+	if (helper_test_token(operator_token_index, Token_Type::FAST_CALL_ARROW) && symbol_table != nullptr)
 	{
 		// Find call value type, should be info before ->, so op_index - 1
 		Datatype* call_value_type = nullptr;
@@ -4453,7 +5149,7 @@ void code_completion_find_suggestions()
 		}
 
 		DynArray<Symbol*> symbols = symbol_table_query_all_symbols(
-			symbol_table, symbol_query_info_make(Symbol_Access_Level::INTERNAL, Import_Type::DOT_CALLS, true), &tmp_arena
+			symbol_table, symbol_query_info_make(Symbol_Access_Level::INTERNAL, Import_Type::SYMBOLS, true), &tmp_arena
 		);
 		// Filter symbols that match the first argument given
 		for (int i = 0; i < symbols.size; i++)
@@ -4483,6 +5179,10 @@ void code_completion_find_suggestions()
 			}
 			case Symbol_Type::GLOBAL: {
 				value_type = symbol->options.global->type;
+				break;
+			}
+			case Symbol_Type::FAST_CALL: {
+				call_signature = symbol->options.fast_call_function->signature;
 				break;
 			}
 			case Symbol_Type::FUNCTION: {
@@ -4700,7 +5400,7 @@ void code_completion_find_suggestions()
 void code_completion_insert_suggestion()
 {
 	auto& editor = syntax_editor;
-	auto& tab = syntax_editor.open_tab();
+	Editor_Tab& tab = syntax_editor.open_tab();
 
 	String replace_string;
 	if (editor.record_insert_commands)
@@ -4708,7 +5408,7 @@ void code_completion_insert_suggestion()
 		auto& suggestions = editor.suggestions;
 		string_reset(&editor.last_recorded_code_completion);
 		if (suggestions.size == 0) return;
-		replace_string = *suggestions[0].text;
+		replace_string = string_view_to_string(suggestions[0].text);
 		string_append_string(&editor.last_recorded_code_completion, &replace_string);
 	}
 	else {
@@ -4739,7 +5439,7 @@ void code_completion_insert_suggestion()
 void editor_enter_insert_mode()
 {
 	auto& editor = syntax_editor;
-	auto& tab = syntax_editor.open_tab();
+	Editor_Tab& tab = syntax_editor.open_tab();
 
 	if (syntax_editor.mode == Editor_Mode::INSERT) {
 		return;
@@ -4754,7 +5454,7 @@ void editor_enter_insert_mode()
 void editor_leave_insert_mode()
 {
 	auto& editor = syntax_editor;
-	auto& tab = syntax_editor.open_tab();
+	Editor_Tab& tab = syntax_editor.open_tab();
 
 	if (syntax_editor.mode != Editor_Mode::INSERT) {
 		return;
@@ -4769,7 +5469,7 @@ void editor_leave_insert_mode()
 void editor_split_line_at_cursor(int indentation_offset)
 {
 	auto& editor = syntax_editor;
-	auto& tab = syntax_editor.open_tab();
+	Editor_Tab& tab = syntax_editor.open_tab();
 	auto& mode = editor.mode;
 	auto& cursor = tab.cursor;
 
@@ -4795,7 +5495,7 @@ void editor_split_line_at_cursor(int indentation_offset)
 Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_cursor_movement)
 {
 	auto& editor = syntax_editor;
-	auto& tab = syntax_editor.open_tab();
+	Editor_Tab& tab = syntax_editor.open_tab();
 	auto code = tab.code;
 
 	Arena* arena = &syntax_editor.arena;
@@ -4886,6 +5586,8 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 		}
 	};
 
+	bool inline_folds = syntax_editor.get_option_value(Toggle_Option::SHOW_FOLDS_INLINE);
+	bool sneak_search = syntax_editor.get_option_value(Toggle_Option::SNEAK_AS_DEFAULT);
 	bool repeat_movement = true;
 	for (int repeat_index = 0; repeat_index < movement.repeat_count && repeat_movement; repeat_index++)
 	{
@@ -4897,7 +5599,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 			int dir = movement.type == Movement_Type::MOVE_UP ? -1 : 1;
 			Folds::Line_Iter iter = Folds::Line_Iter::create(pos.line);
 			iter.move(movement.repeat_count * dir);
-			iter.move_to_fold_boundary(-1, syntax_editor.show_folds_inline);
+			iter.move_to_fold_boundary(-1, inline_folds);
 			pos.line = iter.line_index;
 
 			// Set position on line
@@ -4907,7 +5609,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 		}
 		case Movement_Type::MOVE_LEFT: 
 		{
-			if (!syntax_editor.show_folds_inline && Folds::get_line_area(pos.line).inside_fold) {
+			if (!inline_folds && Folds::get_line_area(pos.line).inside_fold) {
 				Folds::remove_folds_on_line(pos.line);
 				break;
 			}
@@ -4917,7 +5619,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 		}
 		case Movement_Type::MOVE_RIGHT: 
 		{
-			if (!syntax_editor.show_folds_inline && Folds::get_line_area(pos.line).inside_fold) {
+			if (!inline_folds && Folds::get_line_area(pos.line).inside_fold) {
 				Folds::remove_folds_on_line(pos.line);
 				break;
 			}
@@ -4937,7 +5639,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 		{
 			pos.character = line_text.size;
 			if (line_is_empty(line_text, false)) {
-				pos.character = line_estimate_indentation(pos.line);
+				pos.character = line_estimate_leading_spaces(pos.line);
 			}
 			else if (is_cursor_movement && editor.mode != Editor_Mode::INSERT) {
 				pos.character = math_maximum(0, line_text.size - 1);
@@ -4960,7 +5662,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 		{
 			pos.character = 0;
 			if (line_is_empty(line_text, false)) {
-				pos.character = line_estimate_indentation(pos.line);
+				pos.character = line_estimate_leading_spaces(pos.line);
 			}
 			else {
 				pos.character = line_count_leading_spaces(line_text);
@@ -5154,6 +5856,25 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 			}
 			break;
 		}
+		case Movement_Type::CURSOR_INDENTATION_ITEM_START:
+		{
+			Text_Range item_range = motion_evaluate(Parsing::motion_make(Motion_Type::CURSOR_INDENTATION_ITEM_BACKWARDS, 1, false), pos);
+			if (pos.line != item_range.start.line) {
+				pos.line = item_range.start.line;
+			}
+			else if (pos.line > 0) {
+				pos.line = pos.line - 1;
+				item_range = motion_evaluate(Parsing::motion_make(Motion_Type::CURSOR_INDENTATION_ITEM_BACKWARDS, 1, false), pos);
+				pos.line = item_range.start.line;
+			}
+			break;
+		}
+		case Movement_Type::CURSOR_INDENTATION_ITEM_END:
+		{
+			Text_Range item_range = motion_evaluate(Parsing::motion_make(Motion_Type::CURSOR_INDENTATION_ITEM_FORWARDS, 1, true), pos);
+			pos.line = item_range.end.line + 1;
+			break;
+		}
 		case Movement_Type::BLOCK_START:
 		{
 			Text_Range block_range = motion_evaluate(Parsing::motion_make(Motion_Type::BLOCK, movement.repeat_count, false), pos);
@@ -5171,6 +5892,14 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 		}
 		case Movement_Type::BLOCK_END:
 		{
+			int block_indentation = pos.character / 4;
+			int line_index = pos.line;
+			// Line is empty == move forwards until we hit a block at our indentation
+			while (line_index < code->line_count && line_is_empty(line_index, false)) {
+				line_index += 1;
+			}
+				
+
 			Text_Range block_range = motion_evaluate(Parsing::motion_make(Motion_Type::BLOCK, movement.repeat_count, false), pos);
 			if (pos.line != block_range.end.line) {
 				pos.line = block_range.end.line;
@@ -5222,15 +5951,15 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 			editor.last_search_was_to = movement.type == Movement_Type::SEARCH_BACKWARDS_TO || movement.type == Movement_Type::SEARCH_FORWARDS_TO;
 			editor.last_search_char = movement.search_char;
 			editor.last_search_char2 = movement.search_char2;
-			do_char_search(editor.last_search_was_forward, editor.last_search_was_to, editor.sneak_search);
+			do_char_search(editor.last_search_was_forward, editor.last_search_was_to, sneak_search);
 			break;
 		}
 		case Movement_Type::REPEAT_LAST_SEARCH: {
-			do_char_search(editor.last_search_was_forward, editor.last_search_was_to, editor.sneak_search);
+			do_char_search(editor.last_search_was_forward, editor.last_search_was_to, sneak_search);
 			break;
 		}
 		case Movement_Type::REPEAT_LAST_SEARCH_REVERSE_DIRECTION: {
-			do_char_search(!editor.last_search_was_forward, editor.last_search_was_to, editor.sneak_search);
+			do_char_search(!editor.last_search_was_forward, editor.last_search_was_to, sneak_search);
 			break;
 		}
 		case Movement_Type::SNEAK_FORWARDS:
@@ -5246,7 +5975,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 		case Movement_Type::REPEAT_TEXT_SEARCH_REVERSE:
 		case Movement_Type::REPEAT_TEXT_SEARCH:
 		{
-			auto& tab = syntax_editor.open_tab();
+			Editor_Tab& tab = syntax_editor.open_tab();
 			auto& search_text = editor.search_text;
 
 			bool search_reverse = editor.search_reverse;
@@ -5321,6 +6050,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 		}
 
 		pos = sanitize_index(pos);
+		center_camera_on_cursor_if_cursor_not_visible();
 		String line_text = line_index_get_text(pos.line);
 		if (is_cursor_movement && !is_pure_vertical_movement) {
 			tab.move_cursor_horizontal_on_vertical_movement = false;
@@ -5333,7 +6063,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 Text_Range motion_evaluate(const Motion& motion, Text_Index pos)
 {
 	auto& editor = syntax_editor;
-	auto& tab = syntax_editor.open_tab();
+	Editor_Tab& tab = syntax_editor.open_tab();
 	auto code = tab.code;
 
 	Arena* arena = &syntax_editor.arena;
@@ -5459,12 +6189,79 @@ Text_Range motion_evaluate(const Motion& motion, Text_Index pos)
 
 		break;
 	}
+	case Motion_Type::CURSOR_INDENTATION_ITEM_FORWARDS:
+	case Motion_Type::CURSOR_INDENTATION_ITEM_BACKWARDS:
+	{
+		if (motion.repeat_count == 0) break;
+
+		bool is_forwards = motion.motion_type == Motion_Type::CURSOR_INDENTATION_ITEM_FORWARDS;
+
+		int cursor_indentation = pos.character / 4;
+
+		int line_start = pos.line + 1; // +1 because we decrease by -1 for every repeat count
+		int backward_count = is_forwards ? 1 : motion.repeat_count;
+		for (int i = 0; i < backward_count; i++)
+		{
+			line_start -= 1;
+			line_start = math_maximum(line_start, 0);
+			while (line_start > 0)
+			{
+				if (line_is_empty(line_start, false)) {
+					line_start -= 1;
+					continue;
+				}
+				int line_indent = line_count_leading_spaces(line_start) / 4;
+				if (line_indent <= cursor_indentation) {
+					break;
+				}
+				line_start -= 1;
+			}
+		}
+
+		int line_end = pos.line - 1; // Because we always increment by 1 each repeat-count, we start at - 1
+		int forward_count = is_forwards ? motion.repeat_count : 1;
+		for (int i = 0; i < forward_count; i++)
+		{
+			line_end += 1;
+			line_end = math_minimum(tab.code->line_count, line_end);
+			while (line_end < tab.code->line_count)
+			{
+				if (line_is_empty(line_end + 1, false)) {
+					line_end += 1;
+					continue;
+				}
+				int next_indentation = line_count_leading_spaces(line_end + 1) / 4;
+				if (next_indentation <= cursor_indentation) {
+					break;
+				}
+				line_end += 1;
+			}
+		}
+
+		// Also take whitespaces if requested
+		if (motion.contains_edges) 
+		{
+			while (line_start - 1 >= 0 && line_is_empty(line_start - 1, false)) {
+				line_start -= 1;
+			}
+		}
+		else
+		{
+			while (line_end > line_start && line_is_empty(line_end, false)) {
+				line_end -= 1;
+			}
+		}
+
+		result = text_range_make(text_index_make(line_start, 0), text_index_make_line_end(code, line_end));
+		break;
+	}
 	case Motion_Type::BLOCK:
 	{
 		if (motion.repeat_count == 0) break;
 
 		int start_indentation = line_estimate_indentation(pos.line);
-		int target_indent = start_indentation - (motion.repeat_count - 1);
+		start_indentation = math_minimum(start_indentation, pos.character / 4); // Also use cursor as block indentation indicator
+		int target_indent = math_maximum(0, start_indentation - (motion.repeat_count - 1));
 		if (target_indent <= 0) {
 			result = text_range_make(text_index_make(0, 0), text_index_make_line_end(code, code->line_count -1));
 			break;
@@ -5520,6 +6317,8 @@ bool motion_is_line_motion(const Motion & motion) {
 	return
 		motion.motion_type == Motion_Type::BLOCK ||
 		motion.motion_type == Motion_Type::PARAGRAPH ||
+		motion.motion_type == Motion_Type::CURSOR_INDENTATION_ITEM_BACKWARDS ||
+		motion.motion_type == Motion_Type::CURSOR_INDENTATION_ITEM_FORWARDS ||
 		(motion.motion_type == Motion_Type::MOVEMENT &&
 			(motion.movement.type == Movement_Type::GOTO_START_OF_TEXT ||
 				motion.movement.type == Movement_Type::GOTO_END_OF_TEXT ||
@@ -5531,7 +6330,7 @@ bool motion_is_line_motion(const Motion & motion) {
 void text_range_append_to_string(Text_Range range, String* str)
 {
 	auto& editor = syntax_editor;
-	auto& tab = syntax_editor.open_tab();
+	Editor_Tab& tab = syntax_editor.open_tab();
 	auto code = tab.code;
 
 	// Handle single line case first
@@ -5575,7 +6374,7 @@ void insert_command_execute(Insert_Command input);
 void syntax_editor_insert_yank(bool before_cursor)
 {
 	auto& editor = syntax_editor;
-	auto& tab = syntax_editor.open_tab();
+	Editor_Tab& tab = syntax_editor.open_tab();
 	auto code = tab.code;
 	auto& cursor = tab.cursor;
 	auto history = &tab.history;
@@ -5627,7 +6426,7 @@ void syntax_editor_insert_yank(bool before_cursor)
 	}
 
 	// Insert text
-	int cursor_line_indent = line_estimate_indentation(cursor.line) / 4;
+	int cursor_line_indent = line_estimate_indentation(cursor.line);
 	if (editor.yank_was_line)
 	{
 		int line_insert_index = cursor.line + (before_cursor ? 0 : 1);
@@ -5700,6 +6499,7 @@ void normal_command_execute(Normal_Mode_Command & command)
 	auto code = tab.code;
 	auto& cursor = tab.cursor;
 	auto history = &tab.history;
+	const bool inline_folds = syntax_editor.get_option_value(Toggle_Option::SHOW_FOLDS_INLINE);
 
 	String line_text = line_index_get_text(cursor.line);
 
@@ -5726,6 +6526,7 @@ void normal_command_execute(Normal_Mode_Command & command)
 		case Normal_Command_Type::CLOSE_TAB:
 		case Normal_Command_Type::FOLD_MOTION:
 		case Normal_Command_Type::FOLD_HIGHER_INDENT_IN_BLOCK:
+		case Normal_Command_Type::FOLD_MULTIPLE_SPACES_IN_BLOCK:
 		case Normal_Command_Type::UNFOLD_IN_BLOCK:
 		case Normal_Command_Type::ENTER_VISUAL_BLOCK_MODE:
 		case Normal_Command_Type::ENTER_FUZZY_FIND_DEFINITION:
@@ -5734,8 +6535,9 @@ void normal_command_execute(Normal_Mode_Command & command)
 		case Normal_Command_Type::ENTER_TEXT_SEARCH_REVERSE:
 		case Normal_Command_Type::SEARCH_IDENTIFER_UNDER_CURSOR:
 		case Normal_Command_Type::VISUALIZE_MOTION:
-		case Normal_Command_Type::GOTO_LAST_JUMP:
-		case Normal_Command_Type::GOTO_NEXT_JUMP:
+		case Normal_Command_Type::GOTO_LAST_SCREEN:
+		case Normal_Command_Type::GOTO_NEXT_SCREEN:
+		case Normal_Command_Type::STORE_SCREEN:
 		case Normal_Command_Type::TOGGLE_LINE_BREAKPOINT:
 			command_ok = true;
 		}
@@ -5791,20 +6593,13 @@ void normal_command_execute(Normal_Mode_Command & command)
 			if (Folds::get_line_area(cursor.line).inside_fold) {
 				Folds::remove_folds_on_line(cursor.line);
 			}
-			else if (syntax_editor.show_folds_inline && cursor.character >= line_text.size - 1) {
+			else if (inline_folds && cursor.character >= line_text.size - 1) {
 				Folds::remove_folds_on_line(cursor.line + 1);
 			}
 		}
 
 		cursor = movement_evaluate(movement, cursor, true);
 		syntax_editor_sanitize_cursor();
-
-		if (movement.type == Movement_Type::JUMP_ENCLOSURE || movement.type == Movement_Type::GOTO_LINE_NUMBER ||
-			movement.type == Movement_Type::PARAGRAPH_START || movement.type == Movement_Type::PARAGRAPH_END)
-		{
-			syntax_editor_add_position_to_jump_list();
-		}
-
 		break;
 	}
 	case Normal_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT: {
@@ -5820,7 +6615,7 @@ void normal_command_execute(Normal_Mode_Command & command)
 		bool below = command.type == Normal_Command_Type::ENTER_INSERT_MODE_NEW_LINE_BELOW;
 		int new_line_index = cursor.line + (below ? 1 : 0);
 
-		if (below && syntax_editor.show_folds_inline) {
+		if (below && inline_folds) {
 			auto area = Folds::get_line_area(cursor.line + 1);
 			if (area.inside_fold) {
 				new_line_index = area.interval.max;
@@ -5881,6 +6676,9 @@ void normal_command_execute(Normal_Mode_Command & command)
 			auto range = motion_evaluate(command.options.motion, cursor);
 			Text_Editing::delete_text_range(range, is_line_motion, true);
 			cursor = range.start;
+		}
+		else {
+			recent_screens_store_screen(recent_screen_make_current());
 		}
 		break;
 	}
@@ -6030,8 +6828,8 @@ void normal_command_execute(Normal_Mode_Command & command)
 
 		// Goto symbol definition if symbol
 		if (position_info.symbol_info != nullptr) {
+			recent_screens_store_current();
 			syntax_editor_goto_symbol_definition(position_info.symbol_info->symbol);
-			syntax_editor_add_position_to_jump_list();
 		}
 
 		// Handle Goto-Member access
@@ -6075,16 +6873,15 @@ void normal_command_execute(Normal_Mode_Command & command)
 	case Normal_Command_Type::ENTER_SHOW_ERROR_MODE: 
 	{
 		syntax_editor_wait_for_newest_compiler_info(false);
-		if (editor.editor_compilation_data->code_errors.size == 0) {
-			break;
-		}
+		syntax_editor.hide_error_mode_display_errors = true;
+		// if (editor.editor_compilation_data->code_errors.size == 0) {
+		// 	break;
+		// }
 
 		editor.mode = Editor_Mode::ERROR_NAVIGATION;
-		editor.navigate_error_mode_cursor_before = tab.cursor;
-		editor.navigate_error_mode_tab_before = editor.open_tab_index;
 		editor.navigate_error_cam_start = 0;
 		editor.navigate_error_index = 0;
-		center_cursor_on_error(editor.error_indices_sorted[editor.navigate_error_index]);
+		// center_cursor_on_error(editor.error_indices_sorted[editor.navigate_error_index]);
 		break;
 	}
 	case Normal_Command_Type::ENTER_VISUAL_BLOCK_MODE: 
@@ -6117,7 +6914,7 @@ void normal_command_execute(Normal_Mode_Command & command)
 		string_append_string(&editor.search_text, &substr);
 
 		cursor = movement_evaluate(Parsing::movement_make(Movement_Type::REPEAT_TEXT_SEARCH, 1), cursor, true);
-		syntax_editor_add_position_to_jump_list();
+		recent_screens_store_current();
 		break;
 	}
 	case Normal_Command_Type::ADD_INDENTATION:
@@ -6139,16 +6936,17 @@ void normal_command_execute(Normal_Mode_Command & command)
 		}
 		break;
 	}
-	case Normal_Command_Type::REMOVE_INDENTATION: 
+	case Normal_Command_Type::REMOVE_INDENTATION:
 	{
 		Motion motion = command.options.motion;
 		Text_Range range = motion_evaluate(motion, cursor);
-		int min_indentation = line_get_whitespace_indentation(range.start.line);
+		int min_indentation = _I32_MAX;
 		for (int i = range.start.line; i <= range.end.line; i++) {
+			if (line_is_empty(i, false)) continue;
 			min_indentation = math_minimum(min_indentation, line_get_whitespace_indentation(i));
 		}
 		int max_remove_count = min_indentation * 4;
-		for (int i = range.start.line; i <= range.end.line; i++) 
+		for (int i = range.start.line; i <= range.end.line; i++)
 		{
 			int indentation = line_get_whitespace_indentation(i);
 			int remove_char_count = math_minimum(max_remove_count, command.repeat_count * 4);
@@ -6157,8 +6955,11 @@ void normal_command_execute(Normal_Mode_Command & command)
 		}
 		break;
 	}
-	case Normal_Command_Type::FOLD_MOTION: 
+	case Normal_Command_Type::FOLD_MOTION:
 	{
+		Folds::print_folds(&tab);
+		SCOPE_EXIT(Folds::print_folds(&tab));
+
 		// If we are currently in a fold we don't fold
 		if (Folds::get_line_area(cursor.line).inside_fold) {
 			break;
@@ -6172,6 +6973,8 @@ void normal_command_execute(Normal_Mode_Command & command)
 	}
 	case Normal_Command_Type::FOLD_HIGHER_INDENT_IN_BLOCK:
 	{
+		Folds::print_folds(&tab);
+		SCOPE_EXIT(Folds::print_folds(&tab));
 		// If we are currently in a fold we don't fold
 		if (Folds::get_line_area(cursor.line).inside_fold) {
 			break;
@@ -6179,19 +6982,20 @@ void normal_command_execute(Normal_Mode_Command & command)
 
 		Text_Range range = motion_evaluate(Parsing::motion_make(Motion_Type::BLOCK, 1, false), cursor);
 		int target_indent = line_estimate_indentation(cursor.line);
+		target_indent = math_minimum(cursor.character / 4, target_indent);
 		Line_Iter iter = Line_Iter::create(range.start.line);
 
 		int last_start = -1;
 		for (int i = range.start.line; i <= range.end.line; i++)
 		{
 			int line_indent = line_estimate_indentation(i);
-			if (last_start == -1) 
+			if (last_start == -1)
 			{
 				if (line_indent > target_indent) {
 					last_start = i;
 				}
 			}
-			else if (line_indent <= target_indent) 
+			else if (line_indent <= target_indent)
 			{
 				Folds::add_fold(ibox1(last_start, i));
 				last_start = -1;
@@ -6203,8 +7007,70 @@ void normal_command_execute(Normal_Mode_Command & command)
 
 		break;
 	}
+	case Normal_Command_Type::FOLD_MULTIPLE_SPACES_IN_BLOCK:
+	{
+		Folds::print_folds(&tab);
+		SCOPE_EXIT(Folds::print_folds(&tab));
+
+		// If we are currently in a fold we don't fold
+		if (Folds::get_line_area(cursor.line).inside_fold) {
+			break;
+		}
+
+		Text_Range range = motion_evaluate(Parsing::motion_make(Motion_Type::BLOCK, 1, false), cursor);
+		int target_indent = math_minimum(cursor.character / 4, line_estimate_indentation(cursor.line));
+		Line_Iter iter = Line_Iter::create(range.start.line);
+
+		if (range.start.line == range.end.line) return;
+
+		int line_index = range.start.line;
+		while (line_index < range.end.line)
+		{
+			// At start ignore empty lines and lines that have higher indent than the current block
+			int fold_start = line_index;
+			while (fold_start < range.end.line && (line_estimate_indentation(fold_start) > target_indent || line_is_empty(fold_start, false))) {
+				fold_start += 1;
+			}
+
+			// While there aren't two or more empty lines followed by a line of the target/lower indentation, move forwards
+			int fold_end = fold_start;
+			int empty_count = 0;
+			while (true)
+			{
+				// Fold until end of block
+				if (fold_end >= range.end.line) {
+					fold_end = range.end.line;
+					break;
+				}
+				if (line_is_empty(fold_end, false)) {
+					empty_count += 1;
+				}
+				else if (empty_count >= 2 && line_estimate_indentation(fold_end) <= target_indent)
+				{
+					fold_end -= 2; // Dont fold current line + keep one spacing fold above
+					break;
+				}
+				else {
+					empty_count = 0;
+				}
+				fold_end += 1;
+			}
+
+			// Add fold
+			fold_start += 1; // First line of the item should not be folded (Header)
+			if (fold_end >= fold_start) {
+				Folds::add_fold(ibox1(fold_start, fold_end + 1));
+			}
+
+			line_index = fold_end + 1;
+		}
+
+		break;
+	}
 	case Normal_Command_Type::UNFOLD_IN_BLOCK:
 	{
+		Folds::print_folds(&tab);
+		SCOPE_EXIT(Folds::print_folds(&tab));
 		if (command.repeat_count == 0) break;
 
 		Text_Range range = motion_evaluate(Parsing::motion_make(Motion_Type::BLOCK, command.repeat_count, false), cursor);
@@ -6222,45 +7088,70 @@ void normal_command_execute(Normal_Mode_Command & command)
 		}
 		break;
 	}
-	case Normal_Command_Type::GOTO_LAST_JUMP: 
+	case Normal_Command_Type::STORE_SCREEN:
 	{
-		auto& jump_list = tab.jump_list;
-		auto& last_jump_index = tab.last_jump_index;
-		if (jump_list.size <= 0 || last_jump_index < 0) break;
-
-		Text_Index jump_to = jump_list[last_jump_index];
-		last_jump_index -= 1;
-
-		if (jump_to.line == cursor.line) {
-			if (last_jump_index < 0) {
-				break;
-			}
-			jump_to = jump_list[last_jump_index];
-			last_jump_index -= 1;
-		}
-
-		cursor = jump_to;
-		syntax_editor_sanitize_cursor();
+		recent_screens_store_screen(recent_screen_make_current());
 		break;
 	}
-	case Normal_Command_Type::GOTO_NEXT_JUMP: 
+	case Normal_Command_Type::GOTO_LAST_SCREEN:  // Ctrl-O
 	{
-		auto& jump_list = tab.jump_list;
-		auto& last_jump_index = tab.last_jump_index;
-		if (jump_list.size <= 0) break;
+		assert(tab.screen_count <= EDITOR_TAB_MAX_RECENT_SCREEN_COUNT, "");
+		assert(tab.current_screen_index <= tab.screen_count, "");
 
-		if (last_jump_index + 1 >= jump_list.size) break;
-		last_jump_index += 1;
-		Text_Index jump_to = jump_list[last_jump_index];
+		// Store current screen if we are on screen-index 0
+		if (tab.current_screen_index == 0) 
+		{
+			recent_screens_store_screen(recent_screen_make_current());
+			// If we only have this screen, return
+			if (tab.screen_count <= 1) {
+				break;
+			}
 
-		if (jump_to.line == cursor.line) {
-			if (last_jump_index + 1 >= jump_list.size) break;
-			last_jump_index += 1;
-			jump_to = jump_list[last_jump_index];
+			recent_screen_goto(tab.screens[1]);
+			tab.current_screen_index = 1;
+			break;
 		}
 
-		cursor = jump_to;
-		syntax_editor_sanitize_cursor();
+		// Center on last-screen if we aren't on it perfectly
+		if (tab.current_screen_index < tab.screen_count)
+		{
+			Recent_Screen& current = tab.screens[tab.current_screen_index];
+			if (current.cam_start != tab.cam_start) {
+				recent_screen_goto(current);
+				break;
+			}
+		}
+
+		// Exit if we are on last screen in list
+		if (tab.current_screen_index + 1 >= tab.screen_count) {
+			break;
+		}
+
+		recent_screen_goto(tab.screens[tab.current_screen_index + 1]);
+		tab.current_screen_index += 1;
+		break;
+	}
+	case Normal_Command_Type::GOTO_NEXT_SCREEN: 
+	{
+		assert(tab.screen_count <= EDITOR_TAB_MAX_RECENT_SCREEN_COUNT, "");
+		assert(tab.current_screen_index <= tab.screen_count, "");
+
+		// Center on last-screen if we aren't on it perfectly
+		if (tab.current_screen_index < tab.screen_count)
+		{
+			Recent_Screen& current = tab.screens[tab.current_screen_index];
+			if (current.cam_start != tab.cam_start) {
+				recent_screen_goto(current);
+				break;
+			}
+		}
+
+		// Goto next screen
+		if (tab.current_screen_index <= 0) {
+			break;
+		}
+		tab.current_screen_index -= 1;
+		recent_screen_goto(tab.screens[tab.current_screen_index]);
 		break;
 	}
 	case Normal_Command_Type::VISUALIZE_MOTION: 
@@ -6306,8 +7197,9 @@ void insert_command_execute(Insert_Command input)
 	SCOPE_EXIT(syntax_editor_sanitize_cursor());
 
 	bool auto_format = true;
+	const bool auto_format_toggle_set = syntax_editor.get_option_value(Toggle_Option::AUTO_FORMAT_WHILE_EDITING);
 	SCOPE_EXIT(
-		if (auto_format && editor.auto_format_during_edits) {
+		if (auto_format && auto_format_toggle_set) {
 			Auto_Format::auto_format_line(editor.open_tab_index, cursor.line);
 		}
 	);
@@ -6469,7 +7361,7 @@ void insert_command_execute(Insert_Command input)
 	case Insert_Command_Type::DELIMITER_LETTER:
 	{
 		Text_Editing::add_padding_to_cursor();
-		bool do_auto_insert = editor.auto_insert_parenthesis;
+		bool do_auto_insert = editor.get_option_value(Toggle_Option::AUTO_FORMAT_WHILE_EDITING);
 		// Don't do auto-insert if we are inside comment, or inside string literal
 		if (do_auto_insert)
 		{
@@ -6612,7 +7504,7 @@ void insert_command_execute(Insert_Command input)
 
 		// Special whitespace handling if auto-formating is enabled
 		bool unused;
-		if (editor.auto_format_during_edits && !text_index_inside_comment_or_string_literal(cursor, unused))
+		if (auto_format_toggle_set && !text_index_inside_comment_or_string_literal(cursor, unused))
 		{
 			int delete_start = cursor.character - 1;
 			while (delete_start >= 0 && string_test_char(text, delete_start, ' ')) {
@@ -6711,7 +7603,12 @@ void syntax_editor_process_key_message(Key_Message & msg)
 		case 'd':
 		case 'D': cmd_type = Normal_Command_Type::DELETE_MOTION; break;
 		case 'y':
-		case 'Y': cmd_type = Normal_Command_Type::YANK_MOTION; break;
+		case 'Y': 
+		{
+			cmd_type = Normal_Command_Type::YANK_MOTION;
+			recent_screens_store_screen(recent_screen_make_current());
+			break;
+		}
 		case '>':
 		case '<': 
 		{
@@ -6823,8 +7720,8 @@ void syntax_editor_process_key_message(Key_Message & msg)
 				case Key_Code::R: command_type = Normal_Command_Type::REDO; break;
 				case Key_Code::U: command_type = Normal_Command_Type::SCROLL_UPWARDS_HALF_PAGE; break;
 				case Key_Code::D: command_type = Normal_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE; break;
-				case Key_Code::O: command_type = Normal_Command_Type::GOTO_LAST_JUMP; break;
-				case Key_Code::I: command_type = Normal_Command_Type::GOTO_NEXT_JUMP; break;
+				case Key_Code::O: command_type = Normal_Command_Type::GOTO_LAST_SCREEN; break;
+				case Key_Code::I: command_type = Normal_Command_Type::GOTO_NEXT_SCREEN; break;
 				case Key_Code::P: command_type = Normal_Command_Type::ENTER_FUZZY_FIND_DEFINITION; break;
 				case Key_Code::E: command_type = Normal_Command_Type::ENTER_SHOW_ERROR_MODE; break;
 				case Key_Code::G: command_type = Normal_Command_Type::GOTO_DEFINITION; break;
@@ -6877,7 +7774,6 @@ void syntax_editor_process_key_message(Key_Message & msg)
 		}
 		if (msg.key_code == Key_Code::RETURN && msg.key_down) {
 			editor.mode = Editor_Mode::NORMAL;
-			syntax_editor_add_position_to_jump_list();
 			return;
 		}
 
@@ -6912,6 +7808,8 @@ void syntax_editor_process_key_message(Key_Message & msg)
 				return;
 			}
 
+			recent_screens_store_current();
+
 			editor.mode = Editor_Mode::NORMAL;
 			auto suggestion = editor.suggestions[0];
 			if (suggestion.type == Suggestion_Type::SYMBOL) {
@@ -6932,7 +7830,6 @@ void syntax_editor_process_key_message(Key_Message & msg)
 				int tab_index = syntax_editor_add_tab(full_path);
 				syntax_editor_switch_tab(tab_index);
 			}
-			syntax_editor_add_position_to_jump_list();
 			Folds::remove_folds_on_line(editor.open_tab().cursor.line);
 			return;
 		}
@@ -7029,17 +7926,21 @@ void syntax_editor_process_key_message(Key_Message & msg)
 	}
 	case Editor_Mode::ERROR_NAVIGATION:
 	{
+		auto& errors = editor.editor_compilation_data->code_errors;
+
 		// Filter out special/unnecessary messages
-		if (msg.key_code == Key_Code::L && msg.ctrl_down && msg.key_down) {
+		if ((msg.key_code == Key_Code::L || msg.key_code == Key_Code::E) && msg.ctrl_down && msg.key_down) {
 			editor.mode = Editor_Mode::NORMAL;
-			editor.open_tab_index = editor.navigate_error_mode_tab_before;
-			editor.open_tab().cursor = editor.navigate_error_mode_cursor_before;
 			return;
 		}
-		if (msg.key_code == Key_Code::RETURN && msg.key_down) {
-			editor.mode = Editor_Mode::NORMAL;
-			syntax_editor_add_position_to_jump_list();
-			return;
+		// Goto error under cursor on enter/h/l
+		if (msg.key_down && (msg.key_code == Key_Code::RETURN || msg.key_code == Key_Code::L || msg.key_code == Key_Code::H)) 
+		{
+			if (editor.navigate_error_index >= 0 && editor.navigate_error_index < errors.size) {
+				recent_screens_store_current();
+				center_cursor_on_error(editor.error_indices_sorted[editor.navigate_error_index]);
+			}
+			break;
 		}
 		// Filter out messages (Key Up messages + random shift or alt or ctrl clicks)
 		if ((msg.character == 0 && !(msg.ctrl_down && msg.key_down)) || !msg.key_down || msg.key_code == Key_Code::ALT) {
@@ -7049,13 +7950,8 @@ void syntax_editor_process_key_message(Key_Message & msg)
 		if (msg.character == 'j' || msg.character == 'k')
 		{
 			auto& index = editor.navigate_error_index;
-			auto& errors = editor.editor_compilation_data->code_errors;
 			index += msg.character == 'j' ? 1 : -1;
 			index = math_clamp(index, 0, ((int)errors.size) - 1);
-			center_cursor_on_error(editor.error_indices_sorted[index]);
-		}
-		else if (msg.character == 'l' || msg.character == 'h') {
-			center_cursor_on_error(editor.error_indices_sorted[editor.navigate_error_index]);
 		}
 
 		break;
@@ -7876,18 +8772,27 @@ void syntax_editor_update(bool& animations_running)
 		ui_system_push_active_container(handle.container, false);
 		SCOPE_EXIT(ui_system_pop_active_container());
 
-		ui_system_push_next_component_label("Auto-Format:");
-		editor.auto_format_during_edits = ui_system_push_checkbox(editor.auto_format_during_edits);
-		ui_system_push_next_component_label("Show-Context");
-		editor.show_semantic_infos = ui_system_push_checkbox(editor.show_semantic_infos);
-		ui_system_push_next_component_label("Inline-Folds");
-		editor.show_folds_inline = ui_system_push_checkbox(editor.show_folds_inline);
-		ui_system_push_next_component_label("Auto-Parenthesis");
-		editor.auto_insert_parenthesis = ui_system_push_checkbox(editor.auto_insert_parenthesis);
-		ui_system_push_next_component_label("Display leading spaces");
-		editor.show_leading_spaces = ui_system_push_checkbox(editor.show_leading_spaces);
-		ui_system_push_next_component_label("Sneak search");
-		editor.sneak_search = ui_system_push_checkbox(editor.sneak_search);
+		ui_system_push_label("Execute Binary:", false);
+		bool prev_value = compiler_execute_binary;
+	    bool new_value = ui_system_push_checkbox(compiler_execute_binary);
+		if (prev_value != new_value) {
+			syntax_editor.open_tab().requires_recompile = true;
+			if (new_value) {
+				compiler_execute_binary = true;
+				compiler_enable_c_generation = true;
+			}
+			else {
+				compiler_execute_binary = false;
+				compiler_enable_c_generation = false;
+			}
+		}
+
+		for (int i = 0; i < (int)Toggle_Option::MAX_ENUM_VALUE; i++)
+		{
+			Toggle_Option toggle_option = (Toggle_Option)i;
+			ui_system_push_label(toggle_option_as_string(toggle_option), false);
+			editor.toggle_options[i] = ui_system_push_checkbox(editor.toggle_options[i]);
+		}
 	}
 
 	// Handle Editor inputs
@@ -7993,12 +8898,15 @@ void syntax_editor_update(bool& animations_running)
 	}
 
 	// Handle error navigation mode
-	if (mode == Editor_Mode::ERROR_NAVIGATION && editor.editor_compilation_data->code_errors.size == 0) {
-		mode = Editor_Mode::NORMAL;
-	}
+	// if (mode == Editor_Mode::ERROR_NAVIGATION && editor.editor_compilation_data->code_errors.size == 0) {
+	// 	mode = Editor_Mode::NORMAL;
+	// }
 
 	bool synch_with_compiler = syntax_editor.input->key_pressed[(int)Key_Code::N] && syntax_editor.input->key_down[(int)Key_Code::CTRL];
 	bool build_and_run = syntax_editor.input->key_pressed[(int)Key_Code::F5];
+	if (build_and_run) {
+		syntax_editor.hide_error_mode_display_errors = false;
+	}
 	if (editor.compiler_thread_data.work_started) {
 		animations_running = true;
 	}
@@ -8241,7 +9149,7 @@ Syntax_Color token_get_syntax_color_based_on_surrounding(DynArray<Token> tokens,
 	if (test_token(Token_Type::DOT, -1)) {
 		return Syntax_Color::MEMBER;
 	}
-	else if (test_token(Token_Type::POSTFIX_CALL_ARROW, -1)) {
+	else if (test_token(Token_Type::FAST_CALL_ARROW, -1)) {
 		return Syntax_Color::FUNCTION;
 	}
 	else if (test_token(Token_Type::DOLLAR, -1)) {
@@ -8253,9 +9161,6 @@ Syntax_Color token_get_syntax_color_based_on_surrounding(DynArray<Token> tokens,
 	else if (test_token(Token_Type::FUNCTION_KEYWORD, -1)) {
 		return Syntax_Color::FUNCTION;
 	}
-	else if (test_token(Token_Type::DOUBLE_COLON, 1) && test_token(Token_Type::MODULE, 2)) {
-		return Syntax_Color::MODULE;
-	}
 	else if (test_token(Token_Type::DOUBLE_COLON, 1) && test_token(Token_Type::FUNCTION_KEYWORD, 2)) {
 		return Syntax_Color::FUNCTION;
 	}
@@ -8265,12 +9170,16 @@ Syntax_Color token_get_syntax_color_based_on_surrounding(DynArray<Token> tokens,
 	else if (test_token(Token_Type::GLOBAL_KEYWORD, -1) || test_token(Token_Type::COMPTIME_KEYWORD, -1)) {
 		return Syntax_Color::VALUE_DEFINITION;
 	}
-	else if (test_token(Token_Type::COLON, 1) || test_token(Token_Type::COLON_EQUALS, 1)) {
+	else if (test_token(Token_Type::COLON, 1) || 
+		test_token(Token_Type::DEFINE_INFER_POINTER, 1) ||
+		test_token(Token_Type::DEFINE_INFER_VALUE, 1) ||
+		test_token(Token_Type::DEFINE_INFER_RAW, 1)) 
+	{
 		return Syntax_Color::VALUE_DEFINITION;
 	}
 
 	// Test next token
-	if (test_token(Token_Type::TILDE, 1) || test_token(Token_Type::TILDE_STAR, 1) || test_token(Token_Type::TILDE_STAR_STAR, 1)) {
+	if (test_token(Token_Type::TILDE, 1)) {
 		return Syntax_Color::MODULE;
 	}
 	else if (test_token(Token_Type::COLON, 1)) {
@@ -8329,6 +9238,7 @@ void syntax_editor_render()
 	render_pass_add_dependency(pass_2D, pass_particles);
 
 	editor.font_renderer->reset();
+	const bool inline_folds = editor.get_option_value(Toggle_Option::SHOW_FOLDS_INLINE);
 
 	// Render particles
 	{
@@ -8443,7 +9353,7 @@ void syntax_editor_render()
 			);
 
 			// Check if next line is a fold
-			if (syntax_editor.show_folds_inline)
+			if (inline_folds)
 			{
 				Line_Area next_line_area = Folds::get_line_area(start.line_index + 1);
 				if (next_line_area.inside_fold) {
@@ -8547,7 +9457,7 @@ void syntax_editor_render()
 					}
 
 					if (function_origin_node != nullptr) {
-						unit = compilation_data_ast_node_to_compilation_unit(editor.editor_compilation_data, function_origin_node);
+						unit = ast_node_to_compilation_unit(function_origin_node);
 						upp_line_index = function_origin_node->range.start.line;
 					}
 				}
@@ -8733,7 +9643,7 @@ void syntax_editor_render()
 				if (draw_fold) 
 				{
 					// Handle cursor hovering above fold
-					if (syntax_editor.show_folds_inline && 
+					if (inline_folds && 
 						cursor.line == display_line.line_index && 
 						ibox1::make_length(fold_draw_pos.x - 1, 7).contains(cursor.character)) 
 					{
@@ -8889,6 +9799,11 @@ void syntax_editor_render()
 					}
 					case Editor_Info_Type::ERROR_ITEM:
 					{
+						if (syntax_editor.get_option_value(Toggle_Option::HIDE_ERRORS_UNTIL_COMPILATION) &&
+							!syntax_editor.hide_error_mode_display_errors) 
+						{
+							break;
+						}
 						// Special handling, as errors may appear at the end of the line
 						int end_char = analysis_item.end_char;
 						if (analysis_item.start_char == analysis_item.end_char) {
@@ -8940,7 +9855,7 @@ void syntax_editor_render()
 				);
 			};
 
-			if (syntax_editor.show_leading_spaces) {
+			if (syntax_editor.get_option_value(Toggle_Option::DISPLAY_LEADING_SPACES_INDICATOR)) {
 				for (int j = 0; j < leading_whitespaces; j++) {
 					helper_draw_dot(ivec2(j, i));
 				}
@@ -9065,7 +9980,7 @@ void syntax_editor_render()
 			if (line.fold_info.inside_fold) {
 				return fold_interval_get_indentation(line.fold_info.interval) / 4;
 			}
-			return line_estimate_indentation(line.line_index) / 4;
+			return line_estimate_indentation(line.line_index);
 		};
 
 		DynArray<int> block_starts = DynArray<int>::create(&editor.arena);
@@ -9114,9 +10029,11 @@ void syntax_editor_render()
 			text->append(error.msg);
 
 			// Add error infos
-			for (int j = 0; j < error.infos.size; j++) {
-				text->append("\n    ");
-				error_information_append_to_rich_string(error.infos[j], editor.editor_compilation_data, text);
+			if (with_info) {
+				for (int j = 0; j < error.infos.size; j++) {
+					text->append("\n    ");
+					error_information_append_to_rich_string(error.infos[j], editor.editor_compilation_data, text);
+				}
 			}
 			text->append('\n');
 		};
@@ -9127,7 +10044,7 @@ void syntax_editor_render()
 
 		int max_suggestion_length = 0;
 		for (int i = 0; i < suggestions.size; i++) {
-			max_suggestion_length = math_maximum(max_suggestion_length, suggestions[i].text->size);
+			max_suggestion_length = math_maximum(max_suggestion_length, (int)suggestions[i].text.size);
 		}
 
 		// Limit suggestion length to 36 characters?
@@ -9154,7 +10071,7 @@ void syntax_editor_render()
 			{
 			case Suggestion_Type::ID: {
 				text_color = sugg.options.id_color;
-				sugg_text = *sugg.text;
+				sugg_text = string_view_to_string(sugg.text);
 				break;
 			}
 			case Suggestion_Type::SYMBOL: {
@@ -9168,20 +10085,20 @@ void syntax_editor_render()
 			}
 			case Suggestion_Type::STRUCT_MEMBER: {
 				text_color = Syntax_Color::MEMBER; 
-				sugg_text = *sugg.text;
+				sugg_text = string_view_to_string(sugg.text);
 				sugg_type = sugg.options.struct_member.member_type;
 				break;
 			}
 			case Suggestion_Type::ENUM_MEMBER: {
 				text_color = Syntax_Color::ENUM_MEMBER; 
-				sugg_text = *sugg.text;
+				sugg_text = string_view_to_string(sugg.text);
 				sugg_type = upcast(sugg.options.enum_member.enumeration);
 				break;
 			}
 			case Suggestion_Type::FILE: {
 				auto file_info = directory_crawler_get_content(syntax_editor.directory_crawler)[sugg.options.file_index_in_crawler];
 				text_color = file_info.is_directory ? Syntax_Color::FILE_DIRECTORY : Syntax_Color::TEXT; 
-				sugg_text = *sugg.text;
+				sugg_text = string_view_to_string(sugg.text);
 				break;
 			}
 			default: panic("");
@@ -9360,13 +10277,13 @@ void syntax_editor_render()
 				int arg_index = hover_info.call_argument_index;
 
 				// Check if call is dot-call
-				bool is_dot_call = false;
+				bool is_fast_call = false;
 				if (call_info->call_node != nullptr) {
 					auto call_node = call_info->call_node;
 					if (call_node->base.parent != nullptr && call_node->base.parent->type == AST::Node_Type::EXPRESSION) {
 						auto expr = downcast<AST::Expression>(call_node->base.parent);
-						if (expr->type == AST::Expression_Type::FUNCTION_CALL && expr->options.call.is_dot_call) {
-							is_dot_call = true;
+						if (expr->type == AST::Expression_Type::FUNCTION_CALL && expr->options.call.is_fast_call) {
+							is_fast_call = true;
 						}
 					}
 				}
@@ -9411,7 +10328,7 @@ void syntax_editor_render()
 
 				text->append(is_struct_init ? "{" : "(");
 				bool first = true;
-				for (int i = is_dot_call ? 1 : 0; i < call_info->parameter_values.size; i += 1)
+				for (int i = is_fast_call ? 1 : 0; i < call_info->parameter_values.size; i += 1)
 				{
 					const auto& param_info = call_info->origin.signature->parameters[i];
 					const auto& param_value = call_info->parameter_values[i];
@@ -9580,9 +10497,16 @@ void syntax_editor_render()
 		// Create rich text
 		String rich_text = string_create();
 		SCOPE_EXIT(string_destroy(&rich_text));
+		int highlight_line_offset = 0;
+		auto& errors = editor.editor_compilation_data->code_errors;
 		{
-			auto& errors = editor.editor_compilation_data->code_errors;
 			const int& MAX_LINES = 5;
+			rich_text.append_formated("Error count: #%d\n", errors.size);
+			highlight_line_offset += 1;
+			if (errors.size == 0) {
+				rich_text.append_formated("  No errors!");
+				highlight_line_offset += 1;
+			}
 
 			if (cam_start > index) cam_start = index;
 			if (cam_start + MAX_LINES < index) cam_start = index - MAX_LINES;
@@ -9618,8 +10542,11 @@ void syntax_editor_render()
 
 		// Highlight current line
 		int highlight_line = index + (cam_start > 0 ? 1 : 0);
-		for (int i = 0; i < area.size.x; i++) {
-			area.buffer[i + area.size.x * highlight_line].background_color = syntax_color_to_palette_color(Syntax_Color::ERROR_NAVIGATION_HIGHLIGHT);
+		if (errors.size != 0) {
+			for (int i = 0; i < area.size.x; i++) {
+				area.buffer[i + area.size.x * (highlight_line + highlight_line_offset)].background_color = 
+					syntax_color_to_palette_color(Syntax_Color::ERROR_NAVIGATION_HIGHLIGHT);
+			}
 		}
 
 		// Create display and render

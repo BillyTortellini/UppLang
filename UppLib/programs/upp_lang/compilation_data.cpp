@@ -24,7 +24,7 @@ bool enable_parsing = true;
 bool enable_analysis = true;
 bool enable_ir_gen = true;
 bool enable_bytecode_gen = true;
-bool enable_c_generation = false;
+bool compiler_enable_c_generation = false;
 bool enable_c_compilation = true;
 
 // Output stages
@@ -45,7 +45,7 @@ bool run_testcases_compiled = false;
 bool enable_output = false;
 bool output_only_on_code_gen = false;
 bool enable_execution = true;
-bool execute_binary = false;
+bool compiler_execute_binary = false;
 
 
 
@@ -236,12 +236,18 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 				auto root_table = symbol_table_create(compilation_data);
 				compilation_data->root_symbol_table = root_table;
 
-				// Define int, float, bool, string
+				// Define int, uint, float, bool, string
 				Symbol* result = symbol_table_define_symbol(
 					root_table, identifier_pool_add(id_pool, string_create_static("int")), Symbol_Type::DATATYPE, nullptr, Symbol_Access_Level::GLOBAL,
 					semantic_context, true
 				);
-				result->options.datatype = upcast(types.i32_type);
+				result->options.datatype = upcast(types.int_type);
+
+				result = symbol_table_define_symbol(
+					root_table, identifier_pool_add(id_pool, string_create_static("uint")), Symbol_Type::DATATYPE, nullptr, Symbol_Access_Level::GLOBAL,
+					semantic_context, true
+				);
+				result->options.datatype = upcast(types.uint_type);
 
 				result = symbol_table_define_symbol(
 					root_table, identifier_pool_add(id_pool, string_create_static("float")), Symbol_Type::DATATYPE, nullptr, Symbol_Access_Level::GLOBAL,
@@ -254,47 +260,28 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 					semantic_context, true
 				);
 				result->options.datatype = upcast(types.bool_type);
-
-				result = symbol_table_define_symbol(
-					root_table, identifier_pool_add(id_pool, string_create_static("string")), Symbol_Type::DATATYPE, nullptr, Symbol_Access_Level::GLOBAL,
-					semantic_context, true
-				);
-				result->options.datatype = upcast(types.string);
 			}
 
 			// Create builtin modules
 			Symbol_Table* builtin_table = nullptr;
-			Symbol_Table* table_math = nullptr;
 			{
-				auto helper_make_module = [&](const char* name, Symbol_Table* parent) -> Upp_Module*
-				{
-					Upp_Module* result_module = compilation_data->arena.allocate<Upp_Module>();
-					Symbol_Table* module_table = parent == nullptr ?
-						symbol_table_create(compilation_data) : 
-						symbol_table_create_with_parent(parent, Symbol_Access_Level::GLOBAL, compilation_data);
-					Symbol* module_symbol = symbol_table_define_symbol(
-						(parent == nullptr ? module_table : parent), identifier_pool_add(id_pool, string_create_static(name)), 
-						Symbol_Type::MODULE, nullptr, Symbol_Access_Level::GLOBAL,
-						semantic_context, true
-					);
-					module_symbol->options.upp_module = result_module;
+				Upp_Module* builtin_module = compilation_data->arena.allocate<Upp_Module>();
+				builtin_module->symbol_table = symbol_table_create(compilation_data);
 
-					result_module->node = nullptr;
-					result_module->is_file_module = false;
-					result_module->options.module_symbol = module_symbol;
-					result_module->symbol_table = module_table;
-					return result_module;
-				};
-
-				compilation_data->builtin_module = helper_make_module("_BUILTIN_MODULE", nullptr);
-				builtin_table = compilation_data->builtin_module->symbol_table;
-				table_math = helper_make_module("math", builtin_table)->symbol_table;
+				compilation_data->builtin_module_symbol = symbol_table_define_symbol(
+					compilation_data->root_symbol_table, 
+					identifier_pool_add(&compilation_data->identifier_pool, string_create_static("_BUILTIN_MODULE_")), 
+					Symbol_Type::MODULE, nullptr, Symbol_Access_Level::GLOBAL, semantic_context, true
+				);
+				compilation_data->builtin_module_symbol->options.upp_module = builtin_module;
+				compilation_data->builtin_module = builtin_module;
+				builtin_table = builtin_module->symbol_table;
 			}
 
 			// Create symbols in builtin table
 			auto define_type_symbol = [&](const char* name, Datatype* type) -> Symbol* {
 				Symbol* result = symbol_table_define_symbol(
-					builtin_table, 
+					compilation_data->root_symbol_table, 
 					identifier_pool_add(id_pool, string_create_static(name)), 
 					Symbol_Type::DATATYPE, 0, Symbol_Access_Level::GLOBAL, semantic_context, true
 				);
@@ -314,12 +301,10 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 			define_type_symbol("f64", types.f64_type->upcast());
 
 			define_type_symbol("rawptr", types.rawptr->upcast());
-			define_type_symbol("isize", types.isize->upcast());
-			define_type_symbol("usize", types.usize->upcast());
-			define_type_symbol("string", types.string->upcast());
+			define_type_symbol("String", types.string->upcast());
 			define_type_symbol("c_string", types.c_string->upcast());
 			define_type_symbol("c_char", types.c_char->upcast());
-			define_type_symbol("code_point", types.code_point->upcast());
+			define_type_symbol("Codepoint", types.codepoint->upcast());
 			define_type_symbol("Any", types.any_type->upcast());
 			define_type_symbol("Type_Handle", types.type_handle->upcast());
 			define_type_symbol("Type_Info", types.type_information_type->upcast());
@@ -330,7 +315,7 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 				auto define_constant_symbol = [&](const char* name, Upp_Constant constant)
 				{
 					Symbol* symbol = symbol_table_define_symbol(
-						table_math,
+						builtin_table,
 						identifier_pool_add(id_pool, string_create_static(name)),
 						Symbol_Type::COMPTIME_VALUE, 0, Symbol_Access_Level::GLOBAL, semantic_context, true
 					);
@@ -348,17 +333,17 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 				define_constant_symbol("NAN_VALUE_F32", constant_pool->add_f32(NAN));
 				define_constant_symbol("NAN_VALUE_F64", constant_pool->add_f64(NAN));
 
-				define_constant_symbol("MAX_VALUE_I8",  constant_pool->add_i32(_I8_MAX));
-				define_constant_symbol("MAX_VALUE_I16", constant_pool->add_i32(_I16_MAX));
+				define_constant_symbol("MAX_VALUE_I8",  constant_pool->add_i8(_I8_MAX));
+				define_constant_symbol("MAX_VALUE_I16", constant_pool->add_i16(_I16_MAX));
 				define_constant_symbol("MAX_VALUE_I32", constant_pool->add_i32(_I32_MAX));
 				define_constant_symbol("MAX_VALUE_I64", constant_pool->add_i64(_I64_MAX));
-				define_constant_symbol("MIN_VALUE_I8",  constant_pool->add_i32(_I8_MIN));
-				define_constant_symbol("MIN_VALUE_I16", constant_pool->add_i32(_I16_MIN));
+				define_constant_symbol("MIN_VALUE_I8",  constant_pool->add_i8(_I8_MIN));
+				define_constant_symbol("MIN_VALUE_I16", constant_pool->add_i16(_I16_MIN));
 				define_constant_symbol("MIN_VALUE_I32", constant_pool->add_i32(_I32_MIN));
 				define_constant_symbol("MIN_VALUE_I64", constant_pool->add_i64(_I64_MIN));
 
-				define_constant_symbol("MAX_VALUE_U8",  constant_pool->add_u32(_UI8_MAX));
-				define_constant_symbol("MAX_VALUE_U16", constant_pool->add_u32(_UI16_MAX));
+				define_constant_symbol("MAX_VALUE_U8",  constant_pool->add_u8(_UI8_MAX));
+				define_constant_symbol("MAX_VALUE_U16", constant_pool->add_u16(_UI16_MAX));
 				define_constant_symbol("MAX_VALUE_U32", constant_pool->add_u32(_UI32_MAX));
 				define_constant_symbol("MAX_VALUE_U64", constant_pool->add_u64(_UI64_MAX));
 			}
@@ -368,14 +353,8 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 			{
 				Hardcoded_Type type = (Hardcoded_Type)i;
 				auto info = hardcoded_type_get_info(type);
-				Symbol_Table* symbol_table = builtin_table;
-				if (info.type_class == Hardcoded_Type_Class::FLOAT_BINARY || 
-					info.type_class == Hardcoded_Type_Class::FLOAT_PREDICATE || 
-					info.type_class == Hardcoded_Type_Class::FLOAT_UNARY) 
-				{
-					symbol_table = table_math;
-				}
-
+				Symbol_Table* symbol_table = 
+					info.type_class == Hardcoded_Type_Class::ESSENTIAL ? compilation_data->root_symbol_table : builtin_table;
 				Symbol* result = symbol_table_define_symbol(
 					symbol_table, identifier_pool_add(id_pool, string_create_static(info.symbol_name)), 
 					Symbol_Type::HARDCODED_FUNCTION, nullptr, Symbol_Access_Level::GLOBAL,
@@ -412,6 +391,17 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 				hardcoded_signatures[i] = nullptr;
 			}
 
+			// String/Any initializer signature
+			call_signature = call_signature_create_empty();
+			call_signature_add_parameter(call_signature, make_id("data"), upcast(types.rawptr), true, false, false);
+			call_signature_add_parameter(call_signature, make_id("size"), upcast(types.size_type), true, false, false);
+			compilation_data->string_initalizer_signature = call_signature_register(call_signature, compilation_data);
+
+			call_signature = call_signature_create_empty();
+			call_signature_add_parameter(call_signature, make_id("data"), upcast(types.rawptr), true, false, false);
+			call_signature_add_parameter(call_signature, make_id("type"), upcast(types.type_handle), true, false, false);
+			compilation_data->any_initializer_signature = call_signature_register(call_signature, compilation_data);
+
 			// Context functions
 			call_signature = call_signature_create_empty();
 			call_signature_add_parameter(call_signature, make_id("from_type"),   upcast(types.type_handle), true, false, false);
@@ -443,10 +433,8 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 
 			call_signature = call_signature_create_empty();
 			call_signature_add_parameter(call_signature, make_id("container_type"), upcast(types.type_handle), true, false, false);
-			call_signature_add_parameter(call_signature, make_id("index_type"),     upcast(types.type_handle), true, false, false);
 			call_signature_add_parameter(call_signature, make_id("function"), upcast(types.empty_pattern_variable), true, false, false);
 			call_signature_add_parameter(call_signature, make_id("container_by_ref"), upcast(types.bool_type), false, false, false);
-			call_signature_add_parameter(call_signature, make_id("index_by_ref"), upcast(types.bool_type), false, false, false);
 			call_signature_add_parameter(call_signature, make_id("result_by_ref"), upcast(types.bool_type), false, false, false);
 			context_signatures[(int)Custom_Operator_Type::ARRAY_ACCESS] = call_signature_register(call_signature, compilation_data);
 
@@ -482,12 +470,12 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 
 			call_signature = call_signature_create_empty();
 			call_signature_add_parameter(call_signature, make_id("type"), upcast(types.type_handle), true, false, false);
-			call_signature_add_return_type(call_signature, upcast(types.usize), compilation_data);
+			call_signature_add_return_type(call_signature, upcast(types.size_type), compilation_data);
 			hardcoded_signatures[(int)Hardcoded_Type::SIZE_OF] = call_signature_register(call_signature, compilation_data);
 
 			call_signature = call_signature_create_empty();
 			call_signature_add_parameter(call_signature, make_id("type"), upcast(types.type_handle), true, false, false);
-			call_signature_add_return_type(call_signature, upcast(types.u32_type), compilation_data);
+			call_signature_add_return_type(call_signature, upcast(types.size_type), compilation_data);
 			hardcoded_signatures[(int)Hardcoded_Type::ALIGN_OF] = call_signature_register(call_signature, compilation_data);
 
 			call_signature = call_signature_create_empty();
@@ -533,37 +521,37 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 			hardcoded_signatures[(int)Hardcoded_Type::CAST_POINTER] = hardcoded_signatures[(int)Hardcoded_Type::CAST_PRIMITIVE];
 
 			call_signature = call_signature_create_empty();
-			call_signature_add_parameter(call_signature, make_id("value"), upcast(types.usize), true, false, false);
+			call_signature_add_parameter(call_signature, make_id("value"), upcast(types.uint_type), true, false, false);
 			call_signature_add_return_type(call_signature, upcast(types.rawptr), compilation_data);
-			hardcoded_signatures[(int)Hardcoded_Type::USIZE_TO_RAWPTR] = call_signature_register(call_signature, compilation_data);
+			hardcoded_signatures[(int)Hardcoded_Type::UINT_TO_RAWPTR] = call_signature_register(call_signature, compilation_data);
 
 			call_signature = call_signature_create_empty();
 			call_signature_add_parameter(call_signature, make_id("value"), upcast(types.rawptr), true, false, false);
-			call_signature_add_return_type(call_signature, upcast(types.usize), compilation_data);
-			hardcoded_signatures[(int)Hardcoded_Type::RAWPTR_TO_USIZE] = call_signature_register(call_signature, compilation_data);
+			call_signature_add_return_type(call_signature, upcast(types.uint_type), compilation_data);
+			hardcoded_signatures[(int)Hardcoded_Type::RAWPTR_TO_UINT] = call_signature_register(call_signature, compilation_data);
 
 			// Memory functions
 			call_signature = call_signature_create_empty();
 			call_signature_add_parameter(call_signature, make_id("destination"), upcast(types.rawptr), true, false, false);
 			call_signature_add_parameter(call_signature, make_id("source"), upcast(types.rawptr), true, false, false);
-			call_signature_add_parameter(call_signature, make_id("size"), upcast(types.usize), true, false, false);
+			call_signature_add_parameter(call_signature, make_id("size"), upcast(types.size_type), true, false, false);
 			hardcoded_signatures[(int)Hardcoded_Type::MEMORY_COPY] = call_signature_register(call_signature, compilation_data);
 			hardcoded_signatures[(int)Hardcoded_Type::MEMORY_COPY_NO_OVERLAP] = hardcoded_signatures[(int)Hardcoded_Type::MEMORY_COPY];
 
 			call_signature = call_signature_create_empty();
 			call_signature_add_parameter(call_signature, make_id("destination"), upcast(types.rawptr), true, false, false);
-			call_signature_add_parameter(call_signature, make_id("size"), upcast(types.usize), true, false, false);
+			call_signature_add_parameter(call_signature, make_id("size"), upcast(types.size_type), true, false, false);
 			hardcoded_signatures[(int)Hardcoded_Type::MEMORY_ZERO] = call_signature_register(call_signature, compilation_data);
 
 			call_signature = call_signature_create_empty();
 			call_signature_add_parameter(call_signature, make_id("a"), upcast(types.rawptr), true, false, false);
 			call_signature_add_parameter(call_signature, make_id("b"), upcast(types.rawptr), true, false, false);
-			call_signature_add_parameter(call_signature, make_id("size"), upcast(types.usize), true, false, false);
+			call_signature_add_parameter(call_signature, make_id("size"), upcast(types.size_type), true, false, false);
 			call_signature_add_return_type(call_signature, upcast(types.bool_type), compilation_data);
 			hardcoded_signatures[(int)Hardcoded_Type::MEMORY_COMPARE] = call_signature_register(call_signature, compilation_data);
 
 			call_signature = call_signature_create_empty();
-			call_signature_add_parameter(call_signature, make_id("size"), upcast(types.usize), true, false, false);
+			call_signature_add_parameter(call_signature, make_id("size"), upcast(types.size_type), true, false, false);
 			call_signature_add_return_type(call_signature, upcast(types.rawptr), compilation_data);
 			hardcoded_signatures[(int)Hardcoded_Type::SYSTEM_ALLOC] = call_signature_register(call_signature, compilation_data);
 
@@ -573,35 +561,17 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 
 			// Basic IO-Functions
 			call_signature = call_signature_create_empty();
-			call_signature_add_parameter(call_signature, make_id("value"), upcast(types.bool_type), true, false, false);
-			hardcoded_signatures[(int)Hardcoded_Type::PRINT_BOOL] = call_signature_register(call_signature, compilation_data);
-
-			call_signature = call_signature_create_empty();
-			call_signature_add_parameter(call_signature, make_id("value"), upcast(types.i32_type), true, false, false);
-			hardcoded_signatures[(int)Hardcoded_Type::PRINT_I32] = call_signature_register(call_signature, compilation_data);
+			call_signature_add_parameter(call_signature, make_id("value"), upcast(types.int_type), true, false, false);
+			hardcoded_signatures[(int)Hardcoded_Type::PRINT_INT] = call_signature_register(call_signature, compilation_data);
 
 			call_signature = call_signature_create_empty();
 			call_signature_add_parameter(call_signature, make_id("value"), upcast(types.f32_type), true, false, false);
-			hardcoded_signatures[(int)Hardcoded_Type::PRINT_F32] = call_signature_register(call_signature, compilation_data);
+			hardcoded_signatures[(int)Hardcoded_Type::PRINT_FLOAT] = call_signature_register(call_signature, compilation_data);
 
 			call_signature = call_signature_create_empty();
 			call_signature_add_parameter(call_signature, make_id("value"), upcast(types.string), true, false, false);
 			hardcoded_signatures[(int)Hardcoded_Type::PRINT_STRING] = call_signature_register(call_signature, compilation_data);
 
-			call_signature = call_signature_create_empty();
-			hardcoded_signatures[(int)Hardcoded_Type::PRINT_LINE] = call_signature_register(call_signature, compilation_data);
-
-			call_signature = call_signature_create_empty();
-			call_signature_add_return_type(call_signature, upcast(types.i32_type), compilation_data);
-			hardcoded_signatures[(int)Hardcoded_Type::READ_I32] = call_signature_register(call_signature, compilation_data);
-
-			call_signature = call_signature_create_empty();
-			call_signature_add_return_type(call_signature, upcast(types.f32_type), compilation_data);
-			hardcoded_signatures[(int)Hardcoded_Type::READ_F32] = call_signature_register(call_signature, compilation_data);
-
-			call_signature = call_signature_create_empty();
-			call_signature_add_return_type(call_signature, upcast(types.bool_type), compilation_data);
-			hardcoded_signatures[(int)Hardcoded_Type::READ_BOOL] = call_signature_register(call_signature, compilation_data);
 
 
 			// Set hardcoded class signatures
@@ -614,7 +584,7 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 				// Bitshift
 				call_signature = call_signature_create_empty();
 				call_signature_add_parameter(call_signature, make_id("value"), types.empty_pattern_variable, true, false, false);
-				call_signature_add_parameter(call_signature, make_id("count"), types.empty_pattern_variable, true, false, false);
+				call_signature_add_parameter(call_signature, make_id("count"), upcast(types.size_type), true, false, false);
 				call_signature_add_return_type(call_signature, types.empty_pattern_variable, compilation_data);
 				hardcoded_class_signatures[(int)Hardcoded_Type_Class::BITSHIFT] = call_signature_register(call_signature, compilation_data);
 				
@@ -634,7 +604,7 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 				// Bit-index
 				call_signature = call_signature_create_empty();
 				call_signature_add_parameter(call_signature, make_id("value"), types.empty_pattern_variable, true, false, false);
-				call_signature_add_return_type(call_signature, types.u32_type->upcast(), compilation_data);
+				call_signature_add_return_type(call_signature, types.size_type->upcast(), compilation_data);
 				hardcoded_class_signatures[(int)Hardcoded_Type_Class::BIT_INDEX] = call_signature_register(call_signature, compilation_data);
 
 				// Float unop
@@ -851,7 +821,7 @@ void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Un
     bool generate_code = compilation_data->compile_type == Compile_Type::BUILD_CODE;
     bool do_ir_gen = do_analysis && enable_ir_gen && generate_code && error_free;
     bool do_bytecode_gen = do_ir_gen && enable_bytecode_gen && generate_code && error_free;
-    bool do_c_generation = do_ir_gen && enable_c_generation && generate_code && error_free;
+    bool do_c_generation = do_ir_gen && compiler_enable_c_generation && generate_code && error_free;
     bool do_c_compilation = do_c_generation && enable_c_compilation && generate_code && error_free;
     {
         compilation_data_switch_timing_task(compilation_data, Timing_Task::CODE_GEN);
@@ -1032,7 +1002,6 @@ void find_editor_infos_recursive(
 	case AST::Node_Type::DEFINITION:
 	{
 		AST::Definition* definition = downcast<AST::Definition>(node);
-		if (definition->type != AST::Definition_Type::MODULE) break;
 		for (int i = 0; i < active_passes.size; i++)
 		{
 			auto pass = active_passes[i];
@@ -1060,14 +1029,6 @@ void find_editor_infos_recursive(
 				}
 				break;
 			}
-			case AST::Definition_Type::MODULE: 
-			{
-				auto info = pass_get_node_info(pass, definition, Info_Query::TRY_READ, compilation_data);
-				if (info == nullptr) { continue; }
-				if (info->upp_module == nullptr) { continue; }
-				symbol_table = info->upp_module->symbol_table;
-				break;
-			}
 			default: break;
 			}
 
@@ -1080,6 +1041,24 @@ void find_editor_infos_recursive(
 				table_range.pass = pass;
 				dynamic_array_push_back(&code->symbol_table_ranges, table_range);
 			}
+		}
+		break;
+	}
+	case AST::Node_Type::ROOT:
+	{
+		for (int i = 0; i < active_passes.size; i++)
+		{
+			Analysis_Pass* pass = active_passes[i];
+			auto info = pass_get_node_info(pass, downcast<AST::Root_Node>(node), Info_Query::TRY_READ, compilation_data);
+			if (info == nullptr) { continue; }
+			if (info->upp_module == nullptr) { continue; }
+
+			Symbol_Table_Range table_range;
+			table_range.range = node->bounding_range;
+			table_range.symbol_table = info->upp_module->symbol_table;
+			table_range.tree_depth = tree_depth;
+			table_range.pass = pass;
+			dynamic_array_push_back(&code->symbol_table_ranges, table_range);
 		}
 		break;
 	}
@@ -1147,9 +1126,7 @@ void find_editor_infos_recursive(
 					if (enum_type->definition_node != nullptr)
 					{
 						option.expression.member_access_info.has_definition = true;
-						option.expression.member_access_info.member_definition_unit = compilation_data_ast_node_to_compilation_unit(
-							compilation_data, enum_type->definition_node
-						);
+						option.expression.member_access_info.member_definition_unit = ast_node_to_compilation_unit(enum_type->definition_node);
 						option.expression.member_access_info.definition_index = enum_type->definition_node->range.start;
 					}
 				}
@@ -1196,7 +1173,7 @@ void find_editor_infos_recursive(
 				if (goto_node != nullptr)
 				{
 					option.expression.member_access_info.has_definition = true;
-					option.expression.member_access_info.member_definition_unit = compilation_data_ast_node_to_compilation_unit(compilation_data, goto_node);
+					option.expression.member_access_info.member_definition_unit = ast_node_to_compilation_unit(goto_node);
 					option.expression.member_access_info.definition_index = goto_node->range.start;
 				}
 			}
@@ -1415,7 +1392,7 @@ Exit_Code compiler_execute(Compilation_Data* compilation_data)
         enable_analysis &&
         enable_ir_gen &&
         enable_execution;
-    if (execute_binary) {
+    if (compiler_execute_binary) {
         do_execution = do_execution && enable_c_compilation;
     }
     else {
@@ -1425,7 +1402,7 @@ Exit_Code compiler_execute(Compilation_Data* compilation_data)
     // Execute
     if (!compilation_data_errors_occured(compilation_data) && do_execution)
     {
-        if (execute_binary) {
+        if (compiler_execute_binary) {
             return c_compiler_execute();
         }
         else
@@ -1434,7 +1411,7 @@ Exit_Code compiler_execute(Compilation_Data* compilation_data)
             auto checkpoint = scratch_arena->make_checkpoint();
             SCOPE_EXIT(checkpoint.rewind());
 
-            Bytecode_Thread* thread = bytecode_thread_create(compilation_data, scratch_arena, 10000, 1024 * 64, 1024 * 8, true);
+            Bytecode_Thread* thread = bytecode_thread_create(compilation_data, scratch_arena, 1000000, 1024 * 64, 1024 * 8, true);
             bytecode_thread_set_initial_state(thread, compilation_data->entry_function);
             return bytecode_thread_execute(thread);
         }
@@ -1447,7 +1424,7 @@ void compilation_data_add_code_error_code_section(Compilation_Data* compilation_
 	Code_Error error;
 	error.msg = msg;
 	error.infos = DynArray<Error_Information>::create(&compilation_data->arena);
-	error.unit = compilation_data_ast_node_to_compilation_unit(compilation_data, node);
+	error.unit = ast_node_to_compilation_unit(node);
 	error.ranges = Parser::ast_base_get_section_token_range(
 		error.unit->code, node, section, &compilation_data->arena
 	);
@@ -1462,7 +1439,7 @@ bool compilation_data_is_configured_for_c_compilation(Compilation_Data* compilat
         enable_parsing &&
         enable_analysis &&
         enable_ir_gen &&
-        enable_c_generation &&
+        compiler_enable_c_generation &&
         enable_c_compilation &&
         !compilation_data_errors_occured(compilation_data);
 }
@@ -1472,22 +1449,13 @@ bool compilation_data_errors_occured(Compilation_Data* compilation_data)
 	return compilation_data->code_errors.size > 0;
 }
 
-Compilation_Unit* compilation_data_ast_node_to_compilation_unit(Compilation_Data* compilation_data, AST::Node* base)
+Compilation_Unit* ast_node_to_compilation_unit(AST::Node* base)
 {
-    while (base->parent != nullptr) {
+    while (base->type != AST::Node_Type::ROOT) {
         base = base->parent;
     }
-    assert(base->type == AST::Node_Type::DEFINITION, "Root must be definition module");
-    AST::Definition* definition = downcast<AST::Definition>(base);
-    assert(definition->type == AST::Definition_Type::MODULE, "Root must be definition module");
-
-    for (int i = 0; i < compilation_data->compilation_units.size; i++) {
-        auto unit = compilation_data->compilation_units[i];
-        if (unit->root == &definition->options.module) {
-            return unit;
-        }
-    }
-    return nullptr;
+    AST::Root_Node* root = downcast<AST::Root_Node>(base);
+	return root->compilation_unit;
 }
 
 Semantic_Context compilation_data_make_root_semantic_context(Compilation_Data* compilation_data)
@@ -1555,16 +1523,16 @@ void compiler_run_testcases(bool force_run)
     SCOPE_EXIT(enable_ir_gen = i_enable_ir_gen;);
     bool i_enable_bytecode_gen = enable_bytecode_gen;
     SCOPE_EXIT(enable_bytecode_gen = i_enable_bytecode_gen;);
-    bool i_enable_c_generation = enable_c_generation;
-    SCOPE_EXIT(enable_c_generation = i_enable_c_generation;);
+    bool i_enable_c_generation = compiler_enable_c_generation;
+    SCOPE_EXIT(compiler_enable_c_generation = i_enable_c_generation;);
     bool i_enable_c_compilation = enable_c_compilation;
     SCOPE_EXIT(enable_c_compilation = i_enable_c_compilation;);
     bool i_enable_output = enable_output;
     SCOPE_EXIT(enable_output = i_enable_output;);
     bool i_enable_execution = enable_execution;
     SCOPE_EXIT(enable_execution = i_enable_execution;);
-    bool i_execute_binary = execute_binary;
-    SCOPE_EXIT(execute_binary = i_execute_binary;);
+    bool i_execute_binary = compiler_execute_binary;
+    SCOPE_EXIT(compiler_execute_binary = i_execute_binary;);
     bool i_output_identifiers = output_identifiers;
     SCOPE_EXIT(output_identifiers = i_output_identifiers;);
     bool i_output_ast = output_ast;
@@ -1585,11 +1553,11 @@ void compiler_run_testcases(bool force_run)
     enable_analysis = true;
     enable_ir_gen = true;
     enable_bytecode_gen = true;
-    enable_c_generation = run_testcases_compiled;
+    compiler_enable_c_generation = run_testcases_compiled;
     enable_c_compilation = run_testcases_compiled;
     enable_output = false;
     enable_execution = true;
-    execute_binary = run_testcases_compiled;
+    compiler_execute_binary = run_testcases_compiled;
 
     output_identifiers = false;
     output_ast = false;

@@ -3,7 +3,7 @@
 #include <Windows.h>
 #include "../../datastructures/string.hpp"
 
-Page_Info Memory_Source::get_page_info(void* address, usize size) 
+Page_Info Memory_Source::get_page_info(void* address, uint size) 
 {
 	Page_Info info;
 	info.readable = false;
@@ -24,7 +24,7 @@ Page_Info Memory_Source::get_page_info(void* address, usize size)
     if (memory_info.State != MEM_COMMIT) {
         return info;
     }
-	if ((usize)address + size > (usize)memory_info.BaseAddress + memory_info.RegionSize) {
+	if ((uint)address + size > (uint)memory_info.BaseAddress + memory_info.RegionSize) {
 		// The whole range has to be from the same allocation for this function to work
 		return info;
 	}
@@ -38,7 +38,7 @@ Page_Info Memory_Source::get_page_info(void* address, usize size)
 	return info;
 }
 
-bool Memory_Source::read(void* destination, void* source, usize size) 
+bool Memory_Source::read(void* destination, void* source, uint size) 
 {
 	if (process_handle == nullptr) {
 		// Note: we don't really check if the write succeeds here, but i guess we just crash if it's an invalid address...
@@ -57,7 +57,7 @@ bool Memory_Source::read(void* destination, void* source, usize size)
     return true;
 }
 
-bool Memory_Source::write(void* destination, void* source, usize size) 
+bool Memory_Source::write(void* destination, void* source, uint size) 
 {
 	if (process_handle == nullptr) {
 		memory_copy(destination, source, size);
@@ -74,7 +74,7 @@ bool Memory_Source::write(void* destination, void* source, usize size)
 	return true;
 }
 
-void Memory_Source::read_as_much_as_possible(void* address, Dynamic_Array<u8>* out_bytes, usize read_size) 
+void Memory_Source::read_as_much_as_possible(void* address, Dynamic_Array<u8>* out_bytes, uint read_size) 
 {
 	dynamic_array_reset(out_bytes);
     if (address == nullptr || read_size == 0) {
@@ -108,8 +108,8 @@ void Memory_Source::read_as_much_as_possible(void* address, Dynamic_Array<u8>* o
 	}
 
 	// Figure out max-read size
-	assert(address >= memory_info.BaseAddress && (usize)address < (usize)memory_info.BaseAddress + memory_info.RegionSize, "Should be true with VirtualQuery");
-	usize max_read_size = (usize)memory_info.BaseAddress + memory_info.RegionSize - (usize)address;
+	assert(address >= memory_info.BaseAddress && (uint)address < (uint)memory_info.BaseAddress + memory_info.RegionSize, "Should be true with VirtualQuery");
+	uint max_read_size = (uint)memory_info.BaseAddress + memory_info.RegionSize - (uint)address;
 	read_size = math_minimum(max_read_size, read_size);
 
 	// Fill dynamic_array
@@ -120,13 +120,13 @@ void Memory_Source::read_as_much_as_possible(void* address, Dynamic_Array<u8>* o
 }
 
 bool Memory_Source::read_null_terminated_string(
-	void* virtual_address, String* out_string, usize max_char_count, bool is_wide_char, Dynamic_Array<u8>* byte_buffer)
+	void* virtual_address, String* out_string, uint max_char_count, bool is_wide_char, Dynamic_Array<u8>* byte_buffer)
 {
 	string_reset(out_string);
 	if (virtual_address == nullptr || max_char_count == 0) {
 		return false;
 	}
-	usize max_size = max_char_count + 1;
+	uint max_size = max_char_count + 1;
 	if (is_wide_char) {
 		max_size = 2 * max_char_count + 2; // + 2 just to be sure, if wide-chars use two 0 bytes
 	}

@@ -21,8 +21,9 @@ typedef uint16 u16;
 typedef uint32 u32;
 typedef uint64 u64;
 
+// This will always be u64, doesnt matter if we compile for 32bit
+typedef u64 uint;
+
 typedef float f32;
 typedef double f64;
-
-typedef size_t usize;
 

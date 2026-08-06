@@ -38,12 +38,22 @@ struct Predefined_Constants
     Upp_Constant nil;
     Upp_Constant bool_true;
     Upp_Constant bool_false;
-    Upp_Constant usize_zero;
-    Upp_Constant usize_one;
+    Upp_Constant i64_zero;
+    Upp_Constant i64_one;
+    Upp_Constant u64_zero;
+    Upp_Constant u64_one;
     Upp_Constant i32_zero;
     Upp_Constant i32_one;
     Upp_Constant u32_zero;
     Upp_Constant u32_one;
+
+    Upp_Constant int_zero;
+    Upp_Constant int_one;
+    Upp_Constant uint_zero;
+    Upp_Constant uint_one;
+    Upp_Constant upp_size_zero;
+    Upp_Constant upp_size_one;
+
     Upp_Constant empty_string;
 };
 
@@ -55,11 +65,19 @@ struct Constant_Pool
     Hashtable<Deduplication_Info, Upp_Constant> deduplication_table; 
     Predefined_Constants predefined;
 
+    Upp_Constant add_i8(i8 value);
+    Upp_Constant add_i16(i16 value);
     Upp_Constant add_i32(i32 value);
     Upp_Constant add_i64(i64 value);
+    Upp_Constant add_u8(u8 value);
+    Upp_Constant add_u16(u16 value);
     Upp_Constant add_u32(u32 value);
     Upp_Constant add_u64(u64 value);
-    Upp_Constant add_usize(usize value);
+
+    Upp_Constant add_int(i64 value);
+    Upp_Constant add_uint(uint value);
+    Upp_Constant add_upp_size(upp_size value);
+
     Upp_Constant add_f32(f32 value);
     Upp_Constant add_f64(f64 value);
     Upp_Constant add_upp_string_assume_valid(Upp_String string);

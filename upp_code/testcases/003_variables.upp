@@ -1,6 +1,33 @@
 
-main :: ()
-	// The 3 basic types are: int, float, bool
-	x: int
-	y: float
-	z: bool
+main :: fn ()
+    // Syntax for variable declaration: 
+    // name : datatype
+    // int, float and bool are some of the primitive datatypes
+    x: int
+    y: float
+    z: bool
+    w: uint
+    k: String
+    m: Codepoint
+
+    // Note that int and i64/i32 are not the same type
+    // The size of int depends on 32/64bit compile
+     
+    // Some more sized types
+    x2: u8
+    x3: u16
+    x4: u32
+    x5: u64
+    x6: i8
+    x7: i16
+    x8: i32
+    x9: i64
+    
+    // Float types
+    x10: f32
+    x11: f64
+    
+    // Boolean
+    b: bool
+
+

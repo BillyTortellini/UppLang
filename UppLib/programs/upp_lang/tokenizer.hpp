@@ -60,29 +60,33 @@ enum class Token_Type
     CURLY_BRACE_OPEN,     // {
     CURLY_BRACE_CLOSED,   // }
 
-    COMMA,                // ,
-    DOT,                  // .
-    TILDE,                // ~    Used in Path-lookup A~B~c
-    TILDE_STAR,           // ~*   Import all
-    TILDE_STAR_STAR,      // ~**  Transitive import all
-    COLON,                // :
-    DOUBLE_COLON,         // ::
-    COLON_EQUALS,         // :=
-    SEMI_COLON,           // ;
-    APOSTROPHE,           // '
-    POSTFIX_CALL_ARROW,   // ->
-    FUNCTION_ARROW,       // =>, note: different to DOT_CALL ->
-    SUBTYPE_ACCESS,       // .>
-    BASETYPE_ACCESS,      // .<
-    ADDRESS_OF,           // -*
-    DEREFERENCE,          // -&
-    DOLLAR,               // $
-    ASSIGN,               // =
+    DEFINE_INFER_VALUE,   // :=
+    DEFINE_INFER_RAW,     // :|=
+    DEFINE_INFER_POINTER, // :&=
+    ASSIGN_VALUE,         // =
+    ASSIGN_POINTER,       // &= 
+    ASSIGN_RAW,           // |= 
     ASSIGN_ADD,           // +=
     ASSIGN_SUB,           // -=
     ASSIGN_MULT,          // *=
     ASSIGN_DIV,           // /=
     ASSIGN_MODULO,        // %=
+
+    AMPERSAND,            // &
+    COMMA,                // ,
+    DOT,                  // .
+    TILDE,                // ~    Used in Path-lookup A~B~c
+    COLON,                // :
+    DOUBLE_COLON,         // ::
+    SEMI_COLON,           // ;
+    APOSTROPHE,           // '
+    FAST_CALL_ARROW,   // ->
+    FUNCTION_ARROW,       // =>, note: different to DOT_CALL ->
+    SUBTYPE_ACCESS,       // .>
+    BASETYPE_ACCESS,      // .<
+    ADDRESS_OF,           // -&
+    DEREFERENCE,          // -*
+    DOLLAR,               // $
     UNINITIALIZED,        // _
 
     _OPERATORS_END_,
@@ -92,7 +96,6 @@ enum class Token_Type
 
     // Toplevel Definitions
     FUNCTION_KEYWORD, // fn
-    MODULE,
     STRUCT,
     UNION,
     ENUM,
@@ -100,6 +103,7 @@ enum class Token_Type
     COMPTIME_KEYWORD,
     OPERATORS,
     IMPORT,
+    IMPORT_BLOCK,
     EXTERN,
 
     // Block statements
@@ -112,6 +116,7 @@ enum class Token_Type
     LOOP,
     SCOPE,
     DEFER,
+    FAST_CALL,
 
     AND,
     OR,

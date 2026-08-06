@@ -1,7 +1,6 @@
+foo :: fn () => int
+    return 5
 
-foo::()=>int
-	return 5
-
-main::()
-	// Exactly one argument is required
-	context add_cast(foo,.IMPLICIT)
+main :: fn ()
+    // Exactly one argument is required
+    operators add_auto_cast(float, int, foo)

@@ -1,93 +1,106 @@
 
-
-Problems:
- * Probably breaks down with multi-pointers
- * Function-pointers, rawptr, usize? --> Just works, bitch
- * Templates require a raw-assign, otherwise things get fucky.
-    Would require a raw-assign, raw-define-infer
-    So it would be
-        =
-        =&
-        =<
-        :=
-        :=&
-    
-    value =~ something
-    value :=~ something
-    value :=& x-&
-    value: *int =& x-*
-    value: *int =* x // Problem with prefix * --> I think this was removed?
-    value *= 15
-    value =* i
-    value =& &i
-    value = i-*
-    ptr: &int =& value
+Current Task:
+ - Re-implement all Testcases, probably add new ones...
 
 TODO:
- - & is not pointer
- - Add pointer-assign, raw-assign
+ - Open all files up to some number
+ - Delete testcases that aren't up to date anymore
+ - Fix syntax
+ - Run testcases, fix the ones with errors
+
+Testcases for parsing indentation
+
+struct-init: 
+    match player
+    case .>Something => what
+    case .>What
+    case .>Ligma
+
+DONE:
+06.08:
+ - Unifying Structs/Subtypes syntax with .>
+ - Working on testcases
+
+04.08:
+ - Working on testcases
+ - Closing tabs bug destroys wrong source code because of swapping (Current solution not very nice)
+
+TODO:
+ - Re-implement all Testcases, probably add new ones...
+ - Check C-Interface, e.g. get Window + OpenGL working again!
+    * Meaning C-Compilation with extern libraries should work again!
+ - Add more stuff to standard library (Allocator-Interface, Hashset/Hashtable, vectors, matrices, intervals)
+
+ - Build another UI library, use it for everything
+    * Layout calculation should be possible during UI-Building, so we can use normal code for this
+    * No Window/Widget differentiation, just normal sheet
+ - Rewrite the whole Syntax-Editor UI/Rendering with the new UI (Code-Rendering + menus + tabs)
+ - Tab system like notepad, with empty buffers and schtuff
+ - Compiler-Infos, Errors and general editing mode should be re-though with new code-completion (Word based) design
+
+Open Tasks:
+ - Overwriting parameters by-redefining them would be cool (For permutability...)
+ - Base-Library: Hashtable/Hashset
+ - Enum updates
+    * Maybe start Enums at 0 (Get rid of the whole +1 thing for enums/function indices)
+    * Multiple backing types, e.g. different sizes
+    * Default probably int, otherwise enum(u8) or maybe we can say smallest, e.g. enum(smallest_size)
+    * Enum analysis needs to check if the type fits
+    * Start enum at 0 again
+ - Null initialization by default
+ - Parameter passing by pointer if they are large enough (In basically all backends)
+ - Number-Literal update, maybe custom datatype
+ - break statement with if, loop, match, block
+     break if, break loop, break case, break match, break scope
+ - Struct packing options (Default is in-order, but other's should be possible)
+    * Asdf :: struct($T) #pack_smallest, #pack_ordered
+    * Types: Pack ordered, pack smallest, pack unaligned?
+ - Macros?
+
+ - Some folds may not be stored correctly when closing the window
+ - Debugger for bytecode, could maybe even call C-Things of some Dll's with library...
+ - Comment/Uncomment command
+ - assert function with optional string
  - #get_overload/#instanciate auto-completion not working
+ - Visual mode should support all normal mode commands (camera and stuff), and do extra things on delete and other...
+ - Multi-Cursor support?
+ - Show shortcuts for menus in F1 menu as text
+ - Hardcoded ~enum_type_possible_values() --> Returns slice of all possible values (e.g. enum value array)
 
- - String_Builder
- - Hashtable
 
- - Testcases...
- - datatype_print_value prints some pointer nonsense?
- - Option to run as C code in F1 menu
- - auto format remove space in "" 
- - insert suggestion wrong if space is between word and cursro
 
+IDEA: Compile on Demand
+-----------------------
+Moving away from the 'Always compile on change model'...
+ - Semantic_Analysis/Compilation could be done only on demand, if we want to know some infos about something.
+What this means is that the following features may need some additional help:
+ - Error squiglies aren't display until compilation
+ - Syntax-Highlighting only on token types/Token structure
+    * Although word-completion could store infos, like which words are enum/struct/function/module/global/comptime
+    * Symbol-Definitions vs lookups are also distinguishable by syntax
+ - Word-Completion instead of code-completion (Not context sensitive)
+ - Expression-Infos, Symbol-Infos and so on only after compilation
+ - Call-Infos (Parameter types and names) only after compilation
+
+Positives/Improvements:
+ - Threading could be removed/simplified to just wait on result of compiler
+ - No need to update analysis-info text-ranges/work with old editor data
+    --> Just show spinner while compilation is running, then show up-to-date infos
+ - Editor-Analysis infos wouldn't need to be stored in source-code
+ - Editor-Infos could just be queried over the AST, and we show a spinner while we wait for compilation
+ - Incremental Compilation for analysis speed would not be needed for smooth editing
+ - Bakes could just be run on every compile, not on every edit
+
+Downsides:
+ - I can't heavily rely on Code-Completion for everything, I need to know some code
+    I still want to show informations about what can be called and so on,
+    just not all the time continuously
+ - Fixing Compiler-Errors may become more annoying, as we need to wait during compilez
 
 
 DONE:
-09.06:
- - Arena Impl: try-resize and checkpoint
- - Dynamic_Array Impl: using arena and operators
-
-08.06:
- - Bug-Fixes 
- - Arena implementation
-
-05.06:
- - Bugs with loops and other stuff
- - Cast-Refactor: ~cast_primitive -> ~cast, rawptr_to_usize and usize_to_rawptr
- - Math-defines of constants
- - IR-Binop/Unop/Hardcoded_Types rework, saved ~600 lines of code
-
-04.06:
- - Bug-Fix: Bitwise-Binop not having correct signature
- - Binary operations now use left-to-right for context
- - Word/End-of-word motions for out-of bounds
- - Invalid renamed to Void-Type
-
-
-TODO:
------
- - Write simple standard library
-    * Arena
-    * DynArray
-    * String_Builder
+04.08:
  - Remove unnecessary hardcoded types (input, output only as string)
- - Fix da testcases
- - Add more stuff to standard library (Allocators, Dynamic_Array, Hashset, Hashtable, Strings, vectors, matrices, intervals)
- - Check out extern library interface...
-
-Other things I could do (Design not final):
- * break statement with if, loop, switch, block
-     break if, break loop, break loop
- * Enum updates
-    - Multiple backing types, e.g. different sizes
-    - Default probably int, otherwise enum(u8) or maybe we can say smallest, e.g. enum(smallest_size)
-    - Enum analysis needs to check if the type fits
-    - Start enum at 0 again
- * Struct members should be in given order (Except if some keyword says otherwise)
-    * Asdf :: struct($T) #pack_smallest, #pack_ordered
-    * Types: Pack ordered, pack smallest, pack unaligned?
- * Hardcoded ~enum_type_possible_values() --> Returns slice of all possible values (e.g. enum value array)
- * Null initialization by default
- * assert function with optional string
- * Parameter passing by pointer if they are large enough
- * Debugger for bytecode, could maybe even call C-Things of some Dll's with library...
 
 
 

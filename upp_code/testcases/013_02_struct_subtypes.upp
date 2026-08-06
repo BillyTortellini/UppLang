@@ -1,51 +1,47 @@
-
 import ~print_string
-import ~print_bool
-import ~print_line
-import ~print_i32
 import ~struct_tag
 
 // Structs can have subtypes, which automatically
 // transform the structs into tagged-unions
 Result :: struct
-	index: int
-	Success:
-		result: int
-	Failure:
-		error_code: int
-		fatal_error: bool
+    index: int
+    .>Success
+        result: int
+    .>Failure
+        error_code: int
+        fatal_error: bool
 
 // Accessing the tag is done with the Upp
-test_result :: (res: Result) => int
-	if struct_tag(res) == .Success
-		return res.Success.result + 1
-	
-	value := res.Failure.error_code
-	if res.Failure.fatal_error
-		value = value * 2
-	return value
+test_result :: fn (res: Result) => int
+    if struct_tag(res) == .Success
+        return res.>Success.result + 1
+    
+    value := res.>Failure.error_code
+    if res.>Failure.fatal_error
+        value = value * 2
+    return value
 
-main :: ()
-	import ~struct_tag as tag
-	
-	result: Result
-	// To initialize a struct with subtypes, the tag member needs to be set
-	tag(result) = .Success
-	result.Success.result = 10
-	~assert(test_result(result) == 11)
-	
-	tag(result) = .Failure
-	result.Failure.error_code = 3
-	result.Failure.fatal_error = true
-	~assert(test_result(result) == 6)
-	
-	// What differentiates Upp-Subtypes from Variant types of other languages,
-	// is the fact that subtypes are their own types
-	// This in combination with struct-initializers makes them more suited for
-	// a lot of tasks
-	succ := Result.Success.{10, .= {index = 2}}
-	~assert(test_result(succ) == 11)
-	~assert(test_result(.{3, .Failure = {3, false}}) == 3)
-	
+main :: fn ()
+    import ~struct_tag as tag
+    
+    result: Result
+    // To initialize a struct with subtypes, the tag member needs to be set
+    tag(result) = .Success
+    result.>Success.result = 10
+    assert(test_result(result) == 11)
+    
+    tag(result) = .Failure
+    result.>Failure.error_code = 3
+    result.>Failure.fatal_error = true
+    assert(test_result(result) == 6)
+    
+    // What differentiates Upp-Subtypes from Variant types of other languages,
+    // is the fact that subtypes are their own types
+    // This in combination with struct-initializers makes them more suited for
+    // a lot of tasks
+    succ := Result.>Success.{10, .< = {index = 2}}
+    assert(test_result(succ) == 11)
+    assert(test_result(.{3, .>Failure = {3, false}}) == 3)
+    
 
 

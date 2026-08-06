@@ -120,6 +120,7 @@ int source_code_get_line_bundle_index(Source_Code* code, int line_index)
     }
 
     // Otherwise we return the last code bundle
+    assert(line_index >= code->bundles[code->bundles.size - 1].first_line_index, "Must be true");
     return code->bundles.size - 1;
 }
 
@@ -160,27 +161,27 @@ Source_Line* source_code_insert_line(Source_Code* code, int new_line_index)
     if (bundle->lines.size > BUNDLE_MAX_SIZE)
     {
         int new_line_count = BUNDLE_MAX_SIZE / 2;
-        int split_index = bundle->lines.size - new_line_count;
 
         Line_Bundle new_bundle;
-        new_bundle.first_line_index = bundle->first_line_index + split_index;
+        new_bundle.first_line_index = bundle->first_line_index + new_line_count;
         new_bundle.lines = dynamic_array_create<Source_Line>(new_line_count);
 
         // Copy lines into new bundle
-        for (int i = 0; i < new_line_count; i++) {
-            dynamic_array_push_back(&new_bundle.lines, bundle->lines[i + split_index]);
+        for (int i = new_line_count; i < bundle->lines.size; i++) {
+            dynamic_array_push_back(&new_bundle.lines, bundle->lines[i]);
         }
-        dynamic_array_rollback_to_size(&bundle->lines, split_index);
+        dynamic_array_rollback_to_size(&bundle->lines, new_line_count);
 
         // Insert new bundle
         dynamic_array_insert_ordered(&code->bundles, new_bundle, bundle_index + 1);
+        // Refresh pointer after insertion
+        bundle = &code->bundles[bundle_index];
 
         // Check in which bundle we need to insert the index
         if (new_line_index >= bundle->first_line_index + bundle->lines.size) {
             bundle_index = bundle_index + 1;
+            bundle = &code->bundles[bundle_index];
         }
-        // Refresh pointer after insertion
-        bundle = &code->bundles[bundle_index];
     }
 
     // Add new line to bundle
@@ -355,7 +356,7 @@ Text_Index text_index_make(int line, int character) {
 Text_Index text_index_make_line_end(Source_Code* code, int line) {
     Text_Index index;
     index.line = line;
-    index.character = source_code_get_line(code, line)->text.size;
+    index.character = (line < 0 || line >= code->line_count) ? 0 : source_code_get_line(code, line)->text.size;
     return index;
 }
 

@@ -1,34 +1,38 @@
-main :: ()
-	///
-		Pointer type-syntax:
-		Make pointer type: *[Datatype]
-		Address-Of: *[value]
-		Dereference: &[pointer_value]
-		
-		Pointers aren't used for normal operations in Upp
-		which in C would be:
-		 * Array access:Doesn't work on pointers,use slices
-		 * Pointer comparison/arithmetic:New syntax==*and!=*
-		 * Pointer definition/assignment:New syntax:=*and=*
-	
-	a: int = 15
-	ap: *int = *a
-	app: **int = *ap
-	appp: ***int = *app
-	
-	// The pointers can be used like normal values
-	x: int = a + &ap + &(&app)
-	~assert(x == 45)
-	
-	i := 5
-	j := 5
-	ip := *i
-	jp := *j
-	// Value comparison
-	~assert(i == j)
-	// Value comparison with pointers
-	~assert(&ip == &jp)
-	// Pointer comparison
-	~assert(!(ip *== jp))
-	~assert(ip *!= jp)
-	
+main :: fn ()
+    // Pointer Syntax:
+    //   Pointer Datatype: &[Datatype]
+    //   Address-Of: [value]-& 
+    //   Dereference: [pointer_value]-*
+    //
+    // In Upp pointers are mostly interchangable with values,
+    // which is possible because pointer operations aren't built-in like in C
+    //  * Array access: Doesn't work on pointers, use slices
+    //  * Pointer comparison: &== and &!= instead of == and !=
+    //  * Pointer definition: :&= and
+    //  * Pointer assignment: &= value
+    
+    a: int = 15
+    ap: &int &= a-&
+    app: &&int &= ap-&
+    appp: &&&int &= app-&
+    
+    // The pointers can be used like normal values
+    x: int = a + ap-* + app-*-*
+    assert(x == 45)
+
+    // Pointers are also auto-dereference in a value context, so this also works:
+    x = a + ap + app 
+    assert(x == 45)
+    
+    i := 5
+    j := 5
+    ip :&= i
+    jp :&= j
+    // Value comparison
+    assert(i == j)
+    // Value comparison with pointers
+    assert(ip-* == jp-*)
+    // Pointer comparison
+    assert(not (ip &== jp))
+    assert(ip &!= jp)
+    

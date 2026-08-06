@@ -7,5 +7,5 @@ import B as C
 
 import D as X
 
-main :: ()
-	
+main :: fn ()
+    

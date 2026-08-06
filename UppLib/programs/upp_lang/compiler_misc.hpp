@@ -11,6 +11,12 @@ struct Poly_Header;
 struct Upp_Function;
 struct Call_Signature;
 
+typedef i64 upp_size;
+typedef i64 upp_int;
+
+#define DEFAULT_ENUM_SIZE 8
+#define DEFAULT_ENUM_ALIGNMENT 8
+
 namespace AST
 {
     struct Expression;
@@ -62,7 +68,6 @@ enum class Import_Type
 {
 	NONE,      // for lookups, if we don't want to query imports
     SYMBOLS,   // import Foo~*
-    DOT_CALLS, // import dot_calls Foo
     OPERATORS, // import operators Foo
 };
 
@@ -105,7 +110,7 @@ enum class Extern_Compiler_Setting
 
 enum class Primitive_Operation
 {
-    PRIMITIVE_CAST, // Also includes pointer casts and rawptr <-> usize
+    PRIMITIVE_CAST, // Also includes pointer casts and rawptr <-> uint
 
     // Arithmetic
     ADDITION,
@@ -129,6 +134,8 @@ enum class Primitive_Operation
     NOT,
 
     // Bit-Operations
+	// Note: In Upp, all bitwise operations also work on signed int, but the behavior is
+	//		defined to be the same as the unsigned type, e.g. cast to unsigned, operation, cast back to signed
     BITWISE_NOT,
     BITWISE_AND,
     BITWISE_OR,
@@ -189,14 +196,9 @@ enum class IR_Builtin_Function
 	SYSTEM_ALLOC,
 	SYSTEM_FREE,
 
-	PRINT_I32,
-	PRINT_F32,
-	PRINT_BOOL,
-	PRINT_LINE,
+	PRINT_INT,
+	PRINT_FLOAT,
 	PRINT_STRING,
-	READ_I32,
-	READ_F32,
-	READ_BOOL,
 
 	MAX_ENUM_VALUE
 };
@@ -218,8 +220,8 @@ enum class Hardcoded_Type
 
 	CAST_PRIMITIVE,
 	CAST_POINTER,
-	RAWPTR_TO_USIZE,
-	USIZE_TO_RAWPTR,
+	RAWPTR_TO_UINT,
+	UINT_TO_RAWPTR,
 
 	MEMORY_COPY,
 	MEMORY_COPY_NO_OVERLAP,
@@ -230,14 +232,9 @@ enum class Hardcoded_Type
 	SYSTEM_FREE,
 
 	// Hardcoded IO
-	PRINT_I32,
-	PRINT_F32,
-	PRINT_BOOL,
-	PRINT_LINE,
+	PRINT_INT,
+	PRINT_FLOAT,
 	PRINT_STRING,
-	READ_I32,
-	READ_F32,
-	READ_BOOL,
 
 	// Unsigned integer functions
 	BITWISE_NOT,
@@ -290,8 +287,8 @@ enum class Hardcoded_Type
 
 enum class Hardcoded_Type_Class
 {
-	UTILITY,
-	INPUT,
+	ESSENTIAL, // Inside root table, always accessible
+	UTILITY,   // Inside builtin-module, accessible with ~
 	OUTPUT,
 	BITWISE_BINOP,
 	BITWISE_NOT,
@@ -335,22 +332,23 @@ template<typename T>
 struct Upp_Slice
 {
     T* data;
-    usize size;
+    upp_size size;
 };
 
 struct Upp_Slice_Base
 {
     void* data;
-    usize size;
+    upp_size size;
 };
 
 // The 'primitive' string type as it is currently defined in the upp-language
 // There is no null-terminator after data, and the size is just the number of bytes, not the character count
 struct Upp_String {
     void* data;
-    usize size;
+    upp_size size;
 };
 
+// Note: This is u32 by design, not uint (To only store 4 bytes instead of 8)
 struct Upp_Type_Handle
 {
     u32 index;
@@ -506,6 +504,9 @@ struct Predefined_IDs
 	String* string;
 	String* allocator;
 	String* bytes;
+	String* transitive;
+	String* symbols;
+	String* all;
 };
 
 struct Identifier_Pool

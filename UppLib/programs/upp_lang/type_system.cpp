@@ -2,7 +2,6 @@
 #include "compilation_data.hpp"
 #include "symbol_table.hpp"
 #include "semantic_analyser.hpp"
-#include "compilation_data.hpp"
 #include "../../utility/rich_text.hpp"
 
 #include "syntax_colors.hpp"
@@ -68,7 +67,7 @@ void datatype_append_value_to_string(
 			}
 
 			Datatype* type = nullptr;
-			if (any_value.type.index < (u32) type_system->types.size) {
+			if ((u64)any_value.type.index < (u32) type_system->types.size) {
 			    type = type_system->types[any_value.type.index];
 			    datatype_append_to_string(type, string, type_system, format.datatype_format);
 			}
@@ -164,16 +163,16 @@ void datatype_append_value_to_string(
         }
 		case Builtin_Type::CODE_POINT:
 		{
-			u32 code_point = 0;
-            if (!local_memory.read_single_value(value_ptr, &code_point)) {
+			u32 codepoint = 0;
+            if (!local_memory.read_single_value(value_ptr, &codepoint)) {
                 string_append(string, "MEMORY_NOT_READABLE");
                 break;
             }
-			if (code_point > 32 && code_point <= 255) {
-                string_append_formated(string, "\'%c\'", code_point);
+			if (codepoint > 32 && codepoint <= 128) {
+                string_append_formated(string, "\'%c\'", codepoint);
 			}
 			else {
-                string_append_formated(string, "\'#%d\'", code_point);
+                string_append_formated(string, "\'#%d\'", codepoint);
 			}
 			break;
 		}
@@ -183,20 +182,9 @@ void datatype_append_value_to_string(
 			);
 			return;
 		}
-		case Builtin_Type::USIZE: {
-			datatype_append_value_to_string(
-				types.u64_type->upcast(), string, value_ptr, format, indentation, local_memory, pointer_memory, type_system
-			);
-			return;
-		}
-		case Builtin_Type::ISIZE: {
-			datatype_append_value_to_string(
-				types.i64_type->upcast(), string, value_ptr, format, indentation, local_memory, pointer_memory, type_system
-			);
-			return;
-		}
 		default: panic("INvalid enum value");
 		}
+		break;
 	}
     case Datatype_Type::FUNCTION_POINTER: 
 	{
@@ -462,16 +450,18 @@ void datatype_append_value_to_string(
 
 		switch (primitive->primitive_type)
 		{
-		case Primitive_Type::I8:  string->append_formated("%d",   *(i8*)data); break;
-		case Primitive_Type::I16: string->append_formated("%d",   *(i16*)data); break;
-		case Primitive_Type::I32: string->append_formated("%d",   *(i32*)data); break;
-		case Primitive_Type::I64: string->append_formated("%lld", *(i64*)data); break;
-		case Primitive_Type::U8:  string->append_formated("%u",   *(u8*)data); break;
-		case Primitive_Type::U16: string->append_formated("%u",   *(u16*)data); break;
-		case Primitive_Type::U32: string->append_formated("%u",   *(u32*)data); break;
-		case Primitive_Type::U64: string->append_formated("%llu", *(u64*)data); break;
-		case Primitive_Type::F32: string->append_formated("%f",   *(f32*)data); break;
-		case Primitive_Type::F64: string->append_formated("%f",   *(f64*)data); break;
+		case Primitive_Type::INT:  string->append_formated("%lld", *(i64*)data); break;
+		case Primitive_Type::UINT: string->append_formated("%llu", *(u64*)data); break;
+		case Primitive_Type::I8:   string->append_formated("%d",   *(i8*)data); break;
+		case Primitive_Type::I16:  string->append_formated("%d",   *(i16*)data); break;
+		case Primitive_Type::I32:  string->append_formated("%d",   *(i32*)data); break;
+		case Primitive_Type::I64:  string->append_formated("%lld", *(i64*)data); break;
+		case Primitive_Type::U8:   string->append_formated("%u",   *(u8*)data); break;
+		case Primitive_Type::U16:  string->append_formated("%u",   *(u16*)data); break;
+		case Primitive_Type::U32:  string->append_formated("%u",   *(u32*)data); break;
+		case Primitive_Type::U64:  string->append_formated("%llu", *(u64*)data); break;
+		case Primitive_Type::F32:  string->append_formated("%f",   *(f32*)data); break;
+		case Primitive_Type::F64:  string->append_formated("%f",   *(f64*)data); break;
 		case Primitive_Type::BOOLEAN: string->append((*(bool*)data) ? "TRUE" : "FALSE"); break;
 		default: panic("");
 		}
@@ -534,9 +524,7 @@ void datatype_append_to_string(Datatype* datatype, String* string, Type_System* 
 		case Builtin_Type::STRING: string->append("string"); break;
 		case Builtin_Type::C_STRING: string->append("c_string"); break;
 		case Builtin_Type::C_CHAR: string->append("c_char"); break;
-		case Builtin_Type::USIZE: string->append("usize"); break;
-		case Builtin_Type::ISIZE: string->append("isize"); break;
-		case Builtin_Type::CODE_POINT: string->append("code_point"); break;
+		case Builtin_Type::CODE_POINT: string->append("codepoint"); break;
 		default: panic("Invalid enum value");
 		}
 		break;
@@ -580,7 +568,7 @@ void datatype_append_to_string(Datatype* datatype, String* string, Type_System* 
         break;
     case Datatype_Type::POINTER: {
         auto pointer_type = downcast<Datatype_Pointer>(datatype);
-        string->append("*");
+        string->append("&");
         datatype_append_to_string(pointer_type->element_type, string, type_system, format);
         break;
     }
@@ -591,24 +579,24 @@ void datatype_append_to_string(Datatype* datatype, String* string, Type_System* 
 
         auto primitive = downcast<Datatype_Primitive>(datatype);
         auto memory = primitive->base.memory_info.value;
-        switch (primitive_type_get_class(primitive->primitive_type))
-        {
-        case Primitive_Class::BOOLEAN: string->append("bool"); break;
-        case Primitive_Class::INTEGER: {
-            string->append_formated("%s%d", (datatype_is_unsigned_int(datatype) ? "u" : "i"), memory.size * 8); break;
-            break;
-        }
-        case Primitive_Class::FLOAT: {
-            if (memory.size == 4) {
-                string->append("float");
-            }
-            else {
-                string->append_formated("f%d", memory.size * 8);
-            }
-            break;
-        }
-        default: panic("Heyo");
-        }
+		switch (primitive->primitive_type)
+		{
+			// Basic integers
+			case Primitive_Type::INT:  string->append("int"); break;
+			case Primitive_Type::UINT: string->append("uint"); break;
+			case Primitive_Type::I8:   string->append("i8"); break;
+			case Primitive_Type::I16:  string->append("i16"); break;
+			case Primitive_Type::I32:  string->append("i32"); break;
+			case Primitive_Type::I64:  string->append("i64"); break;
+			case Primitive_Type::U8:   string->append("u8"); break;
+			case Primitive_Type::U16:  string->append("u16"); break;
+			case Primitive_Type::U32:  string->append("u32"); break;
+			case Primitive_Type::U64:  string->append("u64"); break;
+			case Primitive_Type::F32:  string->append("float"); break;
+			case Primitive_Type::F64:  string->append("f64"); break;
+			case Primitive_Type::BOOLEAN: string->append("bool"); break;
+			default: panic("");
+		}
         break;
     }
     case Datatype_Type::ENUM:
@@ -645,7 +633,7 @@ void datatype_append_to_string(Datatype* datatype, String* string, Type_System* 
 				string->append(parents[i]->name);
 				string_style_pop(string);
 				if (i != 0) {
-					string->append('.');
+					string->append(".>");
 				}
 			}
 		}
@@ -1032,7 +1020,7 @@ Datatype_Slice* type_system_make_slice(Type_System* type_system, Datatype* eleme
 
 	result->element_type = element_type;
 	result->data_member = struct_member_make(upcast(type_system_make_pointer(type_system, element_type)), ids.data, nullptr, 0, nullptr);
-	result->size_member = struct_member_make(upcast(types.usize), ids.size, nullptr, 8, nullptr);
+	result->size_member = struct_member_make(upcast(types.size_type), ids.size, nullptr, 8, nullptr);
 	result->slice_initializer_signature_cached = nullptr;
 
 	auto& internal_info = type_system_register_type(upcast(result), type_system)->options.slice;
@@ -1246,6 +1234,11 @@ int struct_alignment_finish_recursive(Datatype_Struct* structure)
 		memory.alignment = math_maximum(memory.alignment, struct_alignment_finish_recursive(structure->subtypes[i]));
 	}
 
+	// Account for enum tag
+	if (structure->subtypes.size > 0) {
+		memory.alignment = math_maximum(memory.alignment, DEFAULT_ENUM_ALIGNMENT);
+	}
+
 	return memory.alignment;
 }
 
@@ -1423,8 +1416,8 @@ Datatype_Enum* type_system_make_enum_empty(Type_System* type_system, String* nam
 	assert(name != 0, "I've decided that all enums must have names, even if you have to generate them");
 
 	Datatype_Enum* result = arena->allocate<Datatype_Enum>();
-	result->base = datatype_make_simple_base(Datatype_Type::ENUM, 0, 0);
-	result->base.memory_info = optional_make_failure<Datatype_Memory_Info>(); // Is not initialized until enum is finished
+	result->base = datatype_make_simple_base(Datatype_Type::ENUM, DEFAULT_ENUM_SIZE, DEFAULT_ENUM_ALIGNMENT);
+	result->base.memory_info = optional_make_failure<Datatype_Memory_Info>(); // Is not initialized until enum is finished (To make sure this is initialized)
 	result->name = name;
 	result->members = DynArray<Enum_Member>::create(arena);
 	result->definition_node = definition_node;
@@ -1443,8 +1436,8 @@ void type_system_finish_enum(Type_System* type_system, Datatype_Enum* enum_type)
 
 	// Finish enum
 	base.memory_info.available = true;
-	base.memory_info.value.size = 4;
-	base.memory_info.value.alignment = 4;
+	base.memory_info.value.size = DEFAULT_ENUM_SIZE;
+	base.memory_info.value.alignment = DEFAULT_ENUM_ALIGNMENT;
 	base.memory_info.value.contains_padding_bytes = false;
 
 	if (members.size == 0) {
@@ -1524,6 +1517,10 @@ void type_system_add_predefined_types(Type_System* type_system)
 		types->f64_type  = type_system_make_primitive(type_system, Primitive_Type::F64, 8);
 		types->bool_type = type_system_make_primitive(type_system, Primitive_Type::BOOLEAN, 1);
 
+		types->int_type  = type_system_make_primitive(type_system, Primitive_Type::INT, 8);
+		types->uint_type = type_system_make_primitive(type_system, Primitive_Type::UINT, 8);
+		types->size_type = types->int_type;
+
 		// Builtin Types
 		types->rawptr      = type_system_make_builtin(type_system, Builtin_Type::RAWPTR, 8, 8);
 		types->type_handle = type_system_make_builtin(type_system, Builtin_Type::TYPE_HANDLE, 4, 4);
@@ -1531,9 +1528,7 @@ void type_system_add_predefined_types(Type_System* type_system)
 		types->string      = type_system_make_builtin(type_system, Builtin_Type::STRING, 16, 8);
 		types->c_string    = type_system_make_builtin(type_system, Builtin_Type::C_STRING, 8, 8);
 		types->c_char      = type_system_make_builtin(type_system, Builtin_Type::C_CHAR, 1, 1);
-		types->usize       = type_system_make_builtin(type_system, Builtin_Type::USIZE, 8, 8);
-		types->isize       = type_system_make_builtin(type_system, Builtin_Type::ISIZE, 8, 8);
-		types->code_point  = type_system_make_builtin(type_system, Builtin_Type::CODE_POINT, 4, 4);
+		types->codepoint   = type_system_make_builtin(type_system, Builtin_Type::CODE_POINT, 4, 4);
 
 		// Other
 		types->unknown_type = arena->allocate<Datatype>();
@@ -1578,8 +1573,8 @@ void type_system_add_predefined_types(Type_System* type_system)
 		Datatype_Struct* type_info_type = type_system_make_struct_empty(type_system, make_id("Type_Info"));
 		types->type_information_type = upcast(type_info_type);
 		add_member_cstr(type_info_type, "type", upcast(types->type_handle));
-		add_member_cstr(type_info_type, "size", upcast(types->i32_type));
-		add_member_cstr(type_info_type, "alignment", upcast(types->i32_type));
+		add_member_cstr(type_info_type, "size", upcast(types->int_type));
+		add_member_cstr(type_info_type, "alignment", upcast(types->int_type));
 
 		// Add subtypes in correct order (See Datatype_Type enum)
 		auto subtype_primitive = add_struct_subtype(type_info_type, "Primitive");
@@ -1615,20 +1610,19 @@ void type_system_add_predefined_types(Type_System* type_system)
 				);
 				types->primitive_type_enum = upcast(primitive_type_enum);
 
-				add_enum_member(primitive_type_enum, "I8", 1);
-				add_enum_member(primitive_type_enum, "I16", 2);
-				add_enum_member(primitive_type_enum, "I32", 3);
-				add_enum_member(primitive_type_enum, "I64", 4);
-				add_enum_member(primitive_type_enum, "U8", 5);
-				add_enum_member(primitive_type_enum, "U16", 6);
-				add_enum_member(primitive_type_enum, "U32", 7);
-				add_enum_member(primitive_type_enum, "U64", 8);
-				add_enum_member(primitive_type_enum, "F32", 9);
-				add_enum_member(primitive_type_enum, "F64", 10);
-				add_enum_member(primitive_type_enum, "BOOL", 11);
-				add_enum_member(primitive_type_enum, "TYPE_HANDLE", 12);
-				add_enum_member(primitive_type_enum, "RAWPTR", 13);
-				add_enum_member(primitive_type_enum, "C_STRING", 14);
+				add_enum_member(primitive_type_enum, "INT", 1);
+				add_enum_member(primitive_type_enum, "UINT", 2);
+				add_enum_member(primitive_type_enum, "I8", 3);
+				add_enum_member(primitive_type_enum, "I16", 4);
+				add_enum_member(primitive_type_enum, "I32", 5);
+				add_enum_member(primitive_type_enum, "I64", 6);
+				add_enum_member(primitive_type_enum, "U8", 7);
+				add_enum_member(primitive_type_enum, "U16", 8);
+				add_enum_member(primitive_type_enum, "U32", 9);
+				add_enum_member(primitive_type_enum, "U64", 10);
+				add_enum_member(primitive_type_enum, "F32", 11);
+				add_enum_member(primitive_type_enum, "F64", 12);
+				add_enum_member(primitive_type_enum, "BOOL", 13);
 				type_system_finish_enum(type_system, primitive_type_enum);
 
 				add_member_cstr(subtype_primitive, "type", upcast(types->primitive_type_enum));
@@ -1647,9 +1641,7 @@ void type_system_add_predefined_types(Type_System* type_system)
 				add_enum_member(builtin_enum, "STRING", 4);
 				add_enum_member(builtin_enum, "C_STRING", 5);
 				add_enum_member(builtin_enum, "C_CHAR", 6);
-				add_enum_member(builtin_enum, "USIZE", 7);
-				add_enum_member(builtin_enum, "ISIZE", 8);
-				add_enum_member(builtin_enum, "CODE_POINT", 9);
+				add_enum_member(builtin_enum, "CODE_POINT", 7);
 				type_system_finish_enum(type_system, builtin_enum);
 
 				add_member_cstr(subtype_builtin, "type", upcast(builtin_enum));
@@ -1658,7 +1650,7 @@ void type_system_add_predefined_types(Type_System* type_system)
 			// Array
 			{
 				add_member_cstr(subtype_array, "element_type", upcast(types->type_handle));
-				add_member_cstr(subtype_array, "size", upcast(types->i32_type));
+				add_member_cstr(subtype_array, "size", upcast(types->int_type));
 			}
 			// Slice
 			{
@@ -1670,7 +1662,7 @@ void type_system_add_predefined_types(Type_System* type_system)
 				{
 					add_member_cstr(struct_member_type, "name", upcast(types->string));
 					add_member_cstr(struct_member_type, "type", upcast(types->type_handle));
-					add_member_cstr(struct_member_type, "offset", upcast(types->i32_type));
+					add_member_cstr(struct_member_type, "offset", upcast(types->int_type));
 					type_system_finish_struct(type_system, struct_member_type);
 				}
 				types->internal_member_info_type = upcast(struct_member_type);
@@ -1691,7 +1683,7 @@ void type_system_add_predefined_types(Type_System* type_system)
 					String* id = make_id("Enum_Member");
 					Datatype_Struct* enum_member_type = type_system_make_struct_empty(type_system, id);
 					add_member_cstr(enum_member_type, "name", upcast(types->string));
-					add_member_cstr(enum_member_type, "value", upcast(types->i32_type));
+					add_member_cstr(enum_member_type, "value", upcast(types->int_type));
 					type_system_finish_struct(type_system, enum_member_type);
 					add_member_cstr(subtype_enum, "members", upcast(type_system_make_slice(type_system, upcast(enum_member_type))));
 					types->internal_enum_member_info_type = upcast(enum_member_type);
@@ -1793,6 +1785,8 @@ Primitive_Class primitive_type_get_class(Primitive_Type primitive_type)
 	switch (primitive_type)
 	{
     // Basic integers
+	case Primitive_Type::INT:
+    case Primitive_Type::UINT:
 	case Primitive_Type::I8:
     case Primitive_Type::I16:
     case Primitive_Type::I32:
@@ -1823,8 +1817,6 @@ bool datatype_is_integer(Datatype* datatype, bool require_operations_enabled)
 {
 	return
 		datatype_is_primitive_class(datatype, Primitive_Class::INTEGER) ||
-		datatype_is_builtin_type(datatype, Builtin_Type::USIZE) ||
-		datatype_is_builtin_type(datatype, Builtin_Type::ISIZE) ||
 		(!require_operations_enabled && (
 			datatype_is_builtin_type(datatype, Builtin_Type::C_CHAR) ||
 			datatype_is_builtin_type(datatype, Builtin_Type::CODE_POINT) ||
@@ -1833,24 +1825,45 @@ bool datatype_is_integer(Datatype* datatype, bool require_operations_enabled)
 		));
 }
 
-bool datatype_is_unsigned_int(Datatype* datatype)
+bool datatype_is_signed_int(Datatype* datatype)
+{
+	// Question: Should enums be allowed?
+	if (datatype->type == Datatype_Type::PRIMITIVE)
+	{
+		auto primitive_type = downcast<Datatype_Primitive>(datatype)->primitive_type;
+		return
+			primitive_type == Primitive_Type::INT ||
+			primitive_type == Primitive_Type::I8 ||
+			primitive_type == Primitive_Type::I16 ||
+			primitive_type == Primitive_Type::I32 ||
+			primitive_type == Primitive_Type::I64;
+	}
+
+	return false;
+}
+
+bool datatype_is_unsigned_int(Datatype* datatype, bool requires_operations_enabled)
 {
 	if (datatype->type == Datatype_Type::PRIMITIVE)
 	{
 		auto primitive_type = downcast<Datatype_Primitive>(datatype)->primitive_type;
 		return
+			primitive_type == Primitive_Type::UINT ||
 			primitive_type == Primitive_Type::U8 ||
 			primitive_type == Primitive_Type::U16 ||
 			primitive_type == Primitive_Type::U32 ||
 			primitive_type == Primitive_Type::U64;
 	}
 
+	if (!requires_operations_enabled) {
+		return false;
+	}
+
 	return
-		datatype_is_builtin_type(datatype, Builtin_Type::USIZE) ||
 		datatype_is_builtin_type(datatype, Builtin_Type::C_CHAR) ||
 		datatype_is_builtin_type(datatype, Builtin_Type::CODE_POINT) ||
 		datatype_is_builtin_type(datatype, Builtin_Type::TYPE_HANDLE);
-		// datatype->type == Datatype_Type::ENUM // Not sure about enums...
+		// datatype->type == Datatype_Type::ENUM // Enums are currently stored as signed int
 }
 
 bool datatype_is_builtin_type(Datatype* datatype, Builtin_Type builtin_type)

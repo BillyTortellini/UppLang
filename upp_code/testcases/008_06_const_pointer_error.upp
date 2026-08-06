@@ -1,7 +1,0 @@
-
-
-main :: ()
-	i := 15
-	ip: * const int =* i
-	
-	ip = 15

@@ -236,7 +236,7 @@ template <typename K, typename V>
 bool hashtable_insert_element(Hashtable<K, V>* table, K key, V value)
 {
     if ((float)(table->element_count + 1) / table->entries.size > HASHSET_RESIZE_PERCENTAGE) {
-        hashtable_reserve(table, table->element_count + 1);
+        hashtable_reserve(table, (int)((table->element_count + 1) / HASHSET_RESIZE_PERCENTAGE));
     }
 
     u64 hash = table->hash_function(&key);

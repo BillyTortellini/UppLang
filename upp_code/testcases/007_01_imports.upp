@@ -1,0 +1,17 @@
+// Importing files is done with the import keyword
+import "import_test/A.upp" as A
+
+// Import can also be used for aliases
+import A as A_Module
+
+main :: fn ()
+    // Resolving paths is done with ~
+    x := A~a_adder(1, 2)
+    assert(x == 3)
+    x = A_Module~a_adder(3, 3)
+    assert(x == 6)
+     
+    // Importing can also be done at any scope
+    import "import_test/B.upp" as B
+    value := B~b_return_100()
+    assert(value == 100)

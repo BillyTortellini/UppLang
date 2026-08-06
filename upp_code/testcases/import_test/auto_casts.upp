@@ -1,0 +1,5 @@
+is_even :: fn (n: int) => bool
+    return n % 2 == 0
+
+operators add_auto_cast(int, bool, is_even)
+

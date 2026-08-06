@@ -1,6 +1,4 @@
-
-main::()
-	// Requires cast mode inferred
-	i:=15
-	context set_cast_option(.INTEGER_SIZE_UPCAST,.EXPLICIT)
-	y:i64=cast i
+main :: fn ()
+    // There isn't even casting to compatible types
+    i := 15
+    y: i64 = i

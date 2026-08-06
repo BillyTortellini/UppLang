@@ -1,0 +1,9 @@
+import "import_test/A.upp" as A
+
+main :: fn ()
+    // Imports are only for a given scope
+    scope
+        import [all]A
+        a_adder(1, 2)
+
+    a_adder(1, 3) //Does not work

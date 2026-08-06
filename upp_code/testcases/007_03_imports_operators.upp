@@ -1,0 +1,16 @@
+import "import_test/A.upp" as A
+import "import_test/B.upp" as B
+
+main :: fn ()
+    // Instead of using an alias, we can also import everything from a module
+    import [symbols]A
+    x := a_adder(2, 1)
+    assert(x == 3)
+    x = a_subber(2, 1)
+    assert(x == 1)
+
+    // The options for imports are all, symbols and operators, and we can also directly import a filename
+    import [all symbols operators ]"import_test/B.upp"
+    x = b_return_100()
+    assert(x == 100)
+

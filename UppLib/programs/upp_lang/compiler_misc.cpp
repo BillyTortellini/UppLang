@@ -58,12 +58,12 @@ Hardcoded_Type_Info hardcoded_type_get_info(Hardcoded_Type type)
 
 	switch (type)
 	{
-	case Hardcoded_Type::ASSERT_FN: return make_info(Hardcoded_Type_Class::UTILITY, "assert");
-	case Hardcoded_Type::TYPE_INFO: return make_info_builtin(Hardcoded_Type_Class::UTILITY, "type_info", IR_Builtin_Function::TYPE_INFO);
-	case Hardcoded_Type::TYPE_OF: return make_info(Hardcoded_Type_Class::UTILITY, "type_of");
-	case Hardcoded_Type::SIZE_OF: return make_info(Hardcoded_Type_Class::UTILITY, "size_of");
-	case Hardcoded_Type::ALIGN_OF: return make_info(Hardcoded_Type_Class::UTILITY, "align_of");
-	case Hardcoded_Type::PANIC_FN: return make_info(Hardcoded_Type_Class::UTILITY, "panic");
+	case Hardcoded_Type::ASSERT_FN: return make_info(Hardcoded_Type_Class::ESSENTIAL, "assert");
+	case Hardcoded_Type::TYPE_INFO: return make_info_builtin(Hardcoded_Type_Class::ESSENTIAL, "type_info", IR_Builtin_Function::TYPE_INFO);
+	case Hardcoded_Type::TYPE_OF: return make_info(Hardcoded_Type_Class::ESSENTIAL, "type_of");
+	case Hardcoded_Type::SIZE_OF: return make_info(Hardcoded_Type_Class::ESSENTIAL, "size_of");
+	case Hardcoded_Type::ALIGN_OF: return make_info(Hardcoded_Type_Class::ESSENTIAL, "align_of");
+	case Hardcoded_Type::PANIC_FN: return make_info(Hardcoded_Type_Class::ESSENTIAL, "panic");
 	case Hardcoded_Type::RETURN_TYPE: return make_info(Hardcoded_Type_Class::UTILITY, "return_type");
 	case Hardcoded_Type::STRUCT_TAG: return make_info(Hardcoded_Type_Class::UTILITY, "struct_tag");
 
@@ -72,31 +72,26 @@ Hardcoded_Type_Info hardcoded_type_get_info(Hardcoded_Type type)
 	case Hardcoded_Type::ENUM_TYPE_MAX_VALUE: return make_info(Hardcoded_Type_Class::UTILITY, "enum_type_max_value");
 	case Hardcoded_Type::ENUM_TYPE_IS_CONTINOUS: return make_info(Hardcoded_Type_Class::UTILITY, "enum_type_is_continous");
 
-	case Hardcoded_Type::CAST_PRIMITIVE: return make_info_operation(Hardcoded_Type_Class::UTILITY, "cast", Primitive_Operation::PRIMITIVE_CAST);
-	case Hardcoded_Type::CAST_POINTER: return make_info_operation(Hardcoded_Type_Class::UTILITY, "cast_pointer", Primitive_Operation::PRIMITIVE_CAST);
-	case Hardcoded_Type::RAWPTR_TO_USIZE: return make_info_operation(Hardcoded_Type_Class::UTILITY, "rawptr_to_usize", Primitive_Operation::PRIMITIVE_CAST);
-	case Hardcoded_Type::USIZE_TO_RAWPTR: return make_info_operation(Hardcoded_Type_Class::UTILITY, "usize_to_rawptr", Primitive_Operation::PRIMITIVE_CAST);
+	case Hardcoded_Type::CAST_PRIMITIVE: return make_info_operation(Hardcoded_Type_Class::ESSENTIAL, "cast", Primitive_Operation::PRIMITIVE_CAST);
+	case Hardcoded_Type::CAST_POINTER: return make_info_operation(Hardcoded_Type_Class::ESSENTIAL, "cast_pointer", Primitive_Operation::PRIMITIVE_CAST);
+	case Hardcoded_Type::RAWPTR_TO_UINT: return make_info_operation(Hardcoded_Type_Class::ESSENTIAL, "rawptr_to_uint", Primitive_Operation::PRIMITIVE_CAST);
+	case Hardcoded_Type::UINT_TO_RAWPTR: return make_info_operation(Hardcoded_Type_Class::ESSENTIAL, "uint_to_rawptr", Primitive_Operation::PRIMITIVE_CAST);
 
 	case Hardcoded_Type::MEMORY_COPY: 
-		return make_info_builtin(Hardcoded_Type_Class::UTILITY, "memory_copy", IR_Builtin_Function::MEMORY_COPY);
+		return make_info_builtin(Hardcoded_Type_Class::ESSENTIAL, "memory_copy", IR_Builtin_Function::MEMORY_COPY);
 	case Hardcoded_Type::MEMORY_COPY_NO_OVERLAP: 
-		return make_info_builtin(Hardcoded_Type_Class::UTILITY, "memory_copy_no_overlap", IR_Builtin_Function::MEMORY_COPY_NO_OVERLAP);
+		return make_info_builtin(Hardcoded_Type_Class::ESSENTIAL, "memory_copy_no_overlap", IR_Builtin_Function::MEMORY_COPY_NO_OVERLAP);
 	case Hardcoded_Type::MEMORY_COMPARE: 
-		return make_info_builtin(Hardcoded_Type_Class::UTILITY, "memory_compare", IR_Builtin_Function::MEMORY_COMPARE);
+		return make_info_builtin(Hardcoded_Type_Class::ESSENTIAL, "memory_compare", IR_Builtin_Function::MEMORY_COMPARE);
 	case Hardcoded_Type::MEMORY_ZERO: 
-		return make_info_builtin(Hardcoded_Type_Class::UTILITY, "memory_zero", IR_Builtin_Function::MEMORY_ZERO);
+		return make_info_builtin(Hardcoded_Type_Class::ESSENTIAL, "memory_zero", IR_Builtin_Function::MEMORY_ZERO);
 
-	case Hardcoded_Type::SYSTEM_ALLOC: return make_info_builtin(Hardcoded_Type_Class::UTILITY, "system_allocate", IR_Builtin_Function::SYSTEM_ALLOC);
-	case Hardcoded_Type::SYSTEM_FREE: return make_info_builtin(Hardcoded_Type_Class::UTILITY, "system_free", IR_Builtin_Function::SYSTEM_FREE);
+	case Hardcoded_Type::SYSTEM_ALLOC: return make_info_builtin(Hardcoded_Type_Class::ESSENTIAL, "system_allocate", IR_Builtin_Function::SYSTEM_ALLOC);
+	case Hardcoded_Type::SYSTEM_FREE: return make_info_builtin(Hardcoded_Type_Class::ESSENTIAL, "system_free", IR_Builtin_Function::SYSTEM_FREE);
 
-	case Hardcoded_Type::PRINT_I32: return make_info_builtin(Hardcoded_Type_Class::OUTPUT, "print_i32", IR_Builtin_Function::PRINT_I32);
-	case Hardcoded_Type::PRINT_F32: return make_info_builtin(Hardcoded_Type_Class::OUTPUT, "print_f32", IR_Builtin_Function::PRINT_F32);
-	case Hardcoded_Type::PRINT_BOOL: return make_info_builtin(Hardcoded_Type_Class::OUTPUT, "print_bool", IR_Builtin_Function::PRINT_BOOL);
-	case Hardcoded_Type::PRINT_LINE: return make_info_builtin(Hardcoded_Type_Class::OUTPUT, "print_line", IR_Builtin_Function::PRINT_LINE);
+	case Hardcoded_Type::PRINT_INT: return make_info_builtin(Hardcoded_Type_Class::OUTPUT, "print_int", IR_Builtin_Function::PRINT_INT);
+	case Hardcoded_Type::PRINT_FLOAT: return make_info_builtin(Hardcoded_Type_Class::OUTPUT, "print_float", IR_Builtin_Function::PRINT_FLOAT);
 	case Hardcoded_Type::PRINT_STRING: return make_info_builtin(Hardcoded_Type_Class::OUTPUT, "print_string", IR_Builtin_Function::PRINT_STRING);
-	case Hardcoded_Type::READ_I32: return make_info_builtin(Hardcoded_Type_Class::INPUT, "read_i32", IR_Builtin_Function::READ_I32);
-	case Hardcoded_Type::READ_F32: return make_info_builtin(Hardcoded_Type_Class::INPUT, "read_f32", IR_Builtin_Function::READ_F32);
-	case Hardcoded_Type::READ_BOOL: return make_info_builtin(Hardcoded_Type_Class::INPUT, "read_bool", IR_Builtin_Function::READ_BOOL);
 
 	case Hardcoded_Type::BITWISE_NOT:     return make_info_operation(Hardcoded_Type_Class::BITWISE_NOT, "bitwise_not", Primitive_Operation::BITWISE_NOT);
 	case Hardcoded_Type::HIGHEST_SET_BIT: return make_info_operation(Hardcoded_Type_Class::BIT_INDEX, "hightest_set_bit", Primitive_Operation::HIGHEST_SET_BIT);
@@ -134,9 +129,9 @@ Hardcoded_Type_Info hardcoded_type_get_info(Hardcoded_Type type)
 	case Hardcoded_Type::ASINH:         return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "asinh", Primitive_Operation::ASINH);
 	case Hardcoded_Type::ACOSH:         return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "acosh", Primitive_Operation::ACOSH);
 	case Hardcoded_Type::ATANH:         return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "atanh", Primitive_Operation::ATANH);
-	case Hardcoded_Type::IS_NAN:        return make_info_operation(Hardcoded_Type_Class::FLOAT_PREDICATE, "is_nan", Primitive_Operation::IS_NAN);
-	case Hardcoded_Type::IS_FINITE:     return make_info_operation(Hardcoded_Type_Class::FLOAT_PREDICATE, "is_finite", Primitive_Operation::IS_FINITE);
-	case Hardcoded_Type::IS_INFINITE:   return make_info_operation(Hardcoded_Type_Class::FLOAT_PREDICATE, "is_infinite", Primitive_Operation::IS_INFINITE);
+	case Hardcoded_Type::IS_NAN:        return make_info_operation(Hardcoded_Type_Class::FLOAT_PREDICATE, "float_is_nan", Primitive_Operation::IS_NAN);
+	case Hardcoded_Type::IS_FINITE:     return make_info_operation(Hardcoded_Type_Class::FLOAT_PREDICATE, "float_is_finite", Primitive_Operation::IS_FINITE);
+	case Hardcoded_Type::IS_INFINITE:   return make_info_operation(Hardcoded_Type_Class::FLOAT_PREDICATE, "float_is_infinite", Primitive_Operation::IS_INFINITE);
 
 	default: panic("Should not happen");
 	}
@@ -240,6 +235,9 @@ Identifier_Pool identifier_pool_create()
 		ids.string = add_id("string");
 		ids.allocator = add_id("Allocator");
 		ids.bytes = add_id("bytes");
+		ids.transitive = add_id("transitive");
+		ids.all = add_id("all");
+		ids.symbols = add_id("symbols");
 		ids.lambda_function = add_id("lambda_function");
 		ids.bake_function = add_id("bake_function");
 

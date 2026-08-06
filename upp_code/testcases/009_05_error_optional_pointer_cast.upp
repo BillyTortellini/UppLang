@@ -1,8 +1,0 @@
-
-test :: (a: *int)
-	a += 1
-
-main :: ()
-	i := 15
-	ip: ?*int =* i
-	test(ip)

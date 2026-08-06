@@ -204,10 +204,7 @@ void symbol_table_find_all_reachable_tables_recursive(
 		Symbol_Table_Import& import  = symbol_table->imports[i];
 		// Skip other types
 		if (import.type != query_info.import_search_type) {
-			// Special exception: Import_Type::DOT_CALL also queries normal imports
-			if (!(import.type == Import_Type::SYMBOLS && query_info.import_search_type == Import_Type::DOT_CALLS)) {
-				continue;
-			}
+			continue;
 		}
 
 		Symbol_Access_Level next_level = math_minimum(query_info.access_level, import.access_level);
@@ -472,6 +469,9 @@ void symbol_type_append_to_string(Symbol_Type type, String* string)
 		break;
 	case Symbol_Type::PARAMETER:
 		string_append_formated(string, "Parameter");
+		break;
+	case Symbol_Type::FAST_CALL:
+		string_append_formated(string, "Fast_Call");
 		break;
 	case Symbol_Type::POLYMORPHIC_FUNCTION:
 		string_append_formated(string, "Polymorphic Function");

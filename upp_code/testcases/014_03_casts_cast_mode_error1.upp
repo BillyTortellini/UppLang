@@ -1,6 +1,4 @@
-
-import ~u32
-
-main::()
-	i:int=15
-	y:u32=i
+main :: fn ()
+    // There is no auto casting between integer types
+    i: int = 15
+    y: i8 = i

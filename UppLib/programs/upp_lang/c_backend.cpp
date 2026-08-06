@@ -10,7 +10,6 @@
 #include "../../win32/process.hpp"
 #include "ir_code.hpp"
 #include "symbol_table.hpp"
-#include "compilation_data.hpp"
 #include "constant_pool.hpp"
 
 // --------------
@@ -508,6 +507,8 @@ void c_generator_output_type_reference(C_Generator* generator, Datatype* type)
 
         switch (primitive->primitive_type)
         {
+        case Primitive_Type::INT:  string_append(&access_name, "i64"); break;
+        case Primitive_Type::UINT: string_append(&access_name, "u64"); break;
         case Primitive_Type::I8:  string_append(&access_name, "i8"); break;
         case Primitive_Type::I16: string_append(&access_name, "i16"); break;
         case Primitive_Type::I32: string_append(&access_name, "i32"); break;
@@ -534,8 +535,6 @@ void c_generator_output_type_reference(C_Generator* generator, Datatype* type)
         case Builtin_Type::STRING:      string_append(&access_name, "Upp_String_"); break;
         case Builtin_Type::C_STRING:    string_append(&access_name, "const char*"); break;
         case Builtin_Type::C_CHAR:      string_append(&access_name, "char"); break;
-        case Builtin_Type::USIZE:       string_append(&access_name, "u64"); break;
-        case Builtin_Type::ISIZE:       string_append(&access_name, "i64"); break;
         case Builtin_Type::CODE_POINT:  string_append(&access_name, "u32"); break;
         default: panic("");
         }
@@ -555,7 +554,7 @@ void c_generator_output_type_reference(C_Generator* generator, Datatype* type)
         gen.name_counter++;
 
         String* enum_section = &gen.sections[(int)Generator_Section::ENUM_DECLARATIONS];
-        string_append_formated(enum_section, "enum class %s\n{\n", access_name.characters);
+        string_append_formated(enum_section, "enum class %s : i64\n{\n", access_name.characters); // Currently enums are i64 in Upp
         for (int i = 0; i < members.size; i++) {
             auto member = &members[i];
             string_append_formated(enum_section, "    %s = %d,\n", member->name->characters, member->value);
@@ -1372,8 +1371,12 @@ void c_generator_output_constant_access(C_Generator* generator, Upp_Constant& co
     SCOPE_EXIT(gen.text = backup_text);
 
     Datatype* type = constant.type;
-    if (type->type == Datatype_Type::ARRAY || type->type == Datatype_Type::SLICE ||
-        type->type == Datatype_Type::STRUCT) {
+    if (type->type == Datatype_Type::ARRAY || 
+        type->type == Datatype_Type::SLICE ||
+        type->type == Datatype_Type::STRUCT ||
+        datatype_is_builtin_type(type, Builtin_Type::STRING) || 
+        datatype_is_builtin_type(type, Builtin_Type::ANY)) 
+    {
         requires_memory_address = true;
     }
 
@@ -1478,14 +1481,6 @@ void c_generator_output_constant_access(C_Generator* generator, Upp_Constant& co
                 string_append_formated(gen.text, "((char)%d)", *value);
                 break;
             }
-            case Builtin_Type::USIZE: {
-                string_append_formated(gen.text, "%llu", *(u64*)base_memory);
-                break;
-            }
-            case Builtin_Type::ISIZE: {
-                string_append_formated(gen.text, "%lld", *(i64*)base_memory);
-                break;
-            }
             case Builtin_Type::CODE_POINT: {
                 string_append_formated(gen.text, "%u", *(u32*)base_memory);
                 break;
@@ -1500,6 +1495,8 @@ void c_generator_output_constant_access(C_Generator* generator, Upp_Constant& co
             byte* memory = base_memory;
             switch (primitive->primitive_type)
             {
+            case Primitive_Type::INT:  string_append_formated(gen.text, "%lld", (*(i64*)memory)); break;
+            case Primitive_Type::UINT: string_append_formated(gen.text, "%llu", (*(u64*)memory)); break;
             case Primitive_Type::I8:  string_append_formated(gen.text, "%d", (int)(*(i8*)memory)); break;
             case Primitive_Type::I16: string_append_formated(gen.text, "%d", (int)(*(i16*)memory)); break;
             case Primitive_Type::I32: string_append_formated(gen.text, "%d", (int)(*(i32*)memory)); break;
@@ -1519,12 +1516,13 @@ void c_generator_output_constant_access(C_Generator* generator, Upp_Constant& co
         {
             byte* memory = base_memory;
 
-            int enum_value = *(int*)memory;
+            assert(DEFAULT_ENUM_SIZE == 8, "");
+            i64 enum_value = *(i64*)memory;
             Datatype_Enum* enum_type = downcast<Datatype_Enum>(type);
             int member_index = -1;
             for (int i = 0; i < enum_type->members.size; i++) {
                 auto& member = enum_type->members[i];
-                if (member.value == enum_value) {
+                if ((i64)member.value == enum_value) {
                     member_index = i;
                     break;
                 }
@@ -1856,6 +1854,7 @@ void c_generator_output_cast_if_necessary(C_Generator* generator, Datatype* dst_
 void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_block, int indentation_level, bool define_registers_in_outer_scope)
 {
     auto& gen = *generator;
+    auto& types = gen.compilation_data->type_system->predefined_types;
 
     // Create Register variables
     {
@@ -1979,16 +1978,11 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
                 case IR_Builtin_Function::MEMORY_COPY_NO_OVERLAP: impl_name = "memory_copy_no_overlap"; break;
                 case IR_Builtin_Function::MEMORY_ZERO: impl_name = "memory_zero"; break;
                 case IR_Builtin_Function::MEMORY_COMPARE: impl_name = "memory_compare"; break;
-                case IR_Builtin_Function::SYSTEM_ALLOC: impl_name = "malloc_size_u64"; break;
+                case IR_Builtin_Function::SYSTEM_ALLOC: impl_name = "malloc_size"; break;
                 case IR_Builtin_Function::SYSTEM_FREE: impl_name = "free_pointer"; break;
-                case IR_Builtin_Function::PRINT_I32: impl_name = "print_i32"; break;
-                case IR_Builtin_Function::PRINT_F32: impl_name = "print_f32"; break;
-                case IR_Builtin_Function::PRINT_BOOL: impl_name = "print_bool"; break;
-                case IR_Builtin_Function::PRINT_LINE: impl_name = "print_line"; break;
+                case IR_Builtin_Function::PRINT_INT: impl_name = "print_upp_int"; break;
+                case IR_Builtin_Function::PRINT_FLOAT: impl_name = "print_f32"; break;
                 case IR_Builtin_Function::PRINT_STRING: impl_name = "print_string"; break;
-                case IR_Builtin_Function::READ_I32: impl_name = "read_i32"; break;
-                case IR_Builtin_Function::READ_F32: impl_name = "read_f32"; break;
-                case IR_Builtin_Function::READ_BOOL: impl_name = "read_bool"; break;
                 default: panic("");
                 }
                 if (!call_handled) {
@@ -2154,6 +2148,9 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
             auto& operation = instr->options.operation;
 
             bool op_handled = false;
+            // Bitwise-ops on signed ints are implementation defined in C++.
+            // In upp, we handle them like unsigned ints (Assuming two's-complement)
+            bool handle_params_as_unsigned = false;
             const char* binop_str = nullptr;
             const char* unop_str  = nullptr;
             const char* float_fn_name = nullptr;
@@ -2174,21 +2171,26 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
             case Primitive_Operation::LOWEST_SET_BIT:
             {
                 op_handled = true;
-                assert(datatype_is_integer(operation.operand_1->datatype, true) && datatype_is_unsigned_int(operation.operand_1->datatype), "");
+                assert(datatype_is_integer(operation.operand_1->datatype, true), "");
+                handle_params_as_unsigned = true;
 
                 const char* fn_name = operation.type == Primitive_Operation::HIGHEST_SET_BIT ? "highest_set_bit_" : "lowest_set_bit_";
                 const char* postfix = "";
+                Datatype* function_value_datatype = types.u32_type->upcast();
                 switch (operation.operand_1->datatype->memory_info.value.size)
                 {
                 case 1:
                 case 2:
-                case 4: postfix = "u32"; break;
-                case 8: postfix = "u64"; break;
+                case 4: postfix = "u32"; function_value_datatype = types.u32_type->upcast(); break;
+                case 8: postfix = "u64"; function_value_datatype = types.u64_type->upcast(); break;
                 default: panic("");
                 }
 
                 c_generator_output_data_access(generator, operation.destination);
-                string_append_formated(gen.text, " = %s%s(", fn_name, postfix);
+                string_append(gen.text, " = ");
+                c_generator_output_cast_if_necessary(generator, operation.destination->datatype, function_value_datatype);
+                string_append_formated(gen.text, "%s%s(", fn_name, postfix);
+                c_generator_output_cast_if_necessary(generator, operation.operand_1->datatype, function_value_datatype);
                 c_generator_output_data_access(generator, operation.operand_1);
                 string_append_formated(gen.text, ");\n");
                 break;
@@ -2199,7 +2201,7 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
             case Primitive_Operation::DIVISION:               binop_str = "/"; break;
             case Primitive_Operation::MULTIPLICATION:         binop_str = "*"; break;
             case Primitive_Operation::MODULO:                 binop_str = "%"; break;
-            case Primitive_Operation::NEGATE:                 unop_str = "!"; break;
+            case Primitive_Operation::NEGATE:                 unop_str = "-"; break;
             case Primitive_Operation::EQUAL:                  binop_str = "=="; break;
             case Primitive_Operation::NOT_EQUAL:              binop_str = "!="; break;
             case Primitive_Operation::LESS:                   binop_str = "<"; break;
@@ -2209,14 +2211,14 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
             case Primitive_Operation::AND:                    binop_str = "&&"; break;
             case Primitive_Operation::OR:                     binop_str = "||"; break;
             case Primitive_Operation::NOT:                    unop_str = "!"; break;
-            case Primitive_Operation::BITWISE_NOT:            binop_str = "~"; break;
-            case Primitive_Operation::BITWISE_AND:            binop_str = "&"; break;
-            case Primitive_Operation::BITWISE_OR:             binop_str = "|"; break;
-            case Primitive_Operation::BITWISE_XOR:            binop_str = "^"; break;
-            case Primitive_Operation::BITWISE_SHIFT_LEFT:     binop_str = "<<"; break;
-            case Primitive_Operation::BITWISE_SHIFT_RIGHT:    binop_str = ">>"; break;
+            case Primitive_Operation::BITWISE_NOT:            binop_str = "~";  handle_params_as_unsigned = true; break;
+            case Primitive_Operation::BITWISE_AND:            binop_str = "&";  handle_params_as_unsigned = true; break;
+            case Primitive_Operation::BITWISE_OR:             binop_str = "|";  handle_params_as_unsigned = true; break;
+            case Primitive_Operation::BITWISE_XOR:            binop_str = "^";  handle_params_as_unsigned = true; break;
+            case Primitive_Operation::BITWISE_SHIFT_LEFT:     binop_str = "<<"; handle_params_as_unsigned = true; break;
+            case Primitive_Operation::BITWISE_SHIFT_RIGHT:    binop_str = ">>"; handle_params_as_unsigned = true; break;
 
-            case Primitive_Operation::FLOAT_ABS:       float_fn_name = "fabsf"; break;
+            case Primitive_Operation::FLOAT_ABS:            float_fn_name = "fabsf"; break;
             case Primitive_Operation::FLOAT_MODULO:         float_fn_name = "fmod";  break;
             case Primitive_Operation::FLOAT_REMAINDER:      float_fn_name = "remainder"; break;
             case Primitive_Operation::ROUND_UP:             float_fn_name = "ceil"; break;
@@ -2258,11 +2260,38 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
             }
             else if (binop_str != nullptr)
             {
+                auto helper_signed_to_unsigned_if_required = [&](Datatype* datatype)-> Datatype*
+                {
+                    if (!handle_params_as_unsigned || !datatype_is_signed_int(datatype)) return datatype;
+                    switch (operation.operand_1->datatype->memory_info.value.size)
+                    {
+                    case 1: return types.u8_type->upcast();
+                    case 2: return types.u16_type->upcast();
+                    case 4: return types.u32_type->upcast();
+                    case 8: return types.u64_type->upcast();
+                    default: panic("");
+                    }
+                    return datatype;
+                };
+
                 c_generator_output_data_access(generator, operation.destination);
-                string_append_formated(gen.text, " = ");
+                string_append(gen.text, " = ");
+                string_append(gen.text, "(");
+                c_generator_output_cast_if_necessary(
+                    generator, helper_signed_to_unsigned_if_required(operation.operand_1->datatype), operation.operand_1->datatype
+                );
                 c_generator_output_data_access(generator, operation.operand_1);
+                string_append(gen.text, ")");
+
                 string_append_formated(gen.text, " %s ", binop_str);
+
+                string_append(gen.text, "(");
+                c_generator_output_cast_if_necessary(
+                    generator, helper_signed_to_unsigned_if_required(operation.operand_2->datatype), operation.operand_2->datatype
+                );
                 c_generator_output_data_access(generator, operation.operand_2);
+                string_append(gen.text, ")");
+
                 string_append_formated(gen.text, ";\n");
             }
             else if (unop_str != nullptr)

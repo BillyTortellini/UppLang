@@ -1,62 +1,57 @@
-
 import ~print_string
-import ~print_bool
-import ~print_line
-import ~print_i32
-import ~c_string
 import ~struct_tag
 
 // Subtypes can form a hierarchy
 Node :: struct
-	Expression:
-		Binop:
-			a: int
-			b: int
-		Unop:
-			a: int
-	Statement:
-		Assignment:
-			left: int
-			right: int
-		For:
-			condition: bool
-			value: int
+    .>Expression
+        .>Binop
+            a: int
+            b: int
+        .>Unop
+            a: int
+    .>Statement
+        .>Assignment
+            left: int
+            right: int
+        .>For
+            condition: bool
+            value: int
 
-node_test :: (a: * const Node) => int
-	return 0
+node_test :: fn (a: Node) => int
+    return 0
 
-stat_test :: (a: Node.Statement) => int
-	if struct_tag(a) == .For
-		loop :=* a.For
-		if loop.condition
-			return loop.value
-		return 0
-	else
-		ass :=* a.Assignment
-		return ass.left + ass.right
+stat_test :: fn (a: &Node.>Statement) => int
+    if struct_tag(a) == .For
+        for :&= a.>For
+        if for.condition
+            return for.value
+        return 0
+    else
+        ass :&= a.>Assignment
+        return ass.left + ass.right
 
-assign_test :: (a: Node.Statement.Assignment) => int
-	return a.left + a.right
+assign_test :: fn (a: Node.>Statement.>Assignment) => int
+    return a.left + a.right
 
-main :: ()
-	node: Node
-	struct_tag(node) = .Statement
-	struct_tag(node.Statement) = .Assignment
-	node.Statement.Assignment.right = 5
-	node.Statement.Assignment.left = 4
-	
-	stat :=* node.Statement
-	assign :=* stat.Assignment
-	
-	
-	node_test(node)
-	node_test(stat)
-	node_test(assign)
-	
-	stat_test(stat)
-	stat_test(assign)
-	stat_test(node.Statement)
-	
-	assign_test(assign)
-	assign_test(stat.Assignment)
-	assign_test(node.Statement.Assignment)
+main :: fn ()
+    node: Node
+    struct_tag(node) = .Statement
+    struct_tag(node.>Statement) = .Assignment
+    node.>Statement.>Assignment.right = 5
+    node.>Statement.>Assignment.left = 4
+    
+    stat :&= node.>Statement
+    assign :&= stat.>Assignment
+    
+    
+    node_test(node)
+    node_test(stat)
+    node_test(assign)
+    
+    stat_test(stat)
+    stat_test(assign)
+    stat_test(node.>Statement)
+    
+    assign_test(assign)
+    assign_test(stat.>Assignment)
+    assign_test(node.>Statement.>Assignment)

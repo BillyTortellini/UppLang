@@ -28,7 +28,7 @@ struct Literal_Value
         f64 float_val;
         bool boolean;
         void* null_ptr;
-        u32 code_point;
+        u32 codepoint;
     } options;
 };
 
@@ -42,6 +42,14 @@ namespace AST
     struct Call_Node;
     struct Symbol_Node;
     struct Signature;
+    struct Definition_Import;
+
+    enum class Assignment_Type
+    {
+        VALUE,
+        POINTER,
+        RAW
+    };
 
     enum class Binop
     {
@@ -67,8 +75,8 @@ namespace AST
     {
         NOT,                  // !
         NEGATE,               // -
-        ADDRESS_OF,           // -*
-        DEREFERENCE,          // -&
+        ADDRESS_OF,           // -&
+        DEREFERENCE,          // -*
     };
 
     enum class Node_Type
@@ -76,6 +84,7 @@ namespace AST
         EXPRESSION,
         STATEMENT,
         DEFINITION,
+        ROOT,
 
         // Helpers
         CODE_BLOCK,
@@ -89,15 +98,22 @@ namespace AST
         PARAMETER,             // Name/Type compination with optional default value + comptime
         ARGUMENT,              // Expression with optional base_name
         GET_OVERLOAD_ARGUMENT, // Either just id, or id = type_expr
-        SWITCH_CASE,           // Expression 
+        MATCH_CASE,           // Expression 
     };
 
     struct Node
     {
         Node_Type type;
-        Node* parent;
+        Node* parent; // parent of root is nullptr
         Text_Range range;
         Text_Range bounding_range;
+    };
+
+    struct Root_Node
+    {
+        Node base;
+        Array<Definition*> definitions;
+        Compilation_Unit* compilation_unit;
     };
 
     // Note: #get_overload can also specify return_type, in which case the id is set appropriately (see parser.cpp)
@@ -136,7 +152,8 @@ namespace AST
         ENUM,
         IMPORT,
         EXTERN,
-        MODULE,
+        FAST_CALL,
+        IMPORT_BLOCK,
         CUSTOM_OPERATOR
     };
 
@@ -156,8 +173,22 @@ namespace AST
     struct Definition_Value
     {
         Symbol_Node* symbol;
+        Assignment_Type assignment_type;
         Optional<Expression*> datatype_expr;
         Optional<Expression*> value_expr;
+    };
+
+    struct Definition_Fast_Call
+    {
+        Symbol_Node* symbol;
+        AST::Expression* expression;
+    };
+
+    struct Definition_Import_Block
+    {
+        Symbol_Node* symbol;
+        Array<Definition_Import*> imports;
+        Array<Definition_Custom_Operator*> custom_operators;
     };
     
     struct Structure_Member_Node
@@ -178,13 +209,6 @@ namespace AST
         Array<Structure_Member_Node*> members;
         bool is_union;
     };
-
-    struct Definition_Module
-    {
-        Optional<Symbol_Node*> symbol; // The root modules does not have a definition
-        Array<Definition*> definitions;
-    };
-
 
     enum class Extern_Type
     {
@@ -212,20 +236,18 @@ namespace AST
         } options;
     };
 
-    enum class Import_Operator
-    {
-        SINGLE_SYMBOL,             // import A~a
-        MODULE_IMPORT,            // import A~*
-        MODULE_IMPORT_TRANSITIVE, // import A~**
-        FILE_IMPORT,               // import "filename"
-    };
-
+    // import[transitive symbols operators] Foo~Bar
+    // import Foo~Bar as Baz
     struct Definition_Import
     {
-        Import_Type import_type;
-        Import_Operator operator_type;
         Optional<Symbol_Node*> alias_name;
-        union {
+        bool is_file_import;
+        bool is_transitive;
+        bool import_symbols_set;
+        bool import_operators_set;
+        bool import_all_set;
+        union 
+        {
             Path_Lookup* path;
             struct {
                 String* relative_path;
@@ -252,14 +274,15 @@ namespace AST
         Node base;
         Definition_Type type;
         union {
-            Definition_Module module;
             Definition_Function function;
             Definition_Struct structure;
             Definition_Enum enumeration;
             Definition_Value value; // Global, var or const
+            Definition_Fast_Call fast_call;
             Definition_Custom_Operator custom_operator;
             Definition_Import import;
             Definition_Extern_Import extern_import;
+            Definition_Import_Block import_block;
         } options;
     };
 
@@ -365,7 +388,7 @@ namespace AST
             struct {
                 Expression* expr;
                 Call_Node* call_node;
-                bool is_dot_call;
+                bool is_fast_call;
             } call;
             struct {
                 Expression* expr;
@@ -416,10 +439,21 @@ namespace AST
         } options;
     };
 
-    struct Switch_Case
+    enum class Match_Case_Type
+    {
+        EXPRESSION,
+        DEFAULT,
+        SUBTYPE,
+    };
+
+    struct Match_Case
     {
         Node base;
-        Optional<Expression*> value; // Default-Case if value not available
+        Match_Case_Type case_type;
+        union {
+            Expression* expression;
+            String* subtype_name;
+        } options;
         Optional<Symbol_Node*> variable_definition; // case .IPv4 => v4
         Code_Block* block;
     };
@@ -438,7 +472,7 @@ namespace AST
         WHILE_STATEMENT,
         FOR_LOOP,
         FOREACH_LOOP,
-        SWITCH_STATEMENT,
+        MATCH_STATEMENT,
         BREAK_STATEMENT,
         CONTINUE_STATEMENT,
         RETURN_STATEMENT,
@@ -454,6 +488,7 @@ namespace AST
             Code_Block* block;
             Definition* definition;
             struct {
+                Assignment_Type assignment_type;
                 Expression* left_side;
                 Expression* right_side;
             } assignment;
@@ -461,6 +496,7 @@ namespace AST
                 Symbol_Node* loop_variable_definition;
                 Optional<Expression*> loop_variable_type;
                 Expression* initial_value;
+                Assignment_Type assignment_type;
                 Expression* condition;
                 Statement* increment_statement;
                 Code_Block* body_block;
@@ -484,6 +520,7 @@ namespace AST
             struct {
                 Expression* left_side;
                 Expression* right_side;
+                Assignment_Type assignment_type;
             } defer_restore;
             struct {
                 Expression* condition;
@@ -492,9 +529,9 @@ namespace AST
             } if_statement;
             struct {
                 Expression* condition;
-                Array<Switch_Case*> cases;
+                Array<Match_Case*> cases;
                 Optional<String*> label;
-            } switch_statement;
+            } match_statement;
             Optional<String*> break_name;
             Optional<String*> continue_name;
             Optional<Expression*> return_value;
@@ -511,10 +548,11 @@ namespace AST
 
     namespace Helpers
     {
+        bool type_correct(Root_Node* base);
         bool type_correct(Definition* base);
         bool type_correct(Get_Overload_Argument* base);
         bool type_correct(Symbol_Node* base);
-        bool type_correct(Switch_Case* base);
+        bool type_correct(Match_Case* base);
         bool type_correct(Statement* base);
         bool type_correct(Signature* base);
         bool type_correct(Argument* base);
@@ -536,10 +574,11 @@ namespace AST
         return result;
     }
 
+    Node* upcast(Root_Node* node);
     Node* upcast(Definition* node);
     Node* upcast(Get_Overload_Argument* node);
     Node* upcast(Symbol_Node* node);
-    Node* upcast(Switch_Case* node);
+    Node* upcast(Match_Case* node);
     Node* upcast(Statement* node);
     Node* upcast(Signature* node);
     Node* upcast(Argument* node);
@@ -561,7 +600,8 @@ namespace AST
     Node* upcast(Definition_Import* node);
     Node* upcast(Definition_Extern_Import* node);
     Node* upcast(Definition_Enum* node);
-    Node* upcast(Definition_Module* node);
+    Node* upcast(Definition_Fast_Call* node);
+    Node* upcast(Definition_Import_Block* node);
 
     Definition* upcast_definition(Definition_Custom_Operator* node);
     Definition* upcast_definition(Definition_Function* node);
@@ -570,6 +610,7 @@ namespace AST
     Definition* upcast_definition(Definition_Import* node);
     Definition* upcast_definition(Definition_Extern_Import* node);
     Definition* upcast_definition(Definition_Enum* node);
-    Definition* upcast_definition(Definition_Module* node);
+    Definition* upcast_definition(Definition_Fast_Call* node);
+    Definition* upcast_definition(Definition_Import_Block* node);
 }
 

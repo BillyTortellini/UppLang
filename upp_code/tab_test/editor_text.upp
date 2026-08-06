@@ -1,0 +1,798 @@
+// Bits and bit-imports
+Bitwise_Imports :: import_block
+    import ~bitwise_and
+    import ~bitwise_or
+    import ~bitwise_not
+    import ~bitwise_xor
+    import ~bitshift_left
+    import ~bitshift_right
+    import ~hightest_set_bit
+    import ~lowest_set_bit
+                      
+bits_set_bit :: fn (value: $T, bit_index: int) => T
+    return ~bitwise_and(value, ~bitshift_left(1->cast(T), bit_index))
+                                              
+bits_test_bit :: fn (value: $T, bit_index: int) => bool
+    if bit_index < 0 or bit_index >= size_of(T) * 8
+        return false
+    return ~bitwise_and(value, ~bitshift_left(1->cast(T), bit_index)) != 0
+
+bits_get_range :: fn (value: $T, start_index: int, length: int) => T
+    if start_index >= size_of(T) * 8 or length <= 0
+        return 0
+    return ~bitshift_right(value, start_index)
+        ->~bitwise_and(~bitshift_left(1->cast(T), length) - 1)
+
+
+
+// Pointer Arithmetic
+pointer_to_uint :: fn (pointer: $T) => uint
+    return pointer->cast_pointer(rawptr)->rawptr_to_uint()
+
+uint_to_pointer :: fn (value: uint, $T: Type_Handle) => T
+    return value->uint_to_rawptr()->cast_pointer(T)
+
+pointer_advance_elements :: fn (pointer: &$T, count: int) => &T
+    // We do this in uint, as signed int overflow is not defined, 
+    // which could cause problems for addresses I think
+    address := pointer->pointer_to_uint()
+    address += count->cast(uint) * size_of(T)->cast(uint)
+    return address->uint_to_pointer(&T)
+
+pointer_advance_bytes :: fn (pointer: &$T, count: int) => &T
+    address := pointer->pointer_to_uint()
+    address += count->cast(uint)
+    return address->uint_to_pointer(&T)
+
+
+
+// Math utility
+Less_Function :: struct ($T)
+    function: &fn (a: T, b: T) => bool
+
+operators add_default_value("less", Less_Function(int), .(.fn a < b))
+operators add_default_value("less", Less_Function(uint), .(.fn a < b))
+operators add_default_value("less", Less_Function(i8), .(.fn a < b))
+operators add_default_value("less", Less_Function(i16), .(.fn a < b))
+operators add_default_value("less", Less_Function(i32), .(.fn a < b))
+operators add_default_value("less", Less_Function(i64), .(.fn a < b))
+operators add_default_value("less", Less_Function(u8), .(.fn a < b))
+operators add_default_value("less", Less_Function(u16), .(.fn a < b))
+operators add_default_value("less", Less_Function(u32), .(.fn a < b))
+operators add_default_value("less", Less_Function(u64), .(.fn a < b))
+operators add_default_value("less", Less_Function(f32), .(.fn a < b))
+operators add_default_value("less", Less_Function(f64), .(.fn a < b))
+
+math_min :: fn (a: $T, b: T, $less: Less_Function(T)) => T
+    return .if less.function(a, b) then a else b
+
+math_max :: fn (a: $T, b: T, $less: Less_Function(T)) => T
+    return .if less.function(b, a) then a else b
+
+math_absolute :: fn (value: $T, $less: Less_Function(T)) => T
+    return .if value < 0 then -value else value
+
+uint_round_next_multiple :: fn (value: uint, multiple_of: uint) => uint
+    result := value
+    result = result + multiple_of - 1
+    result = result - (result % multiple_of)
+    return result
+
+int_next_power_of_two :: fn (value: int) => int
+    import [all]Bitwise_Imports
+
+    if value <= 1
+        return 1
+    highest_bit := hightest_set_bit(value)
+    result := bitshift_left(1, highest_bit)
+    if result != value
+        result = bitshift_left(1, highest_bit + 1)
+    return result
+
+
+
+// Arena
+Arena :: struct
+    buffer: rawptr
+    capacity: int
+    in_use: int
+
+comptime MIN_ARENA_BUFFER_SIZE: int = 128
+operators add_default_value("capacity", int , 0, arena_create)
+
+Arena_Node :: struct
+    prev_node: &Arena_Node
+    prev_size: int
+
+Arena_Checkpoint :: struct
+    arena: &Arena
+    buffer: rawptr
+    in_use: int
+
+fast_call arena_destroy->destroy
+fast_call arena_update_capacity->update_capacity
+fast_call arena_prepare_allocation->prepare_allocation
+fast_call arena_allocate_raw->allocate_raw
+fast_call arena_allocate_array->allocate_array
+fast_call arena_try_resize_allocation->try_resize_allocation
+fast_call arena_make_checkpoint->make_checkpoint
+fast_call arena_print_state->print_state
+fast_call arena_checkpoint_rewind->rewind
+
+arena_create :: fn (capacity: int) => Arena
+    arena := Arena.(nil, 0, 0)
+    arena->update_capacity(capacity)
+    return arena
+
+arena_destroy :: fn (arena: &Arena)
+    node :&= arena.buffer->cast_pointer(&Arena_Node)
+    loop node &!= nil
+        next :&= node.prev_node
+        system_free(node->cast_pointer())
+        node &= next
+    arena.buffer = nil
+
+// Note: the first size_of(Arena_Buffer) bytes of buffer are not usable
+//    also we dont call it reserve, which is used for containers and has a expected_element_count parameter
+arena_update_capacity :: fn (arena: &Arena, required_capacity: int)
+    if arena.capacity >= required_capacity
+        return
+
+    if arena.capacity == 0
+        new_capacity := math_max(required_capacity, MIN_ARENA_BUFFER_SIZE)
+        new_capacity = int_next_power_of_two(new_capacity)
+        arena.buffer = system_allocate(new_capacity)
+        arena.capacity = new_capacity
+        arena.in_use = size_of(Arena_Node)
+
+        node :&= arena.buffer->cast_pointer(&Arena_Node)
+        node.prev_node &= nil
+        node.prev_size = 0
+        return
+
+    new_capacity := math_max(arena.capacity * 2, required_capacity)
+    new_capacity = math_max(new_capacity, MIN_ARENA_BUFFER_SIZE)
+    new_capacity = int_next_power_of_two(new_capacity)
+    new_buffer := system_allocate(new_capacity)
+    memory_copy_no_overlap(new_buffer, arena.buffer, arena.in_use)
+
+    node :&= new_buffer->cast_pointer(&Arena_Node)
+    node.prev_node &= arena.buffer->cast_pointer()
+    node.prev_size = arena.capacity
+
+    arena.buffer = new_buffer
+    arena.capacity = new_capacity
+    arena.in_use = size_of(Arena_Node)
+
+arena_prepare_allocation :: fn (arena: &Arena, allocation_size: int, alignment: int)
+    required_capacity := arena.in_use + allocation_size + size_of(Arena_Node) + alignment
+    arena->update_capacity(required_capacity)
+
+arena_allocate_raw :: fn (arena: &Arena, allocation_size: int, alignment: int) => rawptr
+    arena->prepare_allocation(allocation_size, alignment)
+    buffer_start: uint = arena.buffer->rawptr_to_uint()
+    alloc_start := buffer_start + arena.in_use->cast(uint)
+    alignment_padding: uint = uint_round_next_multiple(alloc_start, alignment->cast(uint)) - alloc_start
+    result_address: uint = alloc_start + alignment_padding
+    arena.in_use += allocation_size + alignment_padding->cast(int)
+    return result_address->uint_to_rawptr()
+
+arena_allocate :: fn (arena: &Arena, $T: Type_Handle) => &T
+    return arena->allocate_raw(size_of(T), align_of(T))->cast_pointer()
+
+arena_allocate_array :: fn (arena: &Arena, count: int) => []$T
+    if count <= 0
+        return .(nil, 0)
+    return .(
+        arena->allocate_raw(size_of(T) * count, align_of(T))->cast_pointer(),
+        count
+    )
+ 
+arena_try_resize_allocation :: fn (arena: &Arena, data: rawptr, prev_size: int, new_size: int) => bool
+    buffer_start := arena.buffer->rawptr_to_uint()
+    data_start := data->rawptr_to_uint()
+
+    if data_start + prev_size->cast(uint) != buffer_start + arena.in_use->cast(uint) or
+        data_start + new_size->cast(uint) > buffer_start + arena.capacity->cast(uint)
+        return false
+
+    arena.in_use += new_size - prev_size
+    return true
+
+arena_make_checkpoint :: fn (arena: &Arena) => Arena_Checkpoint
+    return .(arena, arena.buffer, arena.in_use)
+
+arena_checkpoint_rewind :: fn (checkpoint: Arena_Checkpoint)
+    arena := checkpoint.arena
+    if arena.buffer &== checkpoint.buffer
+        arena.in_use = checkpoint.in_use
+    else
+        arena.in_use = size_of(Arena_Node)
+
+arena_print_state :: fn (arena: Arena)
+    ~print_string("Arena size: ")
+    ~print_int(arena.in_use)
+    ~print_string(", capacity: ")
+    ~print_int(arena.capacity)
+    ~print_string(", data: ")
+    ~print_int(arena.buffer->rawptr_to_uint()->cast())
+
+
+
+// Dynamic_Array
+Dynamic_Array :: struct ($T)
+    arena: &Arena
+    data: &T
+    capacity: int // In elements
+    size: int
+
+fast_call dynamic_array_reserve->reserve
+fast_call dynamic_array_append->append
+fast_call dynamic_array_at->at
+fast_call dynamic_array_as_slice->as_slice
+operators add_default_value("capacity", int , 0, dynamic_array_create)
+operators add_array_access(Dynamic_Array(_), dynamic_array_at, result_by_ref = true)
+operators add_iterator(Dynamic_Array(_), dynamic_array_iterator_create, dynamic_array_iterator_next, true)
+
+dynamic_array_create :: fn (arena: &Arena, capacity: int) => Dynamic_Array($T)
+    result := Dynamic_Array(T).(arena, nil, 0, 0)
+    result->reserve(math_max(capacity, 0))
+    return result
+
+dynamic_array_reserve :: fn (array: &Dynamic_Array($T), requested_capacity: int)
+    arena :&= array.arena
+
+    if requested_capacity <= array.capacity
+        return
+
+    if array.capacity == 0
+        array.data &= arena->allocate_array(requested_capacity, T = T).data
+        array.capacity = requested_capacity
+        return
+
+    // Try to resize allocation in arena
+    if arena->try_resize_allocation(array.data->cast_pointer(), array.capacity * size_of(T), requested_capacity * size_of(T))
+        array.capacity = requested_capacity
+        return
+
+    // Otherwise allocate new buffer
+    new_capacity := math_max(requested_capacity, (array.capacity / 2 + 1) * 3) // Grow factor of ~1.5
+    new_buffer := arena->allocate_array(new_capacity, T = T)
+    memory_copy_no_overlap(
+        new_buffer.data->cast_pointer(),
+        array.data->cast_pointer(),
+        size_of(T) * array.size
+    )
+    array.data &= new_buffer.data
+    array.capacity = new_capacity
+
+dynamic_array_as_slice :: fn (array: Dynamic_Array($T)) => []T
+    return .(array.data, array.size)
+
+dynamic_array_at :: fn (array: Dynamic_Array($T), index: int) => &T
+    assert(index >= 0 and index < array.size)
+    return array->as_slice()[index]
+
+dynamic_array_append :: fn (array: &Dynamic_Array($T), value: T)
+    array->reserve(array.size + 1)
+    array.data->pointer_advance_elements(array.size)-* |= value
+    array.size += 1
+
+// Also rollbacks size to arena if possible
+dynamic_array_rollback :: fn (array: &Dynamic_Array($T), rollback_size: int)
+    assert(array.size >= rollback_size)
+    resized := arena_try_resize_allocation(array.arena, array.data, array.capacity, array.rollback_size)
+    if resized
+        array.capacity = rollback_size
+    array.size = rollback_size
+
+Dynamic_Array_Iterator :: struct ($T)
+    array: &Dynamic_Array(T)
+    index: int
+
+dynamic_array_iterator_create :: fn (array: &Dynamic_Array($T)) => Dynamic_Array_Iterator(T)
+    return .(array, 0)
+
+dynamic_array_iterator_next :: fn (iterator: &Dynamic_Array_Iterator($T)) => &T
+    if iterator.index >= iterator.array.size
+        return nil
+    result: &T &= dynamic_array_at(iterator.array, iterator.index)
+    iterator.index += 1
+    return result
+                                                                     
+
+
+// String_Builder
+String_Builder :: struct
+    text_buffer: Dynamic_Array(u8)
+
+fast_call string_builder_reserve->reserve 
+fast_call string_builder_reset->reset 
+fast_call string_builder_to_string->to_string
+fast_call string_builder_append_string->append_string 
+fast_call string_builder_append_codepoint->append_codepoint
+fast_call string_builder_append_int->append_int
+fast_call string_builder_append_bool->append_bool
+fast_call string_builder_append_float->append_float
+
+string_builder_create :: fn (arena: &Arena) => String_Builder
+    return .(dynamic_array_create(arena, capacity = 0))
+
+string_builder_reset :: fn (builder: &String_Builder)
+    builder.text_buffer.size = 0
+
+string_builder_append_string :: fn (builder: &String_Builder, text: String) => &String_Builder
+    text_buffer :&= builder.text_buffer
+    text_buffer->reserve(text_buffer.size + text.size)
+    memory_copy_no_overlap(
+        text_buffer.data->pointer_advance_elements(text_buffer.size)->cast_pointer(),
+        source = text.data, size = text.size
+    )
+    text_buffer.size += text.size
+    return builder
+
+string_builder_reserve :: fn (builder: &String_Builder, capacity: int)
+    builder.text_buffer->reserve(capacity)
+
+string_builder_append_codepoint :: fn (builder: &String_Builder, codepoint: Codepoint)
+    value := codepoint->cast(u32)
+    if value <= 127 // 1 byte codepoint, ASCII
+        builder->reserve(builder.text_buffer.size + 1)
+        builder.text_buffer.data->pointer_advance_elements(builder.text_buffer.size)-* = value->cast(u8)
+        builder.text_buffer.size += 1
+    else
+        panic() // Not yet implemented
+
+Numeric_Base :: enum
+    DECIMAL
+    HEXADECIMAL
+    OCTAL
+    BINARY
+
+string_builder_append_number_internal :: fn (
+    builder: &String_Builder, value: u64, numeric_base: Numeric_Base, prepend_minus: bool) => &String_Builder
+
+    base: u64 = 10
+    prefix_text := ""
+    match numeric_base
+        case .DECIMAL
+            base = 10
+        case .HEXADECIMAL
+            base = 16
+            prefix_text = "0x"
+        case .OCTAL
+            base = 8
+            prefix_text = "0o"
+        case .BINARY
+            base = 2         
+            prefix_text = "0b"
+
+    // Generate Digits (In reverse order)
+    char_buffer: [64]u8
+    write_index := 0
+
+    digit_value_to_ascii :: fn (value: u64) => u8
+        comptime ascii_0 := ."0"->cast(u64)
+        comptime ascii_A := ."A"->cast(u64)
+        if value >= 10
+            return (ascii_A + (value - 10))->cast()
+        return (ascii_0 + value)->cast()
+
+    copy := value
+    loop copy != 0
+        digit_value := copy % base
+        char_buffer[write_index] = digit_value_to_ascii(digit_value)
+        write_index += 1
+        copy = copy / base
+
+    // Reserve enough space in buffer
+    text_length := write_index + prefix_text.size + .if prepend_minus then 1 else 0
+    text_buffer :&= builder.text_buffer 
+    text_buffer->reserve(text_buffer.size + text_length)
+
+    // Append minus
+    if prepend_minus
+        pointer_advance_bytes(text_buffer.data, text_buffer.size)->cast_pointer(&u8)-* = ."-"->cast(u8)
+        text_buffer.size += 1
+
+    // Append prefix
+    if prefix_text.size > 0
+        memory_copy(pointer_advance_bytes(text_buffer.data, text_buffer.size)->cast_pointer(rawptr), prefix_text.data, prefix_text.size)
+        text_buffer.size += prefix_text.size
+
+    // Append digits
+    loop i := write_index - 1; i >= 0; i -= 1
+        pointer_advance_bytes(text_buffer.data, text_buffer.size)->cast_pointer(&u8)-* = char_buffer[i]
+        text_buffer.size += 1
+
+    return builder
+                                                                      
+string_builder_append_int_advanced :: fn (builder: &String_Builder, value: int, numeric_base: Numeric_Base) => &String_Builder
+    string_builder_append_number_internal(builder, math_absolute(value)->cast(u64), numeric_base, value < 0)
+    return builder
+
+string_builder_append_int :: fn (builder: &String_Builder, value: int) => &String_Builder
+    string_builder_append_number_internal(builder, math_absolute(value)->cast(u64), .DECIMAL, value < 0)
+    return builder
+
+string_builder_append_bool :: fn (builder: &String_Builder, value: bool) => &String_Builder
+    builder->append_string(.if value then "true" else "false")
+    return builder
+
+string_builder_to_string :: fn (builder: String_Builder) => String
+    return .(
+        builder.text_buffer.data->cast_pointer(),
+        builder.text_buffer.size
+    )
+
+Float_Parts :: struct
+    mantissa: u64
+    exponent: i32
+    sign_bit: bool
+    exponent_is_max: bool
+
+float_parts_from_f64 :: fn (value: f64) => Float_Parts
+    bits: u64 = 0
+    value_copy := value
+    memory_copy_no_overlap(bits-&->cast_pointer(), value_copy-&->cast_pointer(), size_of(f64))
+
+    result := Float_Parts.(
+        bits_get_range(bits, 0, 52), // 52 mantissa bits
+        bits_get_range(bits, 52, 11)->cast(), // 11 exponent bits
+        bits_test_bit(bits, 63),
+        false
+    )
+
+    result.exponent_is_max = result.exponent == 2047
+    result.exponent -= 1075 // This should be -1023 (Exponent Bias) - 52 (Mantissa bit count)
+    if result.exponent != -151 and not result.exponent_is_max
+        result.mantissa = result.mantissa->~bitwise_or(~bitshift_left(1->cast(u64), 52))
+
+    return result
+
+float_parts_from_f32 :: fn (value: f32) => Float_Parts
+    bits: u32
+    value_copy := value
+    memory_copy_no_overlap(
+        bits-&->cast_pointer(), value_copy-&->cast_pointer(), size_of(f32)
+    )
+
+    result := Float_Parts.(
+        bits_get_range(bits, 0, 23)->cast(), // 23 mantissa bits
+        bits_get_range(bits, 23, 8)->cast(), // 9 exponent bits
+        bits_test_bit(bits, 31),
+        false
+    )
+
+    result.exponent_is_max = result.exponent == 511
+    result.exponent -= 150 // This should be -127 (Exponent bias) - 23 (Mantissa bit count)
+    if (result.exponent != -151)
+        result.mantissa = result.mantissa->~bitwise_or(~bitshift_left(1->cast(u64), 23))
+
+    return result
+
+float_parts_print :: fn (parts: Float_Parts)
+    ~print_string("mantissa: ")
+    ~print_int(parts.mantissa->cast())
+    ~print_string("\n")
+    ~print_string("exponent: ")
+    ~print_int(parts.exponent->cast())
+    ~print_string("\n")
+    ~print_string("sign_bit: ")
+    ~print_string(.if parts.sign_bit then "true" else "false")
+    ~print_string("\n")
+    ~print_string("exp_max:  ")
+    ~print_string(.if parts.exponent_is_max then "true" else "false")
+    ~print_string("\n")
+
+comptime DECIMAL_INT_DIGIT_COUNT: int = 4
+comptime DECIMAL_INT_BASE: u64 = 1000000000
+comptime DECIMAL_INT_ZERO_COUNT: int = 9
+
+// Digits are lsd first
+Decimal_Int :: struct
+    digits: [DECIMAL_INT_DIGIT_COUNT]u32
+    exponent: int
+    sticky_bit: bool
+
+decimal_integer_from_uint :: fn (value: uint) => Decimal_Int
+    result: Decimal_Int
+    result.exponent = 0
+    result.sticky_bit = false
+
+    remainder := value->cast(u64)
+    loop digit in result.digits
+        digit-* = (remainder % DECIMAL_INT_BASE)->cast()
+        remainder = remainder / DECIMAL_INT_BASE
+
+    return result
+
+decimal_int_multiply_power_2_less_eq_29 :: fn (decimal_int: &Decimal_Int, power: int)
+    assert(power <= 29)
+
+    // Multiplication with carry
+    carry: u64 = 0
+    loop digit in decimal_int.digits
+        multiply_result := digit->cast(u64)->~bitshift_left(power) + carry
+        carry = multiply_result / DECIMAL_INT_BASE
+        digit-* = (multiply_result - (carry * DECIMAL_INT_BASE))->cast()
+
+    // Handle carry
+    if carry != 0
+        if decimal_int.digits[0] != 0
+            decimal_int.sticky_bit = true
+        loop i := 0; i < decimal_int.digits.size - 1; i += 1
+            decimal_int.digits[i] = decimal_int.digits[i + 1]
+        decimal_int.digits[decimal_int.digits.size - 1] = carry->cast()
+        decimal_int.exponent += 1
+
+decimal_int_divide_power_2_less_eq_29 :: fn (decimal_int: &Decimal_Int, power: int)
+    assert(power <= 29)
+    digits :&= decimal_int.digits
+
+    // Remove leading zeros + first digit if it will be divided to 0
+    leftshift_count := 0
+    division_value := ~bitshift_left(1->cast(u64), power)
+    carry: u64 = 0
+
+    loop i := digits.size - 1; i >= 0; i -= 1
+        digit_value := digits[i]->cast(u64)
+        if digit_value == 0
+            leftshift_count += 1
+        else if digit_value < division_value
+            leftshift_count += 1
+            carry = digit_value * DECIMAL_INT_BASE
+            break
+        else
+            break
+
+    if leftshift_count != 0
+        loop i := digits.size - 1; i >= 0; i -= 1
+            index := i - leftshift_count
+            digits[i] = .if index >= 0 then digits[index] else 0
+        decimal_int.exponent -= leftshift_count
+
+    // Long division
+    loop i := digits.size->cast(i32) - 1; i >= 0; i -= 1
+        digit_value := digits[i]->cast(u64)
+        digit_value = digit_value + carry
+        division_result := ~bitshift_right(digit_value, power)
+        remaining := digit_value - ~bitshift_left(division_result, power)
+        carry = remaining * DECIMAL_INT_BASE
+        digits[i] = division_result->cast(u32)
+
+    // Last carry gets truncated, but we keep sticky bit for rounding
+    if carry != 0
+        decimal_int.sticky_bit = true
+
+decimal_int_multiply_power_2 :: fn (decimal_int: &Decimal_Int, power: int)
+    remaining_power := power
+
+    // Handle positive powers
+    if remaining_power > 0
+        loop remaining_power > 29
+            decimal_int_multiply_power_2_less_eq_29(decimal_int, 29)
+            remaining_power -= 29
+        decimal_int_multiply_power_2_less_eq_29(decimal_int, remaining_power->cast())
+
+    // Handle negative powers
+    if remaining_power < 0
+        loop remaining_power < -29
+            decimal_int_divide_power_2_less_eq_29(decimal_int, 29)
+            remaining_power += 29
+        decimal_int_divide_power_2_less_eq_29(decimal_int, (-remaining_power)->cast())
+
+decimal_int_print :: fn (decimal_int: Decimal_Int)
+    loop i := decimal_int.digits.size - 1; i >= 0; i -= 1
+        digit_value := decimal_int.digits[i]
+        digit_buffer: [DECIMAL_INT_ZERO_COUNT]u8
+        loop j := 0; j < DECIMAL_INT_ZERO_COUNT; j += 1
+            char_value := (digit_value % 10)->cast(u8) + ."0"->cast(u8)
+            digit_value /= 10
+            digit_buffer[j] = char_value
+        loop j := digit_buffer.size - 1; j >= 0; j -= 1
+            ~print_string(String.(digit_buffer[j]-&->cast_pointer(), 1))
+        ~print_string(" ")
+
+    ~print_string("* pow(10, ")
+    ~print_int(decimal_int.exponent * DECIMAL_INT_ZERO_COUNT)
+    ~print_string(") ")
+    if decimal_int.sticky_bit
+        ~print_string("Sticky-bit set ")
+
+u32_count_digits :: fn (value: u32) => int
+    bit_count := 31 - ~hightest_set_bit(value)
+    comptime table := u32.[9, 99, 999, 9999, 99999, 999999, 9999999, 99999999, 999999999]
+    count_estimate := ~bitshift_right(9 * bit_count, 5)->cast(int) // Approximate multiply by log10(2)
+    count_estimate += .if value > table[count_estimate] then 1 else 0
+    return count_estimate + 1
+
+string_builder_append_float :: fn (builder: &String_Builder, value: float, precision: int)
+    // Extract info from float
+    float_parts := float_parts_from_f32(value)
+
+    // Handle special cases (Inf, NaN, 0)
+    if float_parts.mantissa == 0
+        builder->append_string("0")
+        return
+    else if float_parts.exponent_is_max
+        if float_parts.mantissa == 0
+            if float_parts.sign_bit
+                builder->append_string("-INF")
+            else
+                builder->append_string("-INF")
+        else
+            builder->append_string("NaN")
+        return
+
+    // 1. Write digit-values into buffer (MSD-first, without leading/trailing zeros)
+    digit_buffer: [DECIMAL_INT_ZERO_COUNT * DECIMAL_INT_DIGIT_COUNT + 8]u8
+    digits_in_use: int = 0
+    last_precomma_index: int = -1
+
+    // Because rounding up could add 1 digit, we add 0 as first digit
+    digit_buffer[0] = 0
+    digits_in_use = 1
+                        
+    // Convert from base 2 to base 10 with Decimal_Int
+    decimal_int := decimal_integer_from_uint(float_parts.mantissa->cast())
+    decimal_int_multiply_power_2(decimal_int, float_parts.exponent->cast(int))
+
+    // Extract digits from decimal_int (Non-Ascii)
+    first_nonzero := 0
+    loop i := 0; i < decimal_int.digits.size->cast(int); i += 1
+        if decimal_int.digits[i] != 0
+            first_nonzero = i
+            break
+
+    last_nonzero := decimal_int.digits.size->cast(int)
+    loop i := decimal_int.digits.size->cast(int) - 1; i >= 0; i -= 1
+        if decimal_int.digits[i] != 0
+            last_nonzero = i
+            break
+                                                       
+    loop i := last_nonzero; i >= first_nonzero; i -= 1 // Reverse because Decimal_Int is lsd first
+        digit_value: u32 = decimal_int.digits[i]
+        // Write digits into digit-buffer in correct order
+        loop j := 0; j < DECIMAL_INT_ZERO_COUNT; j += 1
+            char_value := (digit_value % 10)->cast(u8)
+            digit_value = digit_value / 10
+            digit_buffer[digits_in_use + DECIMAL_INT_ZERO_COUNT - 1 - j] = char_value
+
+        digits_in_use += DECIMAL_INT_ZERO_COUNT
+
+    last_precomma_index = 
+        digits_in_use - 1 +
+        decimal_int.exponent * DECIMAL_INT_ZERO_COUNT +
+        first_nonzero * DECIMAL_INT_ZERO_COUNT
+     
+    // Round value
+    last_visible_digit_index := last_precomma_index + precision
+    if last_visible_digit_index >= 0 and last_visible_digit_index + 1 < digits_in_use
+        digit_after_last_value := digit_buffer[last_visible_digit_index + 1]
+
+        // Check if we need to round up
+        round_up := false
+        if digit_after_last_value < 5
+            round_up = false
+        else if digit_after_last_value > 5
+            round_up = true
+        else
+            sticky_bit_set := decimal_int.sticky_bit
+            loop i := last_visible_digit_index + 2; i < digits_in_use and not sticky_bit_set; i += 1
+                if digit_buffer[i] != 0
+                    sticky_bit_set = true
+                                         
+            if sticky_bit_set
+                round_up = true
+            else
+                // Round to even is better than just rounding up on .5
+                if digit_buffer[last_visible_digit_index] % 2 == 1
+                    round_up = true
+
+        // Round up if required
+        if round_up
+            index := last_visible_digit_index
+            loop index > 0
+                defer index -= 1
+                value := digit_buffer[index]
+                if value == 9
+                    digit_buffer[index] = 0
+                else
+                    digit_buffer[index] = value + 1
+                    break
+
+        // For further computation we can reduce digits in use to only relevant digits
+        digits_in_use = last_visible_digit_index + 1
+
+    // Convert to ascii
+    loop i := 0; i < digits_in_use; i += 1
+        digit_buffer[i] = digit_buffer[i] + ."0"->cast(u8)
+
+    // Remove trailing zeros
+    trailing_zero_count := 0
+    loop i := digits_in_use - 1; i >= 0; i -= 1
+        if digit_buffer[i] != ."0"->cast(u8)
+            break
+        trailing_zero_count += 1
+    digits_in_use -= trailing_zero_count
+
+    // Remove leading zeros
+    leading_zero_count := 0
+    loop i := 0; i < digits_in_use; i += 1
+        if digit_buffer[i] != ."0"->cast(u8)
+            break
+        leading_zero_count += 1
+    if leading_zero_count != 0
+        loop i := 0; i < digits_in_use - leading_zero_count; i += 1
+            digit_buffer[i] = digit_buffer[i + leading_zero_count]
+        digits_in_use -= leading_zero_count
+        last_visible_digit_index -= leading_zero_count
+        last_precomma_index -= leading_zero_count
+
+    // Append -, place decimal dot and required number of digits
+    if float_parts.sign_bit
+        string_builder_append_codepoint(builder, ."-")
+                                     
+    // Append precomma digits
+    text_buffer :&= builder.text_buffer
+    if last_precomma_index >= 0
+        copy_digit_count := math_min(last_precomma_index + 1, digits_in_use)
+        text_buffer->reserve(text_buffer.size + copy_digit_count)
+        memory_copy(
+            pointer_advance_elements(text_buffer.data, text_buffer.size)->cast_pointer(), 
+            digit_buffer.data->cast_pointer(),
+            copy_digit_count
+        )
+        text_buffer.size += copy_digit_count
+    
+        zero_count_until_comma := math_max(0, last_precomma_index + 1 - digits_in_use)
+        text_buffer->reserve(text_buffer.size + zero_count_until_comma)
+        loop i := 0; i < zero_count_until_comma; i += 1
+            builder->append_codepoint(."0")
+    else
+        builder->append_codepoint(."0")
+
+    // Append . and post-comma digits
+    if precision > 0
+        builder->append_codepoint(.".")
+
+        copy_digit_start := last_precomma_index + 1
+        copy_digit_count := digits_in_use - copy_digit_start
+        if copy_digit_count > 0 
+            text_buffer->reserve(text_buffer.size + copy_digit_count)
+            memory_copy(
+                pointer_advance_elements(text_buffer.data, text_buffer.size)->cast_pointer(), 
+                pointer_advance_elements(digit_buffer.data, copy_digit_start)->cast_pointer(),
+                copy_digit_count
+            )
+        text_buffer.size += copy_digit_count
+                  
+        // Question: Do we append zeros if the precision wants it but we have no more digits?
+        zero_count_until_precision := math_max(0, last_visible_digit_index + 1 - digits_in_use)
+        text_buffer->reserve(text_buffer.size + zero_count_until_precision)
+        loop i := 0; i < zero_count_until_precision; i += 1
+            builder->append_codepoint(."0")
+
+
+
+
+main :: fn
+    decimal_int := decimal_integer_from_uint(1)
+    decimal_int_multiply_power_2(decimal_int, -1)
+    decimal_int_print(decimal_int)
+    ~print_string("\n")
+
+    value_f32 := 4545332424.121212
+    parts := float_parts_from_f32(value_f32)
+    float_parts_print(parts)
+    ~print_string("\n")
+
+    arena := arena_create()
+    defer arena->destroy()
+
+    builder := string_builder_create(arena)
+    builder->append_float(value_f32, 10)
+
+    ~print_string(builder->to_string())
+    ~print_string("\n")

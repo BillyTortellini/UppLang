@@ -46,7 +46,7 @@ Struct_Member struct_member_make(Datatype* type, String* id, Datatype_Struct* st
 
 // TYPE SIGNATURES
 // NOTE: This enum has to be in synch with type_info options, see add_predefined_types
-enum class Datatype_Type
+enum class Datatype_Type : i64
 {
     PRIMITIVE = 1,    // int, float, bool
     BUILT_IN,         // Type_Handle, string, c_string, Any...
@@ -64,7 +64,7 @@ enum class Datatype_Type
 
 struct Datatype_Memory_Info
 {
-    u64 size;
+    int size;
     int alignment;
     bool contains_padding_bytes;
     bool contains_reference;
@@ -89,10 +89,12 @@ struct Datatype
     Datatype* upcast();
 };
 
-enum class Primitive_Type
+enum class Primitive_Type : i64
 {
     // Basic integers
-    I8 = 1,
+    INT = 1, // Size depends on 32/64bit build
+    UINT,    // Size depends on 32/64bit build
+    I8,
     I16,
     I32,
     I64,
@@ -123,7 +125,7 @@ struct Datatype_Primitive
     Datatype* upcast();
 };
 
-enum class Builtin_Type
+enum class Builtin_Type : i64
 {
     RAWPTR = 1,
     TYPE_HANDLE,
@@ -131,8 +133,6 @@ enum class Builtin_Type
     STRING,
     C_STRING,
     C_CHAR,
-    USIZE,
-    ISIZE,
     CODE_POINT,
 };
 
@@ -150,7 +150,7 @@ struct Datatype_Array
     Datatype* element_type;
 
     bool count_known; // False in case of polymorphism (Comptime values) or when Errors occured
-    usize element_count;
+    int element_count;
 
     Datatype_Pattern_Variable* count_variable_type; // May be null if it doesn't exist
 
@@ -255,7 +255,7 @@ struct Internal_Type_Struct_Member
 {
     Upp_String name;
     Upp_Type_Handle type;
-    int offset;
+    upp_int offset;
 };
 
 struct Internal_Type_Struct
@@ -272,13 +272,13 @@ struct Internal_Type_Struct
 struct Internal_Type_Enum_Member
 {
     Upp_String name;
-    int value;
+    upp_int value;
 };
 
 struct Internal_Type_Array
 {
     Upp_Type_Handle element_type;
-    int size;
+    upp_int size;
 };
 
 struct Internal_Type_Slice
@@ -300,8 +300,8 @@ struct Internal_Type_Pointer
 struct Internal_Type_Information
 {
     Upp_Type_Handle type_handle;
-    int size;
-    int alignment;
+    upp_int size;
+    upp_int alignment;
 
     union 
     {
@@ -368,14 +368,16 @@ struct Predefined_Types
     Datatype_Primitive* f64_type;
     Datatype_Primitive* bool_type;
 
+    Datatype_Primitive* int_type;  // Different than i32 or i64
+    Datatype_Primitive* uint_type; // Different than i32 or i64
+    Datatype_Primitive* size_type; // Same as int_type (I decided signed sizes by default is a good solution, see ginger bill blog-post)
+
     // Builin types
     Datatype_Builtin* rawptr;
     Datatype_Builtin* c_string;
     Datatype_Builtin* type_handle;
-    Datatype_Builtin* isize;       // either i32 or i64
-    Datatype_Builtin* usize;       // either u32 or u64
     Datatype_Builtin* c_char;      // For c-interoperability, this is the char type
-    Datatype_Builtin* code_point;  // UTF-8 code-point, distinct u32
+    Datatype_Builtin* codepoint;  // UTF-8 code-point, distinct u32
     Datatype_Builtin* string;
     Datatype_Builtin* any_type;
 
@@ -442,7 +444,8 @@ Primitive_Class primitive_type_get_class(Primitive_Type primitive_type);
 bool datatype_is_builtin_type(Datatype* datatype, Builtin_Type builtin_type);
 bool datatype_is_primitive_class(Datatype* datatype, Primitive_Class primitive_class);
 bool datatype_is_integer(Datatype* datatype, bool require_operations_enabled);
-bool datatype_is_unsigned_int(Datatype* datatype);
+bool datatype_is_unsigned_int(Datatype* datatype, bool requires_operations_enabled);
+bool datatype_is_signed_int(Datatype* datatype);
 bool datatype_type_references_subtypes(Datatype_Type datatype_type);
 
 

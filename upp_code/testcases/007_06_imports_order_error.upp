@@ -1,0 +1,5 @@
+import "import_test/A.upp" as A
+import A as B
+import [all]B // This does not work, as the alias import above is executed later
+
+main :: fn ()

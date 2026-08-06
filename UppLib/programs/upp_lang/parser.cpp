@@ -464,6 +464,36 @@ namespace Parser
 		return test_token(Token_Type::CURLY_BRACE_OPEN) || test_token(Token_Type::BLOCK_START) || test_token(Token_Type::SCOPE);
 	}
 
+	bool test_token_assign_any(int offset = 0) {
+		return
+			test_token(Token_Type::ASSIGN_VALUE, offset) ||
+			test_token(Token_Type::ASSIGN_RAW, offset) ||
+			test_token(Token_Type::ASSIGN_POINTER, offset);
+	}
+
+	bool test_token_define_infer_any(int offset = 0) {
+		return
+			test_token(Token_Type::DEFINE_INFER_VALUE, offset) ||
+			test_token(Token_Type::DEFINE_INFER_POINTER, offset) ||
+			test_token(Token_Type::DEFINE_INFER_RAW, offset);
+	}
+
+	Assignment_Type get_token_assignment_type(int offset)
+	{
+		auto type = get_token(offset)->type;
+		switch (type)
+		{
+		case Token_Type::ASSIGN_VALUE: return Assignment_Type::VALUE;
+		case Token_Type::ASSIGN_POINTER: return Assignment_Type::POINTER;
+		case Token_Type::ASSIGN_RAW: return Assignment_Type::RAW;
+		case Token_Type::DEFINE_INFER_VALUE: return Assignment_Type::VALUE;
+		case Token_Type::DEFINE_INFER_POINTER: return Assignment_Type::POINTER;
+		case Token_Type::DEFINE_INFER_RAW: return Assignment_Type::RAW;
+		}
+		return Assignment_Type::VALUE;
+	}
+
+
 
 	void node_calculate_bounding_range(AST::Node* node)
 	{
@@ -564,45 +594,105 @@ namespace Parser
 	struct List_Iter
 	{
 		// Different list types: block_start, (), {}, []
-		Token_Type type;
+		bool started_on_block_start;
+		Token_Type seperator;
+		Token_Type end_type;
+
 		bool is_valid;
 		int last_item_start;
 		bool force_semicolon_as_seperator;
 
-		static List_Iter create(bool force_semicolon_as_seperator = false)
+		static List_Iter create()
 		{
 			List_Iter iter;
 			iter.is_valid = true;
-			iter.type = get_token()->type;
 			iter.last_item_start = parser.pos;
-			iter.force_semicolon_as_seperator = force_semicolon_as_seperator;
+			iter.started_on_block_start = false;
+			iter.seperator = Token_Type::INVALID;
+			iter.end_type = Token_Type::INVALID;
 
-			if (iter.type == Token_Type::SCOPE)
+			switch (get_token()->type)
 			{
-				advance_token();
-				if (test_token(Token_Type::IDENTIFIER)) {
+				case Token_Type::CURLY_BRACE_OPEN: 
+				{
+					// Differentiate Struct-Initializer vs inline-code-block
+					if (test_token(Token_Type::DOT, -1) || test_token(Token_Type::ASSIGN_VALUE, -1)) {
+						iter.seperator = Token_Type::COMMA;
+					}
+					else {
+						iter.seperator = Token_Type::SEMI_COLON;
+					}
+					iter.end_type = Token_Type::CURLY_BRACE_CLOSED;
 					advance_token();
+					break;
 				}
-				if (!(test_token(Token_Type::BLOCK_START) || test_token(Token_Type::CURLY_BRACE_OPEN))) {
-					iter.is_valid = false;
+				case Token_Type::PARENTHESIS_OPEN:
+				{
+					iter.seperator = Token_Type::COMMA;
+					advance_token();
+					iter.end_type = Token_Type::PARENTHESIS_CLOSED;
+					break;
 				}
-				iter.type = get_token()->type;
-			}
+				case Token_Type::BRACKET_OPEN:
+				{
+					iter.seperator = Token_Type::COMMA;
+					advance_token();
+					iter.end_type = Token_Type::BRACKET_CLOSED;
+					break;
+				}
+				case Token_Type::BLOCK_START:
+				{
+					iter.seperator = Token_Type::SEMI_COLON;
+					iter.started_on_block_start = true;
+					advance_token();
+					iter.end_type = Token_Type::BLOCK_END;
+					break;
+				}
+				case Token_Type::SCOPE:
+				{
+					advance_token();
 
-			switch (iter.type)
-			{
-			case Token_Type::PARENTHESIS_OPEN:
-			case Token_Type::CURLY_BRACE_OPEN:
-			case Token_Type::BRACKET_OPEN:
-			case Token_Type::BLOCK_START:
-			{
-				advance_token();
-				break;
-			}
-			default: {
-				iter.is_valid = false;
-				break;
-			}
+					// Skip scope name
+					if (test_token(Token_Type::IDENTIFIER)) {
+						advance_token();
+					}
+
+					// Scope must be followed by block start or curly braces
+					if (test_token(Token_Type::BLOCK_START)) 
+					{
+						iter.started_on_block_start = true;
+						iter.seperator = Token_Type::SEMI_COLON;
+						iter.end_type = Token_Type::BLOCK_END;
+						advance_token();
+						break;
+					}
+					else if (test_token(Token_Type::CURLY_BRACE_OPEN)) 
+					{
+						iter.seperator = Token_Type::SEMI_COLON;
+						iter.end_type = Token_Type::CURLY_BRACE_CLOSED;
+						advance_token();
+					}
+					else 
+					{
+						iter.end_type = Token_Type::INVALID;
+						iter.is_valid = false;
+						parser.pos = iter.last_item_start;
+						log_error_range_offset("Scope keyword must be followed by block-start or curly-brace {", 1);
+						advance_token(); // Skip over scope keyword again
+					}
+					break;
+				}
+				default: 
+				{
+					// Handle foreach-loop without parenthesis:
+					if (test_token(Token_Type::LOOP, -1)) {
+						iter.seperator = Token_Type::SEMI_COLON;
+						break;
+					}
+
+					iter.is_valid = false;
+					break;
+				}
 			}
 
 			iter.last_item_start = parser.pos;
@@ -616,12 +706,12 @@ namespace Parser
 			}
 
 			Token* token = get_token();
-			if (type == Token_Type::BLOCK_START) {
+			if (started_on_block_start) {
 				return token->type == Token_Type::BLOCK_END;
 			}
 
 			return
-				token->type == token_type_get_partner(type) ||
+				token->type == end_type ||
 				token->type == Token_Type::LINE_END ||
 				token->type == Token_Type::BLOCK_END ||
 				token->type == Token_Type::BLOCK_START;
@@ -633,16 +723,10 @@ namespace Parser
 				return false;
 			}
 
-			Token_Type current_type = get_token()->type;
-			switch (type)
-			{
-			case Token_Type::BRACKET_OPEN:
-			case Token_Type::PARENTHESIS_OPEN: return current_type == (force_semicolon_as_seperator ? Token_Type::SEMI_COLON : Token_Type::COMMA);
-			case Token_Type::CURLY_BRACE_OPEN: return current_type == Token_Type::SEMI_COLON;
-			case Token_Type::BLOCK_START:      return current_type == Token_Type::SEMI_COLON || current_type == Token_Type::LINE_END;
-			default: panic("");
-			}
-			return false;
+			Token_Type token_type = get_token()->type;
+			return 
+				token_type == seperator ||
+				(started_on_block_start && token_type == Token_Type::LINE_END);
 		}
 
 		// This logs an error if we aren't on a seperator
@@ -672,13 +756,15 @@ namespace Parser
 			int& pos = parser.pos;
 			int start_pos = pos;
 			// Special case handling
-			if (type == Token_Type::BLOCK_START && get_token()->type == Token_Type::BLOCK_START)
+			if (started_on_block_start && get_token()->type == Token_Type::BLOCK_START)
 			{
 				// If we have parsed an item and landed on block start, try to parse it first before skipping the block
+				//	see parse_statement for this, where we log an error for missing the scope keyword here
 				if (pos != last_item_start) {
 					return;
 				}
 
+				// Skip until we reach block end (Hierarchical)
 				int block_count = 1;
 				pos += 1;
 				while (block_count != 0)
@@ -698,7 +784,9 @@ namespace Parser
 				auto checkpoint = parser.temporary_arena->make_checkpoint();
 				SCOPE_EXIT(checkpoint.rewind());
 				DynArray<Token_Type> parenthesis_stack = DynArray<Token_Type>::create(parser.temporary_arena);
-				parenthesis_stack.push_back(type);
+				if (token_type_get_class(end_type) == Token_Class::LIST_END) {
+					parenthesis_stack.push_back(token_type_get_partner(end_type));
+				}
 
 				while (true)
 				{
@@ -710,7 +798,8 @@ namespace Parser
 					if (on_seperator()) {
 						break;
 					}
-					if (token_type == token_type_get_partner(type))
+
+					if (parenthesis_stack.size > 0 && parenthesis_stack.last() == token_type_get_partner(token_type))
 					{
 						parenthesis_stack.size -= 1;
 						if (parenthesis_stack.size == 0) {
@@ -748,8 +837,8 @@ namespace Parser
 				log_error("Could not parse tokens", start_pos, pos);
 			}
 
-			// Don't advance over block-ends/line-ends
-			if (get_token()->type == token_type_get_partner(type)) {
+			// What does this old comment mean: "Don't advance over block-ends/line-ends"
+			if (get_token()->type == end_type) {
 				advance_token();
 			}
 			else {
@@ -915,7 +1004,7 @@ namespace Parser
 		result->id = get_token()->options.string_value;
 		result->type_expr = optional_make_failure<AST::Expression*>();
 		advance_token();
-		if (test_token(Token_Type::ASSIGN)) {
+		if (test_token(Token_Type::ASSIGN_VALUE)) {
 			advance_token();
 			result->type_expr = optional_make_success(parse_expression_or_error_expr(upcast(result)));
 		}
@@ -1011,7 +1100,7 @@ namespace Parser
 		call_node->subtype_initializers = array_create_empty<Subtype_Initializer*>();
 		call_node->uninitialized_tokens = array_create_empty<Expression*>();
 
-		if (!test_token(Token_Type::PARENTHESIS_OPEN)) {
+		if (!test_token(Token_Type::PARENTHESIS_OPEN) && !test_token(Token_Type::CURLY_BRACE_OPEN)) {
 			log_error_range_offset("Expected parenthesis for parameters", 0);
 			PARSE_SUCCESS(call_node);
 		}
@@ -1078,7 +1167,7 @@ namespace Parser
 	}
 
 	Enum_Member_Node* parse_enum_member(AST::Node* parent);
-	Switch_Case* parse_switch_case(AST::Node* parent);
+	Match_Case* parse_switch_case(AST::Node* parent);
 	Structure_Member_Node* parse_struct_member(AST::Node* parent);
 	Symbol_Node* parse_symbol_node(AST::Node* parent);
 	Statement* parse_statement(Node* parent);
@@ -1130,14 +1219,19 @@ namespace Parser
 
 		Definition* result = allocate_base<Definition>(parent, Node_Type::DEFINITION);
 
+		int definition_id_token_length = 0;
+		if (test_token(Token_Type::IDENTIFIER)) {
+			definition_id_token_length = 1;
+		}
+
 		// Parse double-colon definitions
-		if (test_token(Token_Type::DOUBLE_COLON) || test_token(Token_Type::IDENTIFIER, Token_Type::DOUBLE_COLON))
+		if (test_token(Token_Type::DOUBLE_COLON, definition_id_token_length))
 		{
 			// Parse identifier
-			Symbol_Node* symbol_node = parse_symbol_node_or_error(upcast(result));
-			if (test_token(Token_Type::DOUBLE_COLON)) {
-				advance_token();
-			}
+			Symbol_Node* symbol_definition = parse_symbol_node_or_error(upcast(result));
+
+			assert(test_token(Token_Type::DOUBLE_COLON), "");
+			advance_token();
 
 			Token_Type token_type = get_token()->type;
 			switch (token_type)
@@ -1148,7 +1242,7 @@ namespace Parser
 				Definition_Function& function = result->options.function;
 				advance_token();
 
-				function.symbol = symbol_node;
+				function.symbol = symbol_definition;
 				skip_tokens_until_token_type_found(Token_Type::PARENTHESIS_OPEN);
 				function.signature = parse_signature(upcast(result), true);
 				if (on_follow_block()) {
@@ -1171,24 +1265,12 @@ namespace Parser
 
 				PARSE_SUCCESS(result);
 			}
-			case Token_Type::MODULE:
-			{
-				result->type = Definition_Type::MODULE;
-				Definition_Module& module = result->options.module;
-				module.symbol = optional_make_success(symbol_node);
-				advance_token();
-
-				skip_until_next_follow_block();
-				module.definitions = parse_list_items_as_array<Definition>(upcast(result), wrapper_parse_definition);
-
-				PARSE_SUCCESS(result);
-			}
 			case Token_Type::STRUCT:
 			case Token_Type::UNION:
 			{
 				result->type = Definition_Type::STRUCT;
 				Definition_Struct& structure = result->options.structure;
-				structure.symbol = symbol_node;
+				structure.symbol = symbol_definition;
 				structure.is_union = token_type == Token_Type::UNION;
 				advance_token();
 
@@ -1203,7 +1285,7 @@ namespace Parser
 			{
 				result->type = Definition_Type::ENUM;
 				Definition_Enum& enumeration = result->options.enumeration;
-				enumeration.symbol = symbol_node;
+				enumeration.symbol = symbol_definition;
 				advance_token();
 
 				skip_until_next_follow_block();
@@ -1211,20 +1293,71 @@ namespace Parser
 
 				PARSE_SUCCESS(result);
 			}
+			case Token_Type::IMPORT_BLOCK:
+			{
+				result->type = Definition_Type::IMPORT_BLOCK;
+				Definition_Import_Block* import_block = &result->options.import_block;
+				import_block->symbol = symbol_definition;
+
+				advance_token(); // Skip import_block
+				skip_until_next_follow_block();
+
+				Arena* scratch_arena = parser.temporary_arena;
+				auto checkpoint = scratch_arena->make_checkpoint();
+				SCOPE_EXIT(checkpoint.rewind());
+				DynArray<AST::Definition_Import*> imports = DynArray<AST::Definition_Import*>::create(scratch_arena);
+				DynArray<AST::Definition_Custom_Operator*> custom_operators = DynArray<AST::Definition_Custom_Operator*>::create(scratch_arena);
+
+				List_Iter item_iterator = List_Iter::create();
+				while (!item_iterator.on_end_token())
+				{
+					if (!(test_token(Token_Type::IMPORT) || test_token(Token_Type::OPERATORS))) {
+						item_iterator.goto_next();
+						continue;
+					}
+
+					AST::Definition* definition = parse_definition(upcast(result));
+					if (definition == nullptr) {
+						item_iterator.goto_next();
+						continue;
+					}
+					if (definition->type == Definition_Type::IMPORT) {
+						imports.push_back(&definition->options.import);
+					}
+					else if (definition->type == Definition_Type::CUSTOM_OPERATOR) {
+						custom_operators.push_back(&definition->options.custom_operator);
+					}
+					else {
+						panic("Must be one of the two after previous token check");
+					}
+
+					item_iterator.goto_next();
+					continue;
+				}
+				item_iterator.finish();
+
+				// Add items to permanent arena
+				import_block->custom_operators = parser.permanent_arena->allocate_array<Definition_Custom_Operator*>(custom_operators.size);
+				import_block->imports          = parser.permanent_arena->allocate_array<Definition_Import*>(imports.size);
+				memory_copy(import_block->custom_operators.data, custom_operators.buffer.data, sizeof(Definition_Custom_Operator*) * custom_operators.size);
+				memory_copy(import_block->imports.data, imports.buffer.data, sizeof(Definition_Import*) * imports.size);
+
+				PARSE_SUCCESS(result);
+			}
+			default: break;
 			}
 
-			EXIT_FAILURE;
+			CHECKPOINT_EXIT;
 		}
 
 		// Parse value definitions
-		bool is_value =
-			test_token(Token_Type::GLOBAL_KEYWORD) ||
+		if (test_token(Token_Type::GLOBAL_KEYWORD) ||
 			test_token(Token_Type::COMPTIME_KEYWORD) ||
-			test_token(Token_Type::IDENTIFIER, Token_Type::COLON) ||
-			test_token(Token_Type::IDENTIFIER, Token_Type::COLON_EQUALS);
-		if (is_value)
+			test_token(Token_Type::COLON, definition_id_token_length) ||
+			test_token_define_infer_any(definition_id_token_length))
 		{
 			Definition_Value& value = result->options.value;
+			value.assignment_type = Assignment_Type::VALUE;
 
 			// Parse qualifiers
 			result->type = Definition_Type::VARIABLE;
@@ -1247,13 +1380,14 @@ namespace Parser
 			{
 				advance_token();
 				value.datatype_expr = optional_make_success(parse_expression_or_error_expr(upcast(result)));
-				if (test_token(Token_Type::ASSIGN)) {
+				if (test_token_assign_any()) {
+					value.assignment_type = get_token_assignment_type(0);
 					advance_token();
 					value.value_expr = optional_make_success(parse_expression_or_error_expr(upcast(result)));
 				}
 			}
-			else if (test_token(Token_Type::COLON_EQUALS))
-			{
+			else if (test_token_define_infer_any()) {
+				value.assignment_type = get_token_assignment_type(0);
 				advance_token();
 				value.value_expr = optional_make_success(parse_expression_or_error_expr(upcast(result)));
 			}
@@ -1262,9 +1396,41 @@ namespace Parser
 		}
 
 		// Parse keyword definitions (import, extern, operators)
+		if (definition_id_token_length != 0) {
+			CHECKPOINT_EXIT;
+		}
 		Token_Type token_type = get_token()->type;
 		switch (token_type)
 		{
+		case Token_Type::FAST_CALL:
+		{
+			advance_token();
+			result->type = Definition_Type::FAST_CALL;
+			Definition_Fast_Call& fast_call = result->options.fast_call;
+
+			// We currenly use expression for fast call, but it can only be a path-lookup...
+			fast_call.expression = allocate_base<AST::Expression>(upcast(result), Node_Type::EXPRESSION);
+			fast_call.expression->type = Expression_Type::PATH_LOOKUP;
+			fast_call.expression->options.path_lookup = parse_path_lookup_or_error(upcast(fast_call.expression));
+			fast_call.expression->base.range = fast_call.expression->options.path_lookup->base.range;
+			fast_call.expression->base.bounding_range = fast_call.expression->options.path_lookup->base.bounding_range;
+
+			if (test_token(Token_Type::FAST_CALL_ARROW)) {
+				advance_token();
+				fast_call.symbol = parse_symbol_node_or_error(upcast(result));
+			}
+			else {
+				log_error_range_offset("Expected fast_call arrow ->", 0);
+				fast_call.symbol = allocate_base<Symbol_Node>(upcast(result), Node_Type::SYMBOL_NODE);
+				fast_call.symbol->is_definition = false;
+				fast_call.symbol->is_root_lookup = false;
+				fast_call.symbol->name = ids.invalid_symbol_name;
+				fast_call.symbol->base.range.end = fast_call.symbol->base.range.start;
+				fast_call.symbol->base.bounding_range = fast_call.symbol->base.range;
+			}
+
+			PARSE_SUCCESS(result);
+		}
 		case Token_Type::IMPORT:
 		{
 			result->type = Definition_Type::IMPORT;
@@ -1272,65 +1438,62 @@ namespace Parser
 			advance_token();
 	
 			import_node.alias_name.available = false;
-			import_node.import_type = Import_Type::SYMBOLS;
-			import_node.operator_type = Import_Operator::SINGLE_SYMBOL;
 			import_node.options.path = nullptr;
-	
-			if (test_token(Token_Type::OPERATORS))
+			import_node.is_file_import = false;
+			import_node.is_transitive = false;
+			import_node.import_operators_set = false;
+			import_node.import_symbols_set = false;
+			import_node.import_all_set = false;
+
+			// Parse modifiers, e.g. operators, transitive, symbols
+			if (test_token(Token_Type::BRACKET_OPEN))
 			{
-				import_node.import_type = Import_Type::OPERATORS;
 				advance_token();
-			}
-			else if (test_token(Token_Type::IDENTIFIER))
-			{
-				auto id = get_token()->options.string_value;
-				if (id == ids.dot_calls) {
-					import_node.import_type = Import_Type::DOT_CALLS;
+				while (test_token(Token_Type::IDENTIFIER) || test_token(Token_Type::OPERATORS))
+				{
+					if (test_token(Token_Type::IDENTIFIER))
+					{
+						String* import_option_id = get_token()->options.string_value;
+						if (import_option_id == ids.transitive) {
+							import_node.is_transitive = true;
+						}
+						else if (import_option_id == ids.symbols) {
+							import_node.import_symbols_set = true;
+						}
+						else if (import_option_id == ids.all) {
+							import_node.import_all_set = true;
+						}
+						else {
+							log_error_range_offset("Currently the only import options are 'transitive', 'symbols' and 'operators'", 1);
+						}
+					}
+					else {
+						assert(test_token(Token_Type::OPERATORS), "");
+						import_node.import_operators_set = true;
+					}
 					advance_token();
 				}
-			}
-	
-			// Special path for import ~* and import ~**, because they are custom tokens
-			if (test_token(Token_Type::TILDE_STAR) || test_token(Token_Type::TILDE_STAR_STAR))
-			{
-				import_node.operator_type =
-					test_token(Token_Type::TILDE_STAR) ? Import_Operator::MODULE_IMPORT : Import_Operator::MODULE_IMPORT_TRANSITIVE;
-	
-				Path_Lookup* path_lookup = allocate_base<Path_Lookup>(upcast(result), Node_Type::PATH_LOOKUP);
-				path_lookup->is_dot_call_lookup = false;
-				path_lookup->parts = parser.permanent_arena->allocate_array<Symbol_Node*>(1);
-				Symbol_Node* lookup = allocate_base<Symbol_Node>(upcast(result), Node_Type::SYMBOL_NODE);
-				lookup->is_root_lookup = true;
-				lookup->name = ids.root_module;
-				path_lookup->parts[0] = lookup;
-				advance_token();
-				node_finalize_range(upcast(lookup));
-				node_finalize_range(upcast(path_lookup));
-	
-				import_node.options.path = path_lookup;
-				PARSE_SUCCESS(result);
+
+				if (test_token(Token_Type::BRACKET_CLOSED)) {
+					advance_token();
+				}
+				else {
+					log_error_range_offset("Expected closing bracket", 0);
+				}
 			}
 	
 			// Check if it's a file import
 			if (test_token(Token_Type::LITERAL_STRING)) 
 			{
-				import_node.operator_type = Import_Operator::FILE_IMPORT;
+				import_node.is_file_import = true;
 				import_node.options.file_import.node_unit = parser.unit;
 				import_node.options.file_import.relative_path = get_token()->options.string_value;
 				advance_token();
 			}
 			else
 			{
-				import_node.operator_type = Import_Operator::SINGLE_SYMBOL;
+				import_node.is_file_import = false;
 				import_node.options.path = parse_path_lookup_or_error(upcast(result));
-				if (test_token(Token_Type::TILDE_STAR)) {
-					import_node.operator_type = Import_Operator::MODULE_IMPORT;
-					advance_token();
-				}
-				else if (test_token(Token_Type::TILDE_STAR_STAR)) {
-					import_node.operator_type = Import_Operator::MODULE_IMPORT_TRANSITIVE;
-					advance_token();
-				}
 			}
 	
 			if (test_token(Token_Type::AS) && test_token(Token_Type::IDENTIFIER, 1)) {
@@ -1464,68 +1627,115 @@ namespace Parser
 	Structure_Member_Node* parse_struct_member(Node* parent)
 	{
 		CHECKPOINT_SETUP;
-		if (!test_token(Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
+		if (!test_token(Token_Type::IDENTIFIER) && !test_token(Token_Type::SUBTYPE_ACCESS)) CHECKPOINT_EXIT;
 
 		auto result = allocate_base<Structure_Member_Node>(parent, AST::Node_Type::STRUCT_MEMBER);
-		result->is_expression = true;
-		result->options.expression = nullptr;
-		result->name = get_token()->options.string_value;
-		advance_token();
 
-		if (!test_token(Token_Type::COLON)) {
-			log_error_range_offset("Expected : after struct member name!", 0);
-			result->options.expression = create_error_expression(upcast(result));
-			PARSE_SUCCESS(result);
-		}
-		advance_token();
-
-		if (on_follow_block())
+		if (test_token(Token_Type::IDENTIFIER))
 		{
-			result->is_expression = false;
-			result->options.subtype_members = parse_list_items_as_array<Structure_Member_Node>(upcast(result), wrapper_parse_struct_member);
-			PARSE_SUCCESS(result);
-		}
-
-		result->options.expression = parse_expression_or_error_expr(upcast(result));
-		PARSE_SUCCESS(result);
-	}
-
-	Switch_Case* parse_switch_case(Node* parent)
-	{
-		auto result = allocate_base<Switch_Case>(parent, Node_Type::SWITCH_CASE);
-		result->value = optional_make_failure<Expression*>();
-		result->variable_definition = optional_make_failure<AST::Symbol_Node*>();
-
-		// Check for default case
-		if (test_token(Token_Type::DEFAULT)) {
+			result->is_expression = true;
+			result->name = get_token()->options.string_value;
 			advance_token();
-		}
-		else if (test_token(Token_Type::CASE))
-		{
-			advance_token();
-			result->value.available = true;
-			result->value.value = parse_expression_or_error_expr(upcast(result));
-			if (test_token(Token_Type::FUNCTION_ARROW))
+
+			if (test_token(Token_Type::COLON)) 
 			{
 				advance_token();
-				if (test_token(Token_Type::IDENTIFIER)) {
-					result->variable_definition = optional_make_success(parse_symbol_node(upcast(result)));
-				}
-				else {
-					log_error_range_offset("Expected identifier after arrow", 0);
-				}
+				result->options.expression = parse_expression_or_error_expr(upcast(result));
+			}
+			else 
+			{
+				log_error_range_offset("Expected : after struct member name!", 0);
+				result->options.expression = create_error_expression(upcast(result));
 			}
 		}
 		else
 		{
-			log_error_range_offset("Expected switch or default keyword", 0);
+			result->is_expression = false;
+			assert(test_token(Token_Type::SUBTYPE_ACCESS), "");
+			advance_token();
+			if (test_token(Token_Type::IDENTIFIER))
+			{
+				result->name = get_token()->options.string_value;
+				advance_token();
+			}
+			else {
+				result->name = parser.predefined_ids->invalid_symbol_name;
+			}
+
+			if (on_follow_block())
+			{
+				result->options.subtype_members = parse_list_items_as_array<Structure_Member_Node>(upcast(result), wrapper_parse_struct_member);
+			}
+			else {
+				result->options.subtype_members = array_create_empty<Structure_Member_Node*>();
+			}
 		}
 
+		PARSE_SUCCESS(result);
+	}
+
+	Match_Case* parse_switch_case(Node* parent)
+	{
+		if (!test_token(Token_Type::DEFAULT) && !test_token(Token_Type::CASE)) {
+			return 0;
+		}
+
+		auto result = allocate_base<Match_Case>(parent, Node_Type::MATCH_CASE);
+		result->variable_definition = optional_make_failure<AST::Symbol_Node*>();
+
+		// Parse case value
+		bool parse_variable_def = false;
+		if (test_token(Token_Type::DEFAULT)) 
+		{
+			result->case_type = Match_Case_Type::DEFAULT;
+			advance_token();
+		}
+		else
+		{
+			assert(test_token(Token_Type::CASE), "");
+			advance_token();
+
+			if (test_token(Token_Type::SUBTYPE_ACCESS)) 
+			{
+				result->case_type = Match_Case_Type::SUBTYPE;
+				advance_token();
+				if (test_token(Token_Type::IDENTIFIER)) 
+				{
+					result->options.subtype_name = get_token()->options.string_value;
+					parse_variable_def = true;
+					advance_token();
+				}
+				else {
+					log_error_range_offset("Expected identifier after switch subtype case", 0);
+					result->options.subtype_name = parser.predefined_ids->invalid_symbol_name;
+				}
+			}
+			else
+			{
+				result->case_type = Match_Case_Type::EXPRESSION;
+				result->options.expression = parse_expression_or_error_expr(upcast(result));
+				parse_variable_def = true;
+			}
+		}
+
+		// Parse case variable
+		if (parse_variable_def && test_token(Token_Type::FUNCTION_ARROW)) 
+		{
+			advance_token();
+			if (test_token(Token_Type::IDENTIFIER)) {
+				result->variable_definition = optional_make_success(parse_symbol_node(upcast(result)));
+			}
+			else {
+				log_error_range_offset("Expected identifier after =>", 0);
+			}
+		}
+
+		// Parse case block
 		skip_until_next_follow_block();
 		result->block = parse_code_block(&result->base, 0);
 		// Set block label (Switch cases need special treatment because they 'Inherit' the label from the switch
-		assert(parent->type == Node_Type::STATEMENT && ((Statement*)parent)->type == Statement_Type::SWITCH_STATEMENT, "");
-		result->block->block_id = ((Statement*)parent)->options.switch_statement.label;
+		assert(parent->type == Node_Type::STATEMENT && ((Statement*)parent)->type == Statement_Type::MATCH_STATEMENT, "");
+		result->block->block_id = ((Statement*)parent)->options.match_statement.label;
 		PARSE_SUCCESS(result);
 	}
 
@@ -1542,9 +1752,16 @@ namespace Parser
 			CHECKPOINT_EXIT;
 		}
 
-		if (test_token(Token_Type::ASSIGN))
+		if (test_token(Token_Type::ASSIGN_VALUE) || test_token(Token_Type::ASSIGN_POINTER) || test_token(Token_Type::ASSIGN_RAW))
 		{
 			result->type = Statement_Type::ASSIGNMENT;
+			result->options.assignment.assignment_type = Assignment_Type::VALUE;
+			if (test_token(Token_Type::ASSIGN_POINTER)) {
+				result->options.assignment.assignment_type = Assignment_Type::POINTER;
+			}
+			else if (test_token(Token_Type::ASSIGN_RAW)) {
+				result->options.assignment.assignment_type = Assignment_Type::RAW;
+			}
 			result->options.assignment.left_side = expr;
 			advance_token();
 			result->options.assignment.right_side = parse_expression_or_error_expr(upcast(result));
@@ -1631,12 +1848,13 @@ namespace Parser
 				new_if.condition = parse_expression_or_error_expr(&new_if_stat->base);
 				new_if.block = parse_code_block(&last_if_stat->base, upcast(new_if.condition));
 				new_if.else_block.available = false;
-				node_finalize_range(upcast(implicit_else_block));
-				node_finalize_range(upcast(new_if_stat));
 
 				implicit_else_block->statements[0] = new_if_stat;
 				last_if_stat->options.if_statement.else_block = optional_make_success(implicit_else_block);
 				last_if_stat = new_if_stat;
+
+				node_finalize_range(upcast(implicit_else_block));
+				node_finalize_range(upcast(new_if_stat));
 			}
 			if (test_token(Token_Type::LINE_END, Token_Type::ELSE))
 			{
@@ -1660,9 +1878,11 @@ namespace Parser
 			}
 			else if (
 				test_token(Token_Type::IDENTIFIER, Token_Type::COLON) ||
-				test_token(Token_Type::IDENTIFIER, Token_Type::COLON_EQUALS) ||
+				test_token(Token_Type::IDENTIFIER, Token_Type::DEFINE_INFER_VALUE) ||
+				test_token(Token_Type::IDENTIFIER, Token_Type::DEFINE_INFER_POINTER) ||
+				test_token(Token_Type::IDENTIFIER, Token_Type::DEFINE_INFER_RAW) ||
 				test_token(Token_Type::PARENTHESIS_OPEN, Token_Type::IDENTIFIER, Token_Type::COLON) ||
-				test_token(Token_Type::PARENTHESIS_OPEN, Token_Type::IDENTIFIER, Token_Type::COLON_EQUALS) 
+				(test_token(Token_Type::PARENTHESIS_OPEN, Token_Type::IDENTIFIER) && test_token_define_infer_any(2))
 			) {
 				result->type = Statement_Type::FOR_LOOP;
 			}
@@ -1694,8 +1914,10 @@ namespace Parser
 			}
 			else if (result->type == Statement_Type::FOR_LOOP)
 			{
+				// For loops Syntax can be both with and without Parenthesis
+
 				bool inside_parenthesis = test_token(Token_Type::PARENTHESIS_OPEN);
-				List_Iter iter = List_Iter::create(true);
+				List_Iter iter = List_Iter::create();
 				if (inside_parenthesis)
 				{
 					assert(iter.is_valid && !iter.on_end_token(), "");
@@ -1718,12 +1940,14 @@ namespace Parser
 
 				// Parse loop variable and initial value
 				result->options.for_loop.loop_variable_definition = parse_symbol_node_or_error(upcast(result));
+				result->options.for_loop.assignment_type = Assignment_Type::VALUE;
 				if (test_token(Token_Type::COLON)) 
 				{
 					advance_token();
 					result->options.for_loop.loop_variable_type.available = true;
 					result->options.for_loop.loop_variable_type.value = parse_expression_or_error_expr(upcast(result));
-					if (test_token(Token_Type::ASSIGN)) {
+					if (test_token_assign_any()) {
+						result->options.for_loop.assignment_type = get_token_assignment_type(0);
 						advance_token();
 						result->options.for_loop.initial_value = parse_expression_or_error_expr(upcast(result));
 					}
@@ -1734,7 +1958,8 @@ namespace Parser
 				}
 				else 
 				{
-					assert(test_token(Token_Type::COLON_EQUALS), "");
+					assert(test_token_define_infer_any(0), "");
+					result->options.for_loop.assignment_type = get_token_assignment_type(0);
 					advance_token();
 					result->options.for_loop.initial_value = parse_expression_or_error_expr(upcast(result));
 				}
@@ -1807,7 +2032,8 @@ namespace Parser
 			advance_token();
 			result->type = Statement_Type::DEFER_RESTORE;
 			result->options.defer_restore.left_side = parse_expression_or_error_expr(upcast(result));
-			if (!test_token(Token_Type::ASSIGN)) {
+			result->options.defer_restore.assignment_type = Assignment_Type::VALUE;
+			if (!test_token_assign_any()) {
 				auto error_expr = allocate_base<AST::Expression>(upcast(result), AST::Node_Type::EXPRESSION);
 				log_error_range_offset("Expected assignment after argument_expression", 0);
 				error_expr->type = Expression_Type::ERROR_EXPR;
@@ -1816,6 +2042,7 @@ namespace Parser
 				PARSE_SUCCESS(result);
 			}
 
+			result->options.defer_restore.assignment_type = get_token_assignment_type(0);
 			advance_token();
 			result->options.defer_restore.right_side = parse_expression_or_error_expr(upcast(result));
 			PARSE_SUCCESS(result);
@@ -1823,8 +2050,8 @@ namespace Parser
 		case Token_Type::MATCH:
 		{
 			advance_token();
-			result->type = Statement_Type::SWITCH_STATEMENT;
-			auto& switch_stat = result->options.switch_statement;
+			result->type = Statement_Type::MATCH_STATEMENT;
+			auto& switch_stat = result->options.match_statement;
 			switch_stat.condition = parse_expression_or_error_expr(&result->base);
 
 			// Switch can either be with block and cases, or just a list of case things
@@ -1833,21 +2060,21 @@ namespace Parser
 			{
 				auto checkpoint = parser.temporary_arena->make_checkpoint();
 				SCOPE_EXIT(checkpoint.rewind());
-				DynArray<Switch_Case*> cases = DynArray<Switch_Case*>::create(parser.temporary_arena);
+				DynArray<Match_Case*> cases = DynArray<Match_Case*>::create(parser.temporary_arena);
 				while (test_token(Token_Type::LINE_END, Token_Type::CASE) ||
 					test_token(Token_Type::LINE_END, Token_Type::DEFAULT))
 				{
 					advance_token();
 					cases.push_back(parse_switch_case(upcast(result)));
 				}
-				switch_stat.cases = parser.permanent_arena->allocate_array<Switch_Case*>(cases.size);
-				memory_copy(switch_stat.cases.data, cases.buffer.data, sizeof(Switch_Case*) * cases.size);
+				switch_stat.cases = parser.permanent_arena->allocate_array<Match_Case*>(cases.size);
+				memory_copy(switch_stat.cases.data, cases.buffer.data, sizeof(Match_Case*) * cases.size);
 				PARSE_SUCCESS(result);
 			}
 
 			skip_until_next_follow_block();
 			switch_stat.label = parse_block_label_or_use_related_node_id(upcast(switch_stat.condition));
-			switch_stat.cases = parse_list_items_as_array<Switch_Case>(upcast(result), wrapper_parse_switch_case);
+			switch_stat.cases = parse_list_items_as_array<Match_Case>(upcast(result), wrapper_parse_switch_case);
 			PARSE_SUCCESS(result);
 		}
 		case Token_Type::RETURN: {
@@ -1911,7 +2138,7 @@ namespace Parser
 		auto result = allocate_base<Enum_Member_Node>(parent, Node_Type::ENUM_MEMBER);
 		result->name = get_token()->options.string_value;
 		advance_token();
-		if (test_token(Token_Type::ASSIGN)) {
+		if (test_token(Token_Type::ASSIGN_VALUE)) {
 			advance_token();
 			result->value = optional_make_success(parse_expression_or_error_expr(&result->base));
 		}
@@ -1962,7 +2189,7 @@ namespace Parser
 	{
 		CHECKPOINT_SETUP;
 		auto result = allocate_base<Argument>(parent, Node_Type::ARGUMENT);
-		if (test_token(Token_Type::IDENTIFIER) && test_token(Token_Type::ASSIGN, 1)) {
+		if (test_token(Token_Type::IDENTIFIER) && test_token(Token_Type::ASSIGN_VALUE, 1)) {
 			result->name = optional_make_success(get_token()->options.string_value);
 			advance_token();
 			advance_token();
@@ -1975,8 +2202,8 @@ namespace Parser
 
 	Subtype_Initializer* parse_subtype_initializer(Node* parent)
 	{
-		if (!test_token(Token_Type::SUBTYPE_ACCESS, Token_Type::IDENTIFIER, Token_Type::ASSIGN) &&
-			!test_token(Token_Type::BASETYPE_ACCESS, Token_Type::ASSIGN))
+		if (!test_token(Token_Type::SUBTYPE_ACCESS, Token_Type::IDENTIFIER, Token_Type::ASSIGN_VALUE) &&
+			!test_token(Token_Type::BASETYPE_ACCESS, Token_Type::ASSIGN_VALUE))
 		{
 			return 0;
 		}
@@ -1991,10 +2218,15 @@ namespace Parser
 		}
 		advance_token();
 
-		assert(test_token(Token_Type::ASSIGN), "Should be true after previous if");
+		assert(test_token(Token_Type::ASSIGN_VALUE), "Should be true after previous if");
 		advance_token();  // Skip =
 
+		if (!test_token(Token_Type::CURLY_BRACE_OPEN)) {
+			log_error_range_offset("Expected { for subtype-initializer", 0);
+		}
+
 		result->call_node = parse_call_node(upcast(result));
+
 		PARSE_SUCCESS(result);
 	}
 
@@ -2079,10 +2311,9 @@ namespace Parser
 			result->options.unop.expr = parse_single_expression_or_error(&result->base);
 			PARSE_SUCCESS(result);
 		}
-		case Token_Type::ASTERIX:
+		case Token_Type::AMPERSAND:
 		{
-			bool is_asterix = test_token(Token_Type::ASTERIX);
-			if (is_asterix && test_token(Token_Type::FUNCTION_KEYWORD, 1)) { // Function pointer, e.g. *fn(a:int,b:int)=>int
+			if (test_token(Token_Type::FUNCTION_KEYWORD, 1)) { // Function pointer, e.g. &fn (a: int, b: int) => int
 				advance_token();
 				advance_token();
 				result->type = Expression_Type::FUNCTION_POINTER_TYPE;
@@ -2207,7 +2438,7 @@ namespace Parser
 				result->options.inferred_function_body.expr = parse_expression_or_error_expr(upcast(result));
 				PARSE_SUCCESS(result);
 			}
-			case Token_Type::PARENTHESIS_OPEN:  // Struct Initializer
+			case Token_Type::CURLY_BRACE_OPEN:  // Struct Initializer
 			{
 				result->type = Expression_Type::STRUCT_INITIALIZER;
 				auto& init = result->options.struct_initializer;
@@ -2253,7 +2484,7 @@ namespace Parser
 			{
 				result->type = AST::Expression_Type::LITERAL_READ;
 				result->options.literal_read.type = Literal_Type::CODE_POINT;
-				result->options.literal_read.options.code_point = 0;
+				result->options.literal_read.options.codepoint = 0;
 
 				String* string = get_token()->options.string_value;
 				if (string->size <= 0) {
@@ -2263,7 +2494,7 @@ namespace Parser
 					log_error_range_offset("Character literal string must be exactly one character long", 1);
 				}
 				else {
-					result->options.literal_read.options.code_point = string->at(0);
+					result->options.literal_read.options.codepoint = string->at(0);
 				}
 
 				advance_token();
@@ -2356,7 +2587,7 @@ namespace Parser
 		case Token_Type::DOT:
 		{
 			advance_token();
-			if (test_token(Token_Type::PARENTHESIS_OPEN)) // Struct Initializer
+			if (test_token(Token_Type::CURLY_BRACE_OPEN)) // Struct Initializer
 			{
 				result->type = Expression_Type::STRUCT_INITIALIZER;
 				auto& init = result->options.struct_initializer;
@@ -2410,13 +2641,13 @@ namespace Parser
 			advance_token();
 			PARSE_SUCCESS(result);
 		}
-		case Token_Type::POSTFIX_CALL_ARROW:
+		case Token_Type::FAST_CALL_ARROW:
 		{
 			advance_token();
 
 			result->type = Expression_Type::FUNCTION_CALL;
 			auto& call = result->options.call;
-			call.is_dot_call = true;
+			call.is_fast_call = true;
 
 			Expression* call_expr = allocate_base<Expression>(upcast(result), AST::Node_Type::EXPRESSION);
 			call_expr->type = AST::Expression_Type::PATH_LOOKUP;
@@ -2448,7 +2679,7 @@ namespace Parser
 		{
 			result->type = Expression_Type::FUNCTION_CALL;
 			auto& call = result->options.call;
-			call.is_dot_call = false;
+			call.is_fast_call = false;
 			call.expr = child;
 			call.call_node = parse_call_node(upcast(result));
 			PARSE_SUCCESS(result);
@@ -2634,13 +2865,12 @@ namespace Parser
 
 		// Parse root
 		compilation_data_switch_timing_task(compilation_data, Timing_Task::PARSING);
-		AST::Definition* root_def = allocate_base<Definition>(nullptr, Node_Type::DEFINITION);
-		root_def->type = Definition_Type::MODULE;
-		root_def->options.module.symbol.available = false;
-		root_def->options.module.definitions = parse_list_items_as_array<Definition>(upcast(root_def), wrapper_parse_definition);
-		root_def->base.range = text_range_make(text_index_make(0, 0), text_index_make_line_end(unit->code, unit->code->line_count - 1));
-		root_def->base.bounding_range = root_def->base.range;
-		unit->root = &root_def->options.module;
+		AST::Root_Node* root = allocate_base<Root_Node>(nullptr, Node_Type::ROOT);
+		root->definitions = parse_list_items_as_array<Definition>(upcast(root), wrapper_parse_definition);
+		root->compilation_unit = unit;
+		root->base.range = text_range_make(text_index_make(0, 0), text_index_make_line_end(unit->code, unit->code->line_count - 1));
+		root->base.bounding_range = root->base.range;
+		unit->root = root;
 
 		// Copy errors from tmp arena to permanent arena
 		for (int i = 0; i < parser.errors.size; i++) 

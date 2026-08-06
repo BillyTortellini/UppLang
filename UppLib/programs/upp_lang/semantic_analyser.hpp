@@ -134,13 +134,8 @@ struct Poly_Instance
 // Top-Level Definitions
 struct Upp_Module
 {
-    AST::Definition_Module* node; // Is only null for compiler-generated modules
     Symbol_Table* symbol_table;
-    bool is_file_module;
-    union {
-        Compilation_Unit* compilation_unit;
-        Symbol* module_symbol;
-    } options;
+    bool is_import_block; // Otherwise it's a file module
 };
 
 enum class Function_Origin_Type
@@ -243,12 +238,15 @@ enum class Analysis_Workload_Type
     GLOBAL,
     EXTERN_IMPORT,
     ENUM,
+    FAST_CALL,
 
     FUNCTION_HEADER,
     FUNCTION_BODY,
 
     STRUCT_HEADER,
     STRUCT_BODY,
+
+    MAX_ENUM_VALUE,
 };
 
 struct Workload_Base
@@ -287,7 +285,7 @@ struct Workload_Custom_Operators
 struct Workload_Module_Analysis
 {
     Workload_Base base;
-    AST::Definition_Module* module_node;
+    AST::Root_Node* root_node;
 };
 
 struct Workload_Function_Header
@@ -303,6 +301,15 @@ struct Workload_Function_Body
     Workload_Base base;
     Upp_Function* function;
     Symbol_Table* parameter_table;
+};
+
+struct Workload_Fast_Call
+{
+    Workload_Base base;
+    Symbol* symbol;
+    Symbol_Table* symbol_table;
+    Analysis_Pass* analysis_pass;
+    AST::Definition_Fast_Call* definition_node;
 };
 
 struct Workload_Global
@@ -387,7 +394,7 @@ struct Workload_Executer
 Workload_Executer* workload_executer_create(Compilation_Data* compilation_data);
 void workload_executer_destroy(Workload_Executer* executer);
 void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* compilation_data);
-Workload_Module_Analysis* workload_executer_add_module_discovery(AST::Definition_Module* module_node, Compilation_Data* compilation_data);
+Workload_Module_Analysis* workload_executer_add_module_discovery(AST::Root_Node* module_node, Compilation_Data* compilation_data);
 void semantic_analyser_finish_analysis(Compilation_Data* compilation_data);
 
 
@@ -443,6 +450,7 @@ enum class Call_Origin_Type
     STRUCT_INITIALIZER,
     UNION_INITIALIZER,
 	SLICE_INITIALIZER, // Struct-initializer syntax for slices
+    STRING_OR_ANY_INITIALIZER,
 	HARDCODED,
     FUNCTION_POINTER,
 	CUSTOM_OPERATOR,
@@ -459,6 +467,7 @@ struct Call_Origin
 		Workload_Structure_Header* poly_struct;
 		Hardcoded_Type hardcoded;
 		Datatype_Slice* slice_type;
+        Datatype_Builtin* string_or_any_type;
 		Datatype_Function_Pointer* function_pointer;
 		Custom_Operator_Type context_change_type;
 		Datatype_Struct* structure;
@@ -511,6 +520,7 @@ enum class Expression_Result_Type
     VALUE,
     DATATYPE,
     CONSTANT,
+    FAST_CALL, // Either poly-function or normal function
     FUNCTION,
     HARDCODED_FUNCTION,
     POLYMORPHIC_STRUCT, 
@@ -526,7 +536,7 @@ enum class Auto_Cast_Type
 	ADDRESS_OF,
     FUNCTION_POINTERS,
     TO_BASE_TYPE,
-    PRIMITIVE_CAST, // Only happens in array-access, to cast all integer types to usize
+    PRIMITIVE_CAST, // Only happens in array-access, to cast all integer types to size-type (i64)
 
     PATTERN_CAST, // Kinda needed for polymorphic-stuff
     CUSTOM_CAST_INVALID_FUNCTION,
@@ -555,6 +565,7 @@ struct Expression_Info
         Datatype* datatype;
         Datatype* polymorphic_pattern; 
         Workload_Structure_Header* polymorphic_struct;
+        Upp_Function* fast_call_function;
         Upp_Function* function;
         Poly_Function poly_function;
         Hardcoded_Type hardcoded;
@@ -611,7 +622,7 @@ struct Statement_Info
         } foreach_loop;
         struct {
             Datatype_Struct* structure; // May be null for simple enum switch
-        } switch_statement;
+        } match_statement;
     } specifics;
 };
 
@@ -622,10 +633,15 @@ struct Code_Block_Info
     bool control_flow_locked;
 };
 
+struct Root_Node_Info
+{
+    Upp_Module* upp_module;
+};
+
 struct Case_Info
 {
     bool is_valid;
-    int case_value; // Currently we only switch over enums/ints
+    int case_value; // This is the struct-subtype index + 1
     Symbol* variable_symbol;
 };
 
@@ -647,6 +663,7 @@ union Analysis_Info
     Statement_Info info_stat;
     Code_Block_Info info_block;
     Case_Info info_case;
+    Root_Node_Info root_info;
     Parameter_Info param_info;
     Symbol_Node_Info symbol_node_info;
     Call_Info call_info; // For AST::Call_Node*
@@ -662,7 +679,8 @@ enum class Info_Query
 };
 
 Expression_Info* pass_get_node_info(Analysis_Pass* pass, AST::Expression* node, Info_Query query, Compilation_Data* compilation_data);
-Case_Info* pass_get_node_info(Analysis_Pass* pass, AST::Switch_Case* node, Info_Query query, Compilation_Data* compilation_data);
+Root_Node_Info* pass_get_node_info(Analysis_Pass* pass, AST::Root_Node* node, Info_Query query, Compilation_Data* compilation_data);
+Case_Info* pass_get_node_info(Analysis_Pass* pass, AST::Match_Case* node, Info_Query query, Compilation_Data* compilation_data);
 Statement_Info* pass_get_node_info(Analysis_Pass* pass, AST::Statement* node, Info_Query query, Compilation_Data* compilation_data);
 Code_Block_Info* pass_get_node_info(Analysis_Pass* pass, AST::Code_Block* node, Info_Query query, Compilation_Data* compilation_data);
 Symbol_Node_Info* pass_get_node_info(Analysis_Pass* pass, AST::Symbol_Node* node, Info_Query query, Compilation_Data* compilation_data);
@@ -819,4 +837,5 @@ Workload_Base* upcast(Workload_Global* workload);
 Workload_Base* upcast(Workload_Custom_Operators* workload);
 Workload_Base* upcast(Workload_Enum* workload);
 Workload_Base* upcast(Workload_Extern_Import* workload);
+Workload_Base* upcast(Workload_Fast_Call* workload);
 

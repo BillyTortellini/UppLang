@@ -227,9 +227,9 @@ void bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         {
             // System-alloc (u64 size) => address
             byte* argument_start = return_buffer + 8;
-            u64 size = *(u64*)argument_start;
-            if (size == 0) {
-                thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Called malloc with size 0");
+            upp_size size = *(upp_size*)argument_start;
+            if (size <= 0) {
+                thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Called malloc with size <= 0");
                 return;
             }
             if (thread->heap_memory_consumption + size > thread->max_heap_consumption) {
@@ -261,35 +261,46 @@ void bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         case IR_Builtin_Function::MEMORY_COPY: 
         case IR_Builtin_Function::MEMORY_COPY_NO_OVERLAP: 
         {
-            // fn (dst: address, src: address, size: usize)
+            // fn (dst: address, src: address, size: upp_size)
             byte* argument_start = return_buffer;
             void* destination = *(void**)argument_start;
             void* source = *(void**)(argument_start + 8);
-            u64 size = *(u64*)(argument_start + 16);
+            upp_size size = *(upp_size*)(argument_start + 16);
+            if (size <= 0) break;
             interpreter_safe_memcopy(thread, destination, source, size);
             break;
         }
         case IR_Builtin_Function::MEMORY_COMPARE: 
         {
-            // fn (a: address, b: address, size: usize) => bool
+            // fn (a: address, b: address, size: upp_size) => bool
             byte* argument_start = return_buffer + 8; // 1 byte for return-buffer, 7 byte alignment
             void* destination = *(void**)argument_start;
             void* source = *(void**)(argument_start + 8);
-            u64 size = *(u64*)(argument_start + 16);
-            if (!memory_is_readable(destination, size) || !memory_is_readable(source, size)) {
+            upp_size size = *(upp_size*)(argument_start + 16);
+
+            bool result = false;
+            if (size <= 0) {
+                result = true;
+            }
+            else if (!memory_is_readable(destination, size) || !memory_is_readable(source, size)) {
                 thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Memory compare called with invalid pointers/size");
                 return;
             }
-            int cmp = memcmp(destination, source, size);
-            *return_buffer = cmp == 0;
+            else {
+                result = memcmp(destination, source, size) == 0;
+            }
+            *return_buffer = result ? 1 : 0;
             break;
         }
         case IR_Builtin_Function::MEMORY_ZERO: 
         {
-            // fn (a: address, size: usize)
+            // fn (a: address, size: upp_size)
             byte* argument_start = return_buffer;
             void* destination = *(void**)argument_start;
-            u64 size = *(u64*)(argument_start + 8);
+            upp_size size = *(upp_size*)(argument_start + 8);
+            if (size <= 0) {
+                break;
+            }
             if (!memory_is_readable(destination, size)) {
                 thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Memory zero called with invalid pointers/size");
                 return;
@@ -297,18 +308,14 @@ void bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             memset(destination, 0, size);
             break;
         }
-        case IR_Builtin_Function::PRINT_I32: {
+        case IR_Builtin_Function::PRINT_INT: {
             byte* argument_start = return_buffer;
-            i32 value = *(i32*)(argument_start);
-            logg("%d", value); break;
+            i64 value = *(i64*)(argument_start);
+            logg("%lld", value); break;
         }
-        case IR_Builtin_Function::PRINT_F32: {
+        case IR_Builtin_Function::PRINT_FLOAT: {
             byte* argument_start = return_buffer;
             logg("%3.2f", *(f32*)(argument_start)); break;
-        }
-        case IR_Builtin_Function::PRINT_BOOL: {
-            byte* argument_start = return_buffer;
-            logg("%s", *(argument_start) == 0 ? "FALSE" : "TRUE"); break;
         }
         case IR_Builtin_Function::PRINT_STRING: 
         {
@@ -316,7 +323,7 @@ void bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             Upp_String string = *(Upp_String*)argument_start;
 
             // Check if c_string size is correct
-            if (string.size == 0) {break;}
+            if (string.size <= 0) {break;}
             if (string.size >= 10000) {
                 thread->exit_code = exit_code_make(
                     Exit_Code_Type::CODE_ERROR, 
@@ -327,55 +334,12 @@ void bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             if (!memory_is_readable((void*)string.data, string.size)) {
                 thread->exit_code = exit_code_make(
                     Exit_Code_Type::CODE_ERROR, 
-                    "Print c_string failed, memory of c_string was not readable");
+                    "Print string failed, memory of string was not readable");
                 return;
             }
 
-            logg("%.*s", string.size, (const char*) string.data);
-            break;
-        }
-        case IR_Builtin_Function::PRINT_LINE: {
-            logg("\n"); break;
-        }
-        case IR_Builtin_Function::READ_I32: {
-            logg("Please input an i32: ");
-            i32 num;
-            std::cin >> num;
-            if (std::cin.fail()) {
-                num = 0;
-            }
-            std::cin.ignore(10000, '\n');
-            std::cin.clear();
-            interpreter_safe_memcopy(thread, return_buffer, &num, 4);
-            break;
-        }
-        case IR_Builtin_Function::READ_F32: {
-            logg("Please input an f32: ");
-            f32 num;
-            std::cin >> num;
-            if (std::cin.fail()) {
-                num = 0;
-            }
-            std::cin.ignore(10000, '\n');
-            std::cin.clear();
-            interpreter_safe_memcopy(thread, return_buffer, &num, 4);
-            break;
-        }
-        case IR_Builtin_Function::READ_BOOL: {
-            logg("Please input an bool (As int): ");
-            i32 num;
-            std::cin >> num;
-            if (std::cin.fail()) {
-                num = 0;
-            }
-            std::cin.ignore(10000, '\n');
-            std::cin.clear();
-            if (num == 0) {
-                *return_buffer = false;
-            }
-            else {
-                *return_buffer = true;
-            }
+            int string_size = (int)string.size; // Not sure if printf takes i32 or i64 as string_size, so we use i32 for now
+            logg("%.*s", string_size, (const char*) string.data);
             break;
         }
         case IR_Builtin_Function::TYPE_INFO: 
@@ -383,19 +347,21 @@ void bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             auto& type_system = thread->compilation_data->type_system;
 
             byte* argument_start = thread->stack_pointer + i->op2 + 16;
-            int type_index = *(int*)(argument_start);
-            if (type_index > type_system->types.size || type_index < 0) {
+            Upp_Type_Handle type_handle = *(Upp_Type_Handle*)(argument_start);
+            if ((u64)type_handle.index >= type_system->types.size) {
                 thread->exit_code = exit_code_make(
                     Exit_Code_Type::CODE_ERROR, 
                     "type_info failed, type-handle was invalid value");
                 return;
             }
-            if (type_size_is_unfinished(type_system->types[type_index])) {
+
+            Datatype* datatype = type_system->types[type_handle.index];
+            if (type_size_is_unfinished(datatype)) {
                 thread->exit_code = exit_code_make(Exit_Code_Type::TYPE_INFO_WAITING_FOR_TYPE_FINISHED);
-                thread->exit_code.options.waiting_for_type_finish_type = type_system->types[type_index];
+                thread->exit_code.options.waiting_for_type_finish_type = datatype;
                 return;
             }
-            *((Internal_Type_Information**)return_buffer) = type_system->types[type_index]->internal_info;
+            *((Internal_Type_Information**)return_buffer) = datatype->internal_info;
             break;
         }
         default: {panic("What"); }
@@ -760,6 +726,7 @@ bool bytecode_execute_ir_operation(
     {
         switch (src_type)
         {
+        case Bytecode_Type::BOOL:    handle_ir_operation_equals(operation, (bool*)dst, (bool*)src1, (bool*)src2); break;
         case Bytecode_Type::INT8:    handle_ir_operation_equals(operation, (bool*)dst, (i8*)src1, (i8*)src2); break;
         case Bytecode_Type::INT16:   handle_ir_operation_equals(operation, (bool*)dst, (i16*)src1, (i16*)src2); break;
         case Bytecode_Type::INT32:   handle_ir_operation_equals(operation, (bool*)dst, (i32*)src1, (i32*)src2); break;
@@ -818,30 +785,36 @@ bool bytecode_execute_ir_operation(
     case Primitive_Operation::BITWISE_AND:
     case Primitive_Operation::BITWISE_OR:
     case Primitive_Operation::BITWISE_XOR:
-    case Primitive_Operation::BITWISE_SHIFT_LEFT:
-    case Primitive_Operation::BITWISE_SHIFT_RIGHT:
-	case Primitive_Operation::HIGHEST_SET_BIT:
-	case Primitive_Operation::LOWEST_SET_BIT:
     {
-        u64 value1 = 0;
-        switch (src_type)
+        assert(left_type == right_type || operation == Primitive_Operation::BITWISE_NOT, "");
+
+        u64 left_value = 0;
+        switch (left_type)
         {
-        case Bytecode_Type::UINT8:  value1 = *(u8*)src1; break;
-        case Bytecode_Type::UINT16: value1 = *(u16*)src1; break;
-        case Bytecode_Type::UINT32: value1 = *(u32*)src1; break;
-        case Bytecode_Type::UINT64: value1 = *(u64*)src1; break;
+        case Bytecode_Type::UINT8:  left_value = *(u8*)src1; break;
+        case Bytecode_Type::UINT16: left_value = *(u16*)src1; break;
+        case Bytecode_Type::UINT32: left_value = *(u32*)src1; break;
+        case Bytecode_Type::UINT64: left_value = *(u64*)src1; break;
+        case Bytecode_Type::INT8:   left_value = *(i8*)src1; break;
+        case Bytecode_Type::INT16:  left_value = *(i16*)src1; break;
+        case Bytecode_Type::INT32:  left_value = *(i32*)src1; break;
+        case Bytecode_Type::INT64:  left_value = *(i64*)src1; break;
         default: panic("");
         }
 
-        u64 value2 = 0;
+        u64 right_value = 0;
         if (argument_count == 2) 
         {
             switch (right_type)
             {
-            case Bytecode_Type::UINT8:  value2 = *(u8*)src2; break;
-            case Bytecode_Type::UINT16: value2 = *(u16*)src2; break;
-            case Bytecode_Type::UINT32: value2 = *(u32*)src2; break;
-            case Bytecode_Type::UINT64: value2 = *(u64*)src2; break;
+            case Bytecode_Type::UINT8:  right_value = *(u8*)src2; break;
+            case Bytecode_Type::UINT16: right_value = *(u16*)src2; break;
+            case Bytecode_Type::UINT32: right_value = *(u32*)src2; break;
+            case Bytecode_Type::UINT64: right_value = *(u64*)src2; break;
+            case Bytecode_Type::INT8:   right_value = *(i8*)src2; break;
+            case Bytecode_Type::INT16:  right_value = *(i16*)src2; break;
+            case Bytecode_Type::INT32:  right_value = *(i32*)src2; break;
+            case Bytecode_Type::INT64:  right_value = *(i64*)src2; break;
             default: panic("");
             }
         }
@@ -849,23 +822,121 @@ bool bytecode_execute_ir_operation(
         u64 result = 0;
         switch (operation)
         {
-        case Primitive_Operation::BITWISE_NOT:         result = ~value1; break;
-        case Primitive_Operation::BITWISE_AND:         result = value1 & value2; break;
-        case Primitive_Operation::BITWISE_OR:          result = value1 | value2; break;
-        case Primitive_Operation::BITWISE_XOR:         result = value1 ^ value2; break;
-        case Primitive_Operation::BITWISE_SHIFT_LEFT:  result = value1 << value2; break;
-        case Primitive_Operation::BITWISE_SHIFT_RIGHT: result = value1 >> value2; break;
-	    case Primitive_Operation::HIGHEST_SET_BIT:     result = integer_highest_set_bit_index(value1); break;
-        case Primitive_Operation::LOWEST_SET_BIT:      result = integer_lowest_set_bit_index(value1); break;
+        case Primitive_Operation::BITWISE_NOT: result = ~left_value; break;
+        case Primitive_Operation::BITWISE_AND: result = left_value & right_value; break;
+        case Primitive_Operation::BITWISE_OR:  result = left_value | right_value; break;
+        case Primitive_Operation::BITWISE_XOR: result = left_value ^ right_value; break;
         default: panic("");
         }
 
         switch (dst_type)
         {
-        case Bytecode_Type::UINT8:  *(i8*)dst  = result; break;
-        case Bytecode_Type::UINT16: *(i16*)dst = result; break;
-        case Bytecode_Type::UINT32: *(i32*)dst = result; break;
-        case Bytecode_Type::UINT64: *(i64*)dst = result; break;
+        case Bytecode_Type::UINT8:  *(u8*)dst  = (u8)result; break;
+        case Bytecode_Type::UINT16: *(u16*)dst = (u16)result; break;
+        case Bytecode_Type::UINT32: *(u32*)dst = (u32)result; break;
+        case Bytecode_Type::UINT64: *(u64*)dst = (u64)result; break;
+        case Bytecode_Type::INT8:   *(i8*)dst  = (i8)result; break;
+        case Bytecode_Type::INT16:  *(i16*)dst = (i16)result; break;
+        case Bytecode_Type::INT32:  *(i32*)dst = (i32)result; break;
+        case Bytecode_Type::INT64:  *(i64*)dst = (i64)result; break;
+        default: panic("");
+        }
+
+        break;
+    }
+	case Primitive_Operation::HIGHEST_SET_BIT:
+	case Primitive_Operation::LOWEST_SET_BIT:
+    {
+        u64 value = 0;
+        switch (src_type)
+        {
+        case Bytecode_Type::UINT8:  value = *(u8*)src1; break;
+        case Bytecode_Type::UINT16: value = *(u16*)src1; break;
+        case Bytecode_Type::UINT32: value = *(u32*)src1; break;
+        case Bytecode_Type::UINT64: value = *(u64*)src1; break;
+        case Bytecode_Type::INT8:   value = *(i8*)src1; break;
+        case Bytecode_Type::INT16:  value = *(i16*)src1; break;
+        case Bytecode_Type::INT32:  value = *(i32*)src1; break;
+        case Bytecode_Type::INT64:  value = *(i64*)src1; break;
+        default: panic("");
+        }
+
+        u64 result = 0;
+        switch (operation)
+        { 
+	        case Primitive_Operation::HIGHEST_SET_BIT: result = (u64)integer_highest_set_bit_index(value); break;
+            case Primitive_Operation::LOWEST_SET_BIT:  result = (u64)integer_lowest_set_bit_index(value); break;
+        }
+
+        switch (dst_type)
+        {
+        case Bytecode_Type::UINT8:  *(u8*)dst  = (u8)result; break;
+        case Bytecode_Type::UINT16: *(u16*)dst = (u16)result; break;
+        case Bytecode_Type::UINT32: *(u32*)dst = (u32)result; break;
+        case Bytecode_Type::UINT64: *(u64*)dst = (u64)result; break;
+        case Bytecode_Type::INT8:   *(i8*)dst  = (i8)result; break;
+        case Bytecode_Type::INT16:  *(i16*)dst = (i16)result; break;
+        case Bytecode_Type::INT32:  *(i32*)dst = (i32)result; break;
+        case Bytecode_Type::INT64:  *(i64*)dst = (i64)result; break;
+        default: panic("");
+        }
+        break;
+    }
+    case Primitive_Operation::BITWISE_SHIFT_LEFT:
+    case Primitive_Operation::BITWISE_SHIFT_RIGHT:
+    {
+        u64 value = 0;
+        switch (src_type)
+        {
+        case Bytecode_Type::UINT8:  value = *(u8*)src1; break;
+        case Bytecode_Type::UINT16: value = *(u16*)src1; break;
+        case Bytecode_Type::UINT32: value = *(u32*)src1; break;
+        case Bytecode_Type::UINT64: value = *(u64*)src1; break;
+        case Bytecode_Type::INT8:   value = *(i8*)src1; break;
+        case Bytecode_Type::INT16:  value = *(i16*)src1; break;
+        case Bytecode_Type::INT32:  value = *(i32*)src1; break;
+        case Bytecode_Type::INT64:  value = *(i64*)src1; break;
+        default: panic("");
+        }
+
+        i64 shift_count = 0;
+        switch (right_type)
+        {
+        case Bytecode_Type::UINT8:  shift_count = *(u8*)src2; break;
+        case Bytecode_Type::UINT16: shift_count = *(u16*)src2; break;
+        case Bytecode_Type::UINT32: shift_count = *(u32*)src2; break;
+        case Bytecode_Type::UINT64: shift_count = *(u64*)src2; break;
+        case Bytecode_Type::INT8:   shift_count = *(i8*)src2; break;
+        case Bytecode_Type::INT16:  shift_count = *(i16*)src2; break;
+        case Bytecode_Type::INT32:  shift_count = *(i32*)src2; break;
+        case Bytecode_Type::INT64:  shift_count = *(i64*)src2; break;
+        default: panic("");
+        }
+
+        u64 result = 0;
+        if (shift_count <= 0) {
+            result = value;
+        }
+        else 
+        {
+            switch (operation)
+            {
+            case Primitive_Operation::BITWISE_SHIFT_LEFT:  result = value << (u64)shift_count; break;
+            case Primitive_Operation::BITWISE_SHIFT_RIGHT: result = value >> (u64)shift_count; break;
+            default: panic("");
+            }
+        }
+
+        switch (dst_type)
+        {
+        case Bytecode_Type::UINT8:  *(u8*)dst  = (u8)result; break;
+        case Bytecode_Type::UINT16: *(u16*)dst = (u16)result; break;
+        case Bytecode_Type::UINT32: *(u32*)dst = (u32)result; break;
+        case Bytecode_Type::UINT64: *(u64*)dst = (u64)result; break;
+        case Bytecode_Type::INT8:   *(i8*)dst  = (i8)result; break;
+        case Bytecode_Type::INT16:  *(i16*)dst = (i16)result; break;
+        case Bytecode_Type::INT32:  *(i32*)dst = (i32)result; break;
+        case Bytecode_Type::INT64:  *(i64*)dst = (i64)result; break;
         default: panic("");
         }
 

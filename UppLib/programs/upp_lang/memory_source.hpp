@@ -20,16 +20,16 @@ struct Memory_Source
 	Memory_Source(void* process_handle) : process_handle(process_handle) {};
 	Memory_Source() : process_handle(nullptr) {};
 
-	Page_Info get_page_info(void* address, usize size);
+	Page_Info get_page_info(void* address, uint size);
 
 	// Returns true if successfull
-	bool read(void* destination, void* source, usize size);
-	bool write(void* destination, void* source, usize size);
+	bool read(void* destination, void* source, uint size);
+	bool write(void* destination, void* source, uint size);
 
-	void read_as_much_as_possible(void* virtual_address, Dynamic_Array<u8>* out_bytes, usize read_size);
+	void read_as_much_as_possible(void* virtual_address, Dynamic_Array<u8>* out_bytes, uint read_size);
 
 	// Reads null-terminated string from other process, also converts wide_strings to normal strings...
-	bool read_null_terminated_string(void* virtual_address, String* out_string, usize max_char_count, bool is_wide_char, Dynamic_Array<u8>* byte_buffer);
+	bool read_null_terminated_string(void* virtual_address, String* out_string, uint max_char_count, bool is_wide_char, Dynamic_Array<u8>* byte_buffer);
 
     // Templated functions
     template<typename T>
@@ -38,7 +38,7 @@ struct Memory_Source
     }
 
     template<typename T>
-    bool read_array(void* virtual_address, Dynamic_Array<T>* buffer, usize count) 
+    bool read_array(void* virtual_address, Dynamic_Array<T>* buffer, uint count) 
     {
         dynamic_array_reset(buffer);
         dynamic_array_reserve(buffer, (int)count);

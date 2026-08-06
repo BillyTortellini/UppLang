@@ -19,7 +19,7 @@ struct Arena_Buffer
 	// Note: every arena buffer starts with this struct, which forms a linked list
 	//		to previously allocated buffers
 	void* data;
-	usize capacity;
+	uint capacity;
 };
 
 struct Arena
@@ -27,11 +27,11 @@ struct Arena
 	Arena_Buffer buffer;
 	void* next;
 
-	static Arena create(usize capacity = 0); 
+	static Arena create(uint capacity = 0); 
 	void destroy();
 
-	void* allocate_raw(usize size, u32 alignment);
-	bool resize(void* memory, usize old_size, usize new_size);
+	void* allocate_raw(uint size, u32 alignment);
+	bool resize(void* memory, uint old_size, uint new_size);
 	void reset(bool keep_largest_buffer = false);
 
 	Arena_Checkpoint make_checkpoint();
@@ -53,15 +53,15 @@ struct Arena
 	} 
 };
 
-// Note: Alignment of free-list is always alignof(usize), so this could cause problems for sse types...
+// Note: Alignment of free-list is always alignof(uint), so this could cause problems for sse types...
 struct Free_List
 {
 	Arena* arena;
-	usize element_size;
+	uint element_size;
 	void* next; // List of allocations
 
-	static Free_List create(Arena* arena, usize element_size);
-	void* allocate_raw(usize size);
+	static Free_List create(Arena* arena, uint element_size);
+	void* allocate_raw(uint size);
 	void deallocate_raw(void* data);
 
 	template<typename T> 
@@ -76,9 +76,9 @@ struct DynArray
 {
 	Arena* arena;
 	Array<T> buffer;
-	usize size;
+	uint size;
 
-	static DynArray<T> create(Arena* arena, usize capacity = 0)
+	static DynArray<T> create(Arena* arena, uint capacity = 0)
 	{
 		DynArray<T> result;
 		result.arena = arena;
@@ -93,12 +93,12 @@ struct DynArray
 		size = 0;
 	}
 
-	void reserve(usize requested_size) 
+	void reserve(uint requested_size) 
 	{
 		if (buffer.size >= requested_size) return;
 
 		// Figure out new size
-		usize new_size = math_maximum(requested_size, (usize) (buffer.size * 3) / 2 + 1);
+		uint new_size = math_maximum(requested_size, (uint) (buffer.size * 3) / 2 + 1);
 
 		if (buffer.data == nullptr) {
 			buffer = arena->allocate_array<T>((int) new_size);
@@ -163,8 +163,8 @@ struct DynArray
 
 	void rollback_to_size(int new_size)
 	{
-		assert((usize)new_size <= size, "Can only make array smaller");
-		size = (usize)new_size;
+		assert((uint)new_size <= size, "Can only make array smaller");
+		size = (uint)new_size;
 	}
 
 	T& last() {
@@ -205,11 +205,11 @@ struct DynSet
 {
 	Arena* arena;
     Array<DynSet_Entry<T>> entries;
-    usize element_count;
+    uint element_count;
     u64(*hash_function)(T*);
     bool(*equals_function)(T*, T*);
 
-	static DynSet<T> create(Arena* arena, u64(*hash_fn)(T*), bool(*equals_fn)(T*, T*), usize expected_element_count = 0) 
+	static DynSet<T> create(Arena* arena, u64(*hash_fn)(T*), bool(*equals_fn)(T*, T*), uint expected_element_count = 0) 
 	{
 		DynSet<T> result;
 		result.arena = arena;
@@ -224,7 +224,7 @@ struct DynSet
 		return result;
 	}
 
-	static DynSet<T> create_pointer(Arena* arena, usize expected_element_count = 0) 
+	static DynSet<T> create_pointer(Arena* arena, uint expected_element_count = 0) 
 	{
 		return DynSet<T>::create(
 			arena, 
@@ -242,12 +242,12 @@ struct DynSet
 		element_count = 0;
 	}
 
-	void reserve(usize expected_element_count)
+	void reserve(uint expected_element_count)
 	{
-		usize min_size = (usize)((float)expected_element_count / DYNSET_MAX_LOAD_FACTOR) + 1;
+		uint min_size = (uint)((float)expected_element_count / DYNSET_MAX_LOAD_FACTOR) + 1;
 		if (entries.size >= min_size) return;
 		min_size = math_maximum((entries.size * 3) / 2 + 1, (int)min_size);
-		usize new_size = find_next_suitable_prime_hashset_size(min_size);
+		uint new_size = find_next_suitable_prime_hashset_size(min_size);
 		assert(new_size >= expected_element_count, "");
 
 		if (entries.data == nullptr) {
@@ -424,11 +424,11 @@ struct DynTable
 {
 	Arena* arena;
     Array<DynTable_Entry<K, V>> entries;
-    usize element_count;
+    uint element_count;
     u64(*hash_function)(K*);
     bool(*equals_function)(K*, K*);
 
-	static DynTable<K, V> create(Arena* arena, u64(*hash_fn)(K*), bool(*equals_fn)(K*, K*), usize expected_element_count = 0) 
+	static DynTable<K, V> create(Arena* arena, u64(*hash_fn)(K*), bool(*equals_fn)(K*, K*), uint expected_element_count = 0) 
 	{
 		DynTable<K, V> result;
 		result.arena = arena;
@@ -443,7 +443,7 @@ struct DynTable
 		return result;
 	}
 
-	static DynTable<K, V> create_pointer(Arena* arena, usize expected_element_count = 0) 
+	static DynTable<K, V> create_pointer(Arena* arena, uint expected_element_count = 0) 
 	{
 		return DynTable<K, V>::create(
 			arena, 
@@ -461,14 +461,14 @@ struct DynTable
 		element_count = 0;
 	}
 
-	void reserve(usize expected_element_count)
+	void reserve(uint expected_element_count)
 	{
-		usize min_size = (usize)((float)expected_element_count / DYNSET_MAX_LOAD_FACTOR) + 1;
+		uint min_size = (uint)((float)expected_element_count / DYNSET_MAX_LOAD_FACTOR) + 1;
 		if (entries.size >= min_size) return;
 
 		// Calculate new size
 		min_size = math_maximum((entries.size * 3) / 2 + 1, (int)min_size);
-		usize new_size = find_next_suitable_prime_hashset_size(min_size);
+		uint new_size = find_next_suitable_prime_hashset_size(min_size);
 		assert(new_size >= expected_element_count, "");
 
 		// Handle empty table

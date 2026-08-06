@@ -1,26 +1,25 @@
-
 Node :: struct
-	name: ~c_string
-	Expression:
-		is_normalized: bool
-		Binop:
-			a: int
-			b: int
-		Unop:
-			a: int
-	Statement:
-		Assignment:
-			left: int
-			right: int
-		For:
-			condition: bool
-			value: int
+    name: String
+    .>Expression
+        is_normalized: bool
+        .>Binop
+            a: int
+            b: int
+        .>Unop
+            a: int
+    .>Statement
+        .>Assignment
+            left: int
+            right: int
+        .>For
+            condition: bool
+            value: int
 
-main :: ()
-	n: Node = Node.{"Frank", .Expression = {false, .Binop = {2, 3}}}
-	~assert(~struct_tag(n) == .Expression)
-	~assert(~struct_tag(n.Expression) == .Binop)
-	~assert(!n.Expression.is_normalized)
+main :: fn ()
+    n: Node = Node.{"Frank", .>Expression = {false, .>Binop = {2, 3}}}
+    assert(~struct_tag(n) == .Expression)
+    assert(~struct_tag(n.>Expression) == .Binop)
+    assert(not n.>Expression.is_normalized)
 
 
 

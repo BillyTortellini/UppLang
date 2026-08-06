@@ -7,7 +7,7 @@
 // Makes sure that the current buffer has a capacity of at least new_capacity.
 // if not, a new buffer is allocated
 // returns true if a new buffer was allocated
-static bool arena_reserve_buffer_capacity(Arena* arena, usize new_capacity)
+static bool arena_reserve_buffer_capacity(Arena* arena, uint new_capacity)
 {
 	if (new_capacity <= arena->buffer.capacity) return false;
 	new_capacity = math_maximum(128ull, integer_next_power_of_2(new_capacity));
@@ -23,12 +23,12 @@ static bool arena_reserve_buffer_capacity(Arena* arena, usize new_capacity)
 
 	// Store new buffer in arena
 	arena->buffer = new_buffer;
-	arena->next = (void*) (((usize)new_buffer.data) + sizeof(Arena_Buffer));
+	arena->next = (void*) (((uint)new_buffer.data) + sizeof(Arena_Buffer));
 
 	return true;
 }
 
-Arena Arena::create(usize capacity)
+Arena Arena::create(uint capacity)
 {
 	Arena result;
 	result.buffer.data = nullptr;
@@ -42,29 +42,29 @@ void Arena::destroy() {
 	reset(false);
 }
 
-void* Arena::allocate_raw(usize size, u32 alignment)
+void* Arena::allocate_raw(uint size, u32 alignment)
 {
 	assert(size != 0 && alignment != 0, "");
-	usize result_address = math_round_next_multiple((usize)next, (usize)alignment);
-	bool resized = arena_reserve_buffer_capacity(this, result_address - (usize)buffer.data + size + sizeof(Arena_Buffer));
+	uint result_address = math_round_next_multiple((uint)next, (uint)alignment);
+	bool resized = arena_reserve_buffer_capacity(this, result_address - (uint)buffer.data + size + sizeof(Arena_Buffer));
 	if (resized) {
-		result_address = (usize)next;
+		result_address = (uint)next;
 	}
 	next = (void*)(result_address + size);
-	assert(result_address + size <= (usize)buffer.data + buffer.capacity, "Otherwise we shoot out of our buffer!");
+	assert(result_address + size <= (uint)buffer.data + buffer.capacity, "Otherwise we shoot out of our buffer!");
 	return (void*)result_address;
 }
 
-bool Arena::resize(void* memory, usize old_size, usize new_size)
+bool Arena::resize(void* memory, uint old_size, uint new_size)
 {
 	assert(memory != nullptr, "");
-	usize address = (usize)memory;
+	uint address = (uint)memory;
 	// Check if address was last allocation
-	if (address + old_size != (usize)next) return false;
-	assert(address > (usize)buffer.data || address == 0, "Resize not from this buffer!"); // With last check + header inside buffers this should be true
+	if (address + old_size != (uint)next) return false;
+	assert(address > (uint)buffer.data || address == 0, "Resize not from this buffer!"); // With last check + header inside buffers this should be true
 
 	// Check if we have enough space for resize
-	if (address + new_size <= (usize)buffer.data + buffer.capacity) {
+	if (address + new_size <= (uint)buffer.data + buffer.capacity) {
 		next = (void*)(address + new_size);
 		return true;
 	}
@@ -106,8 +106,8 @@ Arena_Checkpoint Arena::make_checkpoint()
 // Note: This never deallocates memory
 void Arena::rewind_to_address(void* pointer)
 {
-	usize address = (usize)pointer;
-	usize buffer_start = ((usize)buffer.data + sizeof(Arena_Buffer));
+	uint address = (uint)pointer;
+	uint buffer_start = ((uint)buffer.data + sizeof(Arena_Buffer));
 	if (address >= buffer_start && address <= buffer_start + buffer.capacity) {
 		next = pointer;
 	}
@@ -126,7 +126,7 @@ void Arena_Checkpoint::rewind() {
 
 
 // FREE LIST
-Free_List Free_List::create(Arena* arena, usize element_size) 
+Free_List Free_List::create(Arena* arena, uint element_size) 
 {
 	Free_List result;
 	result.arena = arena;
@@ -134,7 +134,7 @@ Free_List Free_List::create(Arena* arena, usize element_size)
 	return result;
 }
 
-void* Free_List::allocate_raw(usize size)
+void* Free_List::allocate_raw(uint size)
 {
 	assert(size <= element_size, "");
 	if (next != nullptr) {

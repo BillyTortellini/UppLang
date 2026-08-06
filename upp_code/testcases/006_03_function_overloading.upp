@@ -1,32 +1,31 @@
+test :: fn (a: int) => int
+    return a + 2
 
-test :: (a: int) => int
-	return a + 2
+test :: fn (a: bool) => int
+    if a
+        return 1
+    return -1
 
-test :: (a: bool) => int
-	if a
-		return 1
-	return -1
+test :: fn (a: [2]int) => int
+    return a[0] + a[1]
 
-test :: (a: [2]int) => int
-	return a[0] + a[1]
+test_return :: fn () => int
+    return 1
 
-test_return :: () => int
-	return 1
+test_return :: fn () => bool
+    return true
 
-test_return :: () => bool
-	return true
-
-main :: ()
-	i := 10
-	b := true
-	values := int.[1, 2]
-	
-	~assert(test(i) == 12)
-	~assert(test(b) == 1)
-	~assert(test(values) == 3)
-	
-	i = test_return()
-	b = test_return()
-	~assert(i == 1)
-	~assert(b)
-	
+main :: fn ()
+    i := 10
+    b := true
+    values := int.[1, 2]
+    
+    assert(test(i) == 12)
+    assert(test(b) == 1)
+    assert(test(values) == 3)
+    
+    i = test_return()
+    b = test_return()
+    assert(i == 1)
+    assert(b)
+    

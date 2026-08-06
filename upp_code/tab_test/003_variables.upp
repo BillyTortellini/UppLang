@@ -1,0 +1,6 @@
+
+main :: fn ()
+    // The 3 basic types are: int, float, bool
+    x: int
+    y: float
+    z: bool

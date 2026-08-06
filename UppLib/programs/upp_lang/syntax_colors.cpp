@@ -127,6 +127,7 @@ Syntax_Color symbol_type_to_color(Symbol_Type type)
     {
     case Symbol_Type::HARDCODED_FUNCTION: return Syntax_Color::FUNCTION; 
     case Symbol_Type::FUNCTION: return Syntax_Color::FUNCTION; 
+    case Symbol_Type::FAST_CALL: return Syntax_Color::FUNCTION; 
     case Symbol_Type::MODULE: return Syntax_Color::MODULE; 
     case Symbol_Type::DATATYPE: return Syntax_Color::DATATYPE; 
     case Symbol_Type::VARIABLE: return Syntax_Color::VARIABLE; 

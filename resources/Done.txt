@@ -1,6 +1,81 @@
 
 Done:
 -----
+
+03.08:
+ - Return should have continuation into next line
+ - Int/Uint as distinct types from i64/u64 (Better printing, 32/64bit difference, seems kinda logical)
+ - rename print_i64 to print_int
+ - Re-check all casts from int/uint whatever if they are necessary with new int system
+ - Floating point printing in my lang
+ - Auto-format bug for long text (i == '0' instead of char_value == '0')
+
+31.07:
+ - Type-System shows * instead of & for pointers
+ - Bitwise operations also on signed ints 
+ - C-/Bytecode-interpretation can be switched in UI (Done)
+ - C impl of bitwise operations fixed
+
+29.07:
+ - Sizes are signed by default
+ 
+??
+ - Fixed Child-Fold bug
+ - Recent_Screen jumps now better
+ - Updated code to new syntax
+ - usize isize rework with int/uint
+ - Movement Block now with cursor indentation
+ - Indentation based folding
+
+ - Removed modules
+ - import rework
+ - fast_call definition
+ - import_blocks
+
+ - Goto-Definition should center definition if not on screen
+
+26.06:
+ - Good Movement/Motion with [] and i/o
+
+24.06:
+ - Word-Completion as alternative to Code-Completion
+ - Toggle error-squigglies in Editor
+ - Store editor settings in session
+ - Error-Navigation menu should not jump to errors when changing
+
+17.06:
+  - Raw-Assign datatypes must match, no implicit casting
+
+10.06:
+ - operators Array-Access removed index-type from query information
+ - Base-Library: String-Builder u64
+ - Stricter errors when assigning values to pointers
+ - String/Any struct-initializer
+ - Bugfix: Overloading does not apply casts correctly after analysis
+ - Bugfix: Polymorphic overloading not working correctly
+ - Bugfix: datatype_print_value prints some pointer nonsense (Switch missing break)
+
+09.06:
+ - Pointer syntax and assign/define-infer rework (Test)
+ - Arena Impl: try-resize and checkpoint
+ - Dynamic_Array Impl: using arena and operators
+
+08.06:
+ - Bug-Fixes 
+ - Arena implementation
+
+05.06:
+ - Bugs with loops and other stuff
+ - Cast-Refactor: ~cast_primitive -> ~cast, rawptr_to_usize and usize_to_rawptr
+ - Math-defines of constants
+ - IR-Binop/Unop/Hardcoded_Types rework, saved ~600 lines of code
+
+04.06:
+ - Bug-Fix: Bitwise-Binop not having correct signature
+ - Binary operations now use left-to-right for context
+ - Word/End-of-word motions for out-of bounds
+ - Invalid renamed to Void-Type
+
 03.06:
  * Lowest/highest set bit functions
  * Comptime calculation of bitwise function
@@ -34,7 +109,7 @@ Done:
 
 28.05:
  - Ternary operator with .if then else 
- - Remove optional pointers (maybe)
+ - Remove optional pointers
  - Replace &&, ||, ! with and/or/not
  - Implement sneak as a movement (maybe even replace f, F, t, T)
  - Auto formating with multiple spaces fixed

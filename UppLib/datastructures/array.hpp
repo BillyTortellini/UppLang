@@ -16,7 +16,7 @@ struct Array
         return data[index];
     }
 
-    T& operator[](usize index){
+    T& operator[](uint index){
         assert(index < size, "Array out of bounds access");
         return data[index];
     }

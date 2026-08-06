@@ -490,6 +490,9 @@ void code_change_apply(Source_Code* code, Code_Change* change, bool forwards, Ed
         if (apply_change_forward) 
         {
             assert(insert.line_index >= 0 && insert.line_index <= code->line_count, "");
+            if (editor_tab != nullptr) {
+                Text_Editing::update_editor_data_before_line_insert(editor_tab, line_index);
+            }
             source_code_insert_line(code, insert.line_index);
             if (editor_tab != nullptr) {
                 Text_Editing::update_editor_data_after_line_insert(editor_tab, line_index);
@@ -498,6 +501,9 @@ void code_change_apply(Source_Code* code, Code_Change* change, bool forwards, Ed
         else 
         {
             assert(insert.line_index >= 0 && insert.line_index < code->line_count, "");
+            if (editor_tab != nullptr) {
+                Text_Editing::update_editor_data_before_line_delete(editor_tab, line_index);
+            }
             source_code_remove_line(code, insert.line_index);
             if (editor_tab != nullptr) {
                 Text_Editing::update_editor_data_after_line_delete(editor_tab, line_index);
@@ -521,6 +527,16 @@ void code_change_apply(Source_Code* code, Code_Change* change, bool forwards, Ed
             char_buffer[0] = change->options.char_insert.c;
             str = string_create_static(char_buffer);
         }
+
+
+        if (editor_tab != nullptr) {
+            Text_Editing::update_editor_data_before_text_insert(editor_tab, pos.line);
+        }
+        SCOPE_EXIT(
+            if (editor_tab != nullptr) {
+                Text_Editing::update_editor_data_after_text_insert(editor_tab, pos.line);
+            }
+        );
 
         // Update text and line-items
         Source_Line* line = source_code_get_line(code, pos.line);

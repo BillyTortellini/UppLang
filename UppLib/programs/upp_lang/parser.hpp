@@ -9,6 +9,23 @@
 #include "ast.hpp"
 #include "compiler_misc.hpp"
 
+/*
+Some parsing decisions that are not obvious:
+    Foreach loop works with and without parenthesis, and uses semicolon
+        loop i := 0; i < 10; i += 1
+    Anonymous scopes require the scope keyword (I think)
+        x := 1
+        scope
+            x := 10
+    Struct-Initializer uses {} parenthesis
+        x := Player.{"Peter", 15, alive = true}
+    Parenthesis only work in context of continuation, so without seperators this does not parse:
+        Player :: struct {
+            a: name
+            b: name
+        }
+*/
+
 namespace AST
 {
     struct Node;

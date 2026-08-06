@@ -501,6 +501,8 @@ Bytecode_Type datatype_to_bytecode_type(Datatype* datatype)
     {
         switch (downcast<Datatype_Primitive>(datatype)->primitive_type)
         {
+        case Primitive_Type::INT:  return Bytecode_Type::INT64;
+        case Primitive_Type::UINT: return Bytecode_Type::UINT64;
         case Primitive_Type::I8:  return Bytecode_Type::INT8;
         case Primitive_Type::I16: return Bytecode_Type::INT16;
         case Primitive_Type::I32: return Bytecode_Type::INT32;
@@ -517,7 +519,7 @@ Bytecode_Type datatype_to_bytecode_type(Datatype* datatype)
     }
     else if (datatype->type == Datatype_Type::ENUM)
     {
-        return Bytecode_Type::INT32; // Not sure if uint or int should be preferred
+        return Bytecode_Type::INT64; // Note: This would change in a 32bit build
     }
     else if (datatype->type == Datatype_Type::BUILT_IN)
     {
@@ -526,8 +528,6 @@ Bytecode_Type datatype_to_bytecode_type(Datatype* datatype)
         case Builtin_Type::RAWPTR:      return Bytecode_Type::UINT64;
         case Builtin_Type::CODE_POINT:  return Bytecode_Type::UINT32;
         case Builtin_Type::C_CHAR:      return Bytecode_Type::UINT8;
-        case Builtin_Type::ISIZE:       return Bytecode_Type::INT64;
-        case Builtin_Type::USIZE:       return Bytecode_Type::UINT64;
         case Builtin_Type::TYPE_HANDLE: return Bytecode_Type::UINT32;
         default: break;
         }
@@ -657,6 +657,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             switch (call->call_type)
             {
             case IR_Instruction_Call_Type::FUNCTION_CALL:
+                assert(call->options.function->poly_type == Poly_Type::NORMAL || call->options.function->poly_type == Poly_Type::INSTANCE, "");
                 signature = call->options.function->signature; // Note: this must be a normal function
                 break;
             case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL:

@@ -1,0 +1,6 @@
+
+import [all]"import_test/recursive.upp"
+
+main :: fn ()
+    assert(Other~recursive_1(5) == 21)
+    

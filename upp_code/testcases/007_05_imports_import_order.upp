@@ -1,26 +1,19 @@
-///
-	Symbols and imports in modules are handled in the following order:
-	1. All non-import symbol are defined
-	2. Imports are handled from top to bottom,and can see Definition symbols
-	
-	This means that:
-	 * imports can'see'symbols defined later
-	 * definitions can'see'imports defined later
-	 * imports cannot'see'imports defined later
+// Different imports are resolved at differerent times, in this order:
+//  1. File-Imports
+//  2. operator imports [all symbols operators]
+//  3. alias imports (in order)
 
+// So this still works, because files are imported first
+import B as C
+import A as B
+import "import_test/A.upp" as A
 
-// Import sees hello, although it's later defined
-import hello as h
+// Also this works, because the file-import is resolved before the [all] import before the alias (as) import
+import b_return_100 as return_100
+import [all]B_Module
+import "import_test/B.upp" as B_Module
 
-hello :: ()
-	x := 15 + 5
-
-
-// X can use the import symbol y, because definitions can see later symbols
-x := y
-z := 100
-import z as y
-
-main :: ()
-	h()
-	~assert(x == 100)
+main :: fn ()
+    x := C~a_adder(3, 4)
+    assert(x == 7)
+    assert(return_100() == 100)

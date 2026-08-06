@@ -41,6 +41,11 @@ namespace AST
     struct Definition_Module;
 }
 
+
+// Global defs
+extern bool compiler_enable_c_generation;
+extern bool compiler_execute_binary;
+
 struct Code_Error
 {
     const char* msg;
@@ -55,8 +60,8 @@ struct Compilation_Unit
     String filepath; // For deduplication, full-filepath, owned by this structure
 
     // All data may be nullptr until loaded...
-    Source_Code* code;
-    AST::Definition_Module* root;
+    Source_Code* code; // Nullptr if file does not exist?
+    AST::Root_Node* root;
     Upp_Module* upp_module;
 };
 
@@ -76,12 +81,9 @@ struct Compilation_Data
     // Known functions
     Upp_Function* main_function;
     Upp_Function* entry_function;
-    Upp_Function* default_allocate_function;
-    Upp_Function* default_free_function;
-    Upp_Function* default_reallocate_function;
 
     // Resources
-    Fiber_Pool* fiber_pool; 
+    Fiber_Pool* fiber_pool; // Reference, non-owning
     Identifier_Pool identifier_pool;
     Constant_Pool* constant_pool;
     Type_System* type_system;
@@ -93,8 +95,9 @@ struct Compilation_Data
     C_Generator* c_generator;
 
     // Semantic-Analysis information
-    Symbol_Table* root_symbol_table;
-    Upp_Module* builtin_module;
+    Symbol_Table* root_symbol_table; // Contains int, float, bool and all basic symbols (e.g. size_of)
+    Upp_Module* builtin_module;      // ~ module, for more specific things, like print_string, bitwise_and, sin/cos/tan
+    Symbol* builtin_module_symbol;
     Workload_Root* root_workload;
 
     Hashtable<AST::Node*, Node_Passes> ast_to_pass_mapping;
@@ -113,6 +116,8 @@ struct Compilation_Data
     Call_Signature* hardcoded_function_signatures[(int)Hardcoded_Type::MAX_ENUM_VALUE];
     Call_Signature* context_change_type_signatures[(int)Custom_Operator_Type::MAX_ENUM_VALUE];
     Call_Signature* empty_call_signature;
+    Call_Signature* string_initalizer_signature;
+    Call_Signature* any_initializer_signature;
 
     // Allocations
     Arena arena;
@@ -146,7 +151,7 @@ Exit_Code compiler_execute(Compilation_Data* compilation_data);
 void compilation_data_add_code_error_code_section(Compilation_Data* compilation_data, const char* msg, AST::Node* node, Node_Section section);
 bool compilation_data_is_configured_for_c_compilation(Compilation_Data* compilation_data);
 bool compilation_data_errors_occured(Compilation_Data* compilation_data);
-Compilation_Unit* compilation_data_ast_node_to_compilation_unit(Compilation_Data* compilation_data, AST::Node* base);
+Compilation_Unit* ast_node_to_compilation_unit(AST::Node* base);
 void compilation_data_switch_timing_task(Compilation_Data* compilation_data, Timing_Task task);
 Semantic_Context compilation_data_make_root_semantic_context(Compilation_Data* compilation_data);
 

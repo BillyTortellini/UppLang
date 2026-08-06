@@ -1,25 +1,22 @@
-
-import ~c_string
-
-double :: (n: int) => int
-	return n * 2
+double :: fn (n: int) => int
+    return n * 2
 
 Player :: struct
-	name: c_string
-	age:int
+    name: String
+    age: int
 
-main::()
-	// Pointers are automatically dereferenced if the context
-	// makes it clear that a lower pointer level is required
-	
-	i:=15
-	ip:=*i
-	
-	a:=double(ip)
-	b:=double(i)
-	~assert(a==b)
-	
-	// This also means struct member access on pointers works
-	p:=Player.{"Frank",15}
-	pp:=*p
-	~assert(pp.age==15)
+main :: fn ()
+    // Pointers are automatically dereferenced if the context
+    // makes it clear that a lower pointer level is required
+
+    i := 15
+    ip :&= i-&
+
+    a := double(ip)
+    b := double(i)
+    assert(a == b)
+
+    // This also means struct member access on pointers works
+    p := Player.{"Frank", 15}
+    pp :&= p-&
+    assert(pp.age == 15)

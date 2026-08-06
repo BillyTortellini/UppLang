@@ -43,8 +43,8 @@ const char* token_type_as_cstring(Token_Type token_type)
 
     case Token_Type::EQUALS: return "==";
     case Token_Type::NOT_EQUALS: return "!=";
-    case Token_Type::POINTER_EQUALS: return "*==";
-    case Token_Type::POINTER_NOT_EQUALS: return "*!=";
+    case Token_Type::POINTER_EQUALS: return "&==";
+    case Token_Type::POINTER_NOT_EQUALS: return "&!=";
     case Token_Type::LESS_THAN: return "<";
     case Token_Type::GREATER_THAN: return ">";
     case Token_Type::LESS_EQUAL: return "<=";
@@ -57,29 +57,32 @@ const char* token_type_as_cstring(Token_Type token_type)
     case Token_Type::CURLY_BRACE_OPEN: return "{";
     case Token_Type::CURLY_BRACE_CLOSED: return "}";
 
+    case Token_Type::AMPERSAND: return "&";
     case Token_Type::COMMA: return ",";
     case Token_Type::DOT: return ".";
     case Token_Type::TILDE: return "~";
-    case Token_Type::TILDE_STAR: return "~*";
-    case Token_Type::TILDE_STAR_STAR: return "~**";
     case Token_Type::COLON: return ":";
     case Token_Type::DOUBLE_COLON: return "::";
-    case Token_Type::COLON_EQUALS: return ":=";
-    case Token_Type::SEMI_COLON: return ";";
-    case Token_Type::APOSTROPHE: return "'";
-    case Token_Type::POSTFIX_CALL_ARROW: return "->";
-    case Token_Type::SUBTYPE_ACCESS: return ".>";
-    case Token_Type::BASETYPE_ACCESS: return ".<";
-    case Token_Type::ADDRESS_OF: return "-*";
-    case Token_Type::DEREFERENCE: return "-&";
-    case Token_Type::FUNCTION_ARROW: return "=>";
-    case Token_Type::DOLLAR: return "$";
-    case Token_Type::ASSIGN: return "=";
+    case Token_Type::DEFINE_INFER_VALUE: return ":=";
+    case Token_Type::DEFINE_INFER_POINTER: return ":&=";
+    case Token_Type::DEFINE_INFER_RAW: return ":|=";
+    case Token_Type::ASSIGN_VALUE: return "=";
+    case Token_Type::ASSIGN_POINTER: return "&=";
+    case Token_Type::ASSIGN_RAW: return "|=";
     case Token_Type::ASSIGN_ADD: return "+=";
     case Token_Type::ASSIGN_SUB: return "-=";
     case Token_Type::ASSIGN_MULT: return "*=";
     case Token_Type::ASSIGN_DIV: return "/=";
     case Token_Type::ASSIGN_MODULO: return "%=";
+    case Token_Type::SEMI_COLON: return ";";
+    case Token_Type::APOSTROPHE: return "'";
+    case Token_Type::FAST_CALL_ARROW: return "->";
+    case Token_Type::SUBTYPE_ACCESS: return ".>";
+    case Token_Type::BASETYPE_ACCESS: return ".<";
+    case Token_Type::ADDRESS_OF: return "-&";
+    case Token_Type::DEREFERENCE: return "-*";
+    case Token_Type::FUNCTION_ARROW: return "=>";
+    case Token_Type::DOLLAR: return "$";
     case Token_Type::UNINITIALIZED: return "_";
 
     case Token_Type::_OPERATORS_END_: return "_OPERATORS_END_";
@@ -87,7 +90,6 @@ const char* token_type_as_cstring(Token_Type token_type)
     case Token_Type::_KEYWORDS_START_: return "_KEYWORDS_START_";
 
     case Token_Type::FUNCTION_KEYWORD: return "fn";
-    case Token_Type::MODULE: return "module";
     case Token_Type::STRUCT: return "struct";
     case Token_Type::UNION: return "union";
     case Token_Type::ENUM: return "enum";
@@ -95,6 +97,7 @@ const char* token_type_as_cstring(Token_Type token_type)
     case Token_Type::COMPTIME_KEYWORD: return "comptime";
     case Token_Type::OPERATORS: return "operators";
     case Token_Type::IMPORT: return "import";
+    case Token_Type::IMPORT_BLOCK: return "import_block";
     case Token_Type::AS: return "as";
     case Token_Type::EXTERN: return "exter";
     case Token_Type::RETURN: return "return";
@@ -111,6 +114,7 @@ const char* token_type_as_cstring(Token_Type token_type)
     case Token_Type::DEFER: return "defer";
     case Token_Type::DEFER_RESTORE: return "defer_restore";
     case Token_Type::SCOPE: return "scope";
+    case Token_Type::FAST_CALL: return "fast_call";
 
     case Token_Type::AND: return "and";
     case Token_Type::OR: return "or";
@@ -452,6 +456,8 @@ void tokenizer_parse_string_literal(String literal, String* append_to)
 
 bool source_line_tokens_may_connect(Source_Code* code, int first_line_index, Arena* arena, int& nearby_bundle_index)
 {
+    if (first_line_index < 0 || first_line_index + 1 >= code->line_count) return false;
+
     auto checkpoint = arena->make_checkpoint();
     SCOPE_EXIT(checkpoint.rewind());
     DynArray<Token> prev_tokens = DynArray<Token>::create(arena);
@@ -630,19 +636,25 @@ Continuation_Info token_type_get_continuation_info(Token_Type type)
     case Token_Type::GREATER_EQUAL: 
     case Token_Type::AND:
     case Token_Type::OR:
-    case Token_Type::COLON:
     case Token_Type::DOUBLE_COLON:
-    case Token_Type::COLON_EQUALS:
-    case Token_Type::POSTFIX_CALL_ARROW:
+    case Token_Type::DEFINE_INFER_POINTER:
+    case Token_Type::DEFINE_INFER_VALUE:
+    case Token_Type::DEFINE_INFER_RAW:
+    case Token_Type::FAST_CALL_ARROW:
     case Token_Type::FUNCTION_ARROW:
 		return continuation_info_make(type, true, true, false, false);
+        
+    case Token_Type::COLON:
+		return continuation_info_make(type, true, false, false, false); // Struct subtypes must not connect to next line -_-
 
     case Token_Type::SEMI_COLON:
     case Token_Type::COMMA:
     case Token_Type::DOT:
     case Token_Type::SUBTYPE_ACCESS:
     case Token_Type::BASETYPE_ACCESS:
-    case Token_Type::ASSIGN:
+    case Token_Type::ASSIGN_VALUE:
+    case Token_Type::ASSIGN_POINTER:
+    case Token_Type::ASSIGN_RAW:
     case Token_Type::ASSIGN_ADD:
     case Token_Type::ASSIGN_SUB:
     case Token_Type::ASSIGN_MULT:
@@ -667,8 +679,10 @@ Continuation_Info token_type_get_continuation_info(Token_Type type)
     case Token_Type::THEN:
         return continuation_info_make(type, true, true, false, false);
 
+    case Token_Type::RETURN:
+		return continuation_info_make(type, false, true, true, false);
+
     case Token_Type::FUNCTION_KEYWORD:
-    case Token_Type::MODULE:
     case Token_Type::STRUCT:
     case Token_Type::UNION:
     case Token_Type::ENUM:
@@ -678,7 +692,6 @@ Continuation_Info token_type_get_continuation_info(Token_Type type)
     case Token_Type::IMPORT:
     case Token_Type::AS:
     case Token_Type::EXTERN:
-    case Token_Type::RETURN:
     case Token_Type::BREAK:
     case Token_Type::CONTINUE:
     case Token_Type::IF:

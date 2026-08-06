@@ -17,8 +17,14 @@ struct Source_Breakpoint;
 
 namespace Text_Editing
 {
-    void update_editor_data_after_line_insert(Editor_Tab* tab, int line_index);
-    void update_editor_data_after_line_delete(Editor_Tab* tab, int line_index);
+    void update_editor_data_before_line_insert(Editor_Tab* editor_tab, int line_index);
+    void update_editor_data_after_line_insert(Editor_Tab* editor_tab, int line_index);
+
+    void update_editor_data_before_line_delete(Editor_Tab* editor_tab, int line_index);
+    void update_editor_data_after_line_delete(Editor_Tab* editor_tab, int line_index);
+
+    void update_editor_data_before_text_insert(Editor_Tab* editor_tab, int line_index);
+    void update_editor_data_after_text_insert(Editor_Tab* editor_tab, int line_index);
 }
 
 struct Code_Fold
@@ -37,6 +43,15 @@ struct Line_Breakpoint
     Source_Breakpoint* src_breakpoint; 
     bool enabled; // This is toggle via UI, but I'm not sure if it's already implemented
 };
+
+struct Recent_Screen
+{
+    Text_Index cursor;
+    int visual_distance;
+    int cam_start;
+};
+
+const int EDITOR_TAB_MAX_RECENT_SCREEN_COUNT = 16;
 
 struct Editor_Tab
 {
@@ -70,10 +85,10 @@ struct Editor_Tab
     History_Timestamp last_render_timestamp;
     Text_Index last_render_cursor_pos;
 
-	// Note: Jumps are mostly for line-jumping, but we also store the cursor character at the time of the jump,
-	//		but this character does not change if line changes are made, so the index should be sanitized before being used
-    DynArray<Text_Index> jump_list;
-    int last_jump_index;
+    // Screens are sorted in least-recently used order, with index 0 being the most recent screen
+    Recent_Screen screens[EDITOR_TAB_MAX_RECENT_SCREEN_COUNT];
+    int screen_count;
+    int current_screen_index; // index == screen_count if we are at end (For CTRL-I/CTRL-O)
 };
 
 
