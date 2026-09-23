@@ -3,8 +3,6 @@
 #include "../../datastructures/string.hpp"
 #include "../../utility/hash_functions.hpp"
 #include "../../datastructures/hashset.hpp"
-#include "../../datastructures/list.hpp"
-#include "../../datastructures/dependency_graph.hpp"
 #include "../../utility/file_io.hpp"
 #include "../../win32/timing.hpp"
 
@@ -26,7 +24,6 @@ bool PRINT_TIMING = false;
 
 // PROTOTYPES
 Upp_Function* upp_function_create_empty(Call_Signature* signature, String* name, Compilation_Data* compilation_data);
-void analysis_workload_destroy(Workload_Base* workload);
 Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expression, Expression_Context context, Semantic_Context* semantic_context);
 Datatype* semantic_analyser_analyse_expression_value(
 	AST::Expression* expression, Expression_Context context, Semantic_Context* semantic_context, bool allow_nothing = false, bool allow_pattern = false);
@@ -82,7 +79,7 @@ namespace Helpers
 {
     Analysis_Workload_Type get_workload_type(Workload_Root* workload) { return Analysis_Workload_Type::ROOT; };
     Analysis_Workload_Type get_workload_type(Workload_Module_Analysis* workload) { return Analysis_Workload_Type::MODULE_ANALYSIS; };
-    Analysis_Workload_Type get_workload_type(Workload_Global* workload) { return Analysis_Workload_Type::GLOBAL; };
+    Analysis_Workload_Type get_workload_type(Workload_Global* workload) { return Analysis_Workload_Type::GLOBAL_OR_COMPTIME_VALUE; };
     Analysis_Workload_Type get_workload_type(Workload_Structure_Body* workload) { return Analysis_Workload_Type::STRUCT_BODY; };
     Analysis_Workload_Type get_workload_type(Workload_Structure_Header* workload) { return Analysis_Workload_Type::STRUCT_HEADER; };
     Analysis_Workload_Type get_workload_type(Workload_Function_Header* workload) { return Analysis_Workload_Type::FUNCTION_HEADER; };
@@ -474,21 +471,19 @@ struct Workload_Entry_Info
     Compilation_Data* compilation_data;
 };
 
-template<typename T>
-T* workload_executer_allocate_workload(Semantic_Context* semantic_context)
+void workload_base_initialize(Workload_Base* workload, Analysis_Workload_Type workload_type, Semantic_Context* semantic_context)
 {
-	auto& executer = *semantic_context->compilation_data->workload_executer;
+	Arena* arena = &semantic_context->compilation_data->arena;
+	Workload_Executer& executer = *semantic_context->compilation_data->workload_executer;
 	executer.progress_was_made = true;
 	assert(semantic_context->can_create_toplevel_items, "Should be the case, as this should be checked before workload creation");
 
     // Create new workload
-	T* result = semantic_context->compilation_data->arena.allocate<T>();
-    Workload_Base* workload = &result->base;
-    workload->type = Helpers::get_workload_type(result);
+	workload->type = workload_type;
     workload->is_finished = false;
     workload->was_started = false;
-    workload->dependencies = list_create<Workload_Base*>();
-    workload->dependents = list_create<Workload_Base*>();
+    workload->dependencies = List<Workload_Base*>::create(arena->upcast());
+    workload->dependents   = List<Workload_Base*>::create(arena->upcast());
 
     workload->real_error_count = 0;
     workload->errors_due_to_unknown_count = 0;
@@ -499,10 +494,16 @@ T* workload_executer_allocate_workload(Semantic_Context* semantic_context)
 	workload->parent_workload = semantic_context->current_workload;
 
     // Add to workload queue
-    dynamic_array_push_back(&executer.all_workloads, workload);
+    executer.all_workloads.push_back(workload);
 	// Note: There exists a check for dependencies before executing runnable workloads, so this is ok
-    dynamic_array_push_back(&executer.runnable_workloads, workload); 
+    executer.runnable_workloads.push_back(workload);
+}
 
+template<typename T>
+T* workload_executer_allocate_workload(Semantic_Context* semantic_context)
+{
+	T* result = semantic_context->compilation_data->arena.allocate<T>();
+	workload_base_initialize(&result->base, Helpers::get_workload_type(result), semantic_context);
     return result;
 }
 
@@ -1434,12 +1435,14 @@ void call_info_set_parameter_to_expression(Call_Info* call_info, int param_index
 
 
 // Expression_Info
-Auto_Cast_Info auto_cast_info_make(Auto_Cast_Type type, Datatype* result_type, Upp_Function* function = nullptr)
+Auto_Cast_Info auto_cast_info_make(
+	Auto_Cast_Type type, Datatype* result_type, const char* potential_error_msg = nullptr, Upp_Function* custom_cast_function = nullptr)
 {
 	Auto_Cast_Info info;
 	info.type = type;
 	info.result_type = result_type;
-	info.custom_cast_function = function;
+	info.custom_cast_function = custom_cast_function;
+	info.potential_error_msg = potential_error_msg;
 	return info;
 }
 
@@ -1611,6 +1614,11 @@ Expression_Value_Info expression_info_get_value_info(Expression_Info* info, Type
 	case Auto_Cast_Type::NO_OPERATION: {
 		value_info.result_type = value_info.initial_type;
 		value_info.result_value_is_temporary = value_info.initial_value_is_temporary;
+		break;
+	}
+	case Auto_Cast_Type::TO_ANY: {
+		value_info.result_type = upcast(types.any_type);
+		value_info.result_value_is_temporary = true;
 		break;
 	}
 	case Auto_Cast_Type::PRIMITIVE_CAST: {
@@ -1929,12 +1937,14 @@ bool workload_pair_equals(Workload_Pair* p1, Workload_Pair* p2) {
 
 Workload_Executer* workload_executer_create(Compilation_Data* compilation_data)
 {
-	Workload_Executer* workload_executer = new Workload_Executer;
+	Arena* arena = &compilation_data->arena;
+
+	Workload_Executer* workload_executer = arena->allocate<Workload_Executer>();
 	workload_executer->compilation_data = compilation_data;
-	workload_executer->all_workloads      = dynamic_array_create<Workload_Base*>();
-	workload_executer->runnable_workloads = dynamic_array_create<Workload_Base*>();
-	workload_executer->finished_workloads = dynamic_array_create<Workload_Base*>();
-	workload_executer->workload_dependencies = hashtable_create_empty<Workload_Pair, Dependency_Information>(8, workload_pair_hash, workload_pair_equals);
+	workload_executer->all_workloads      = DynArray<Workload_Base*>::create(arena);
+	workload_executer->runnable_workloads = DynArray<Workload_Base*>::create(arena);
+	workload_executer->finished_workloads = DynArray<Workload_Base*>::create(arena);
+	workload_executer->workload_dependencies = DynTable<Workload_Pair, Dependency_Information>::create(arena, workload_pair_hash, workload_pair_equals);
 	workload_executer->progress_was_made = false;
 
 	// Add root workload
@@ -1951,35 +1961,6 @@ Workload_Executer* workload_executer_create(Compilation_Data* compilation_data)
 	return workload_executer;
 }
 
-void workload_executer_destroy(Workload_Executer* executer)
-{
-	for (int i = 0; i < executer->all_workloads.size; i++) {
-		analysis_workload_destroy(executer->all_workloads[i]);
-	}
-
-	dynamic_array_destroy(&executer->all_workloads);
-	dynamic_array_destroy(&executer->runnable_workloads);
-	dynamic_array_destroy(&executer->finished_workloads);
-
-	{
-		auto iter = hashtable_iterator_create(&executer->workload_dependencies);
-		while (hashtable_iterator_has_next(&iter)) {
-			SCOPE_EXIT(hashtable_iterator_next(&iter));
-			auto& dep_info = iter.value;
-			dynamic_array_destroy(&dep_info->fail_indicators);
-		}
-		hashtable_destroy(&executer->workload_dependencies);
-	}
-
-	delete executer;
-}
-
-void analysis_workload_destroy(Workload_Base* workload)
-{
-	list_destroy(&workload->dependencies);
-	list_destroy(&workload->dependents);
-}
-
 void analysis_workload_add_dependency(
 	Workload_Executer* executer, Workload_Base* workload, Workload_Base* dependency, Dependency_Failure_Info failure_info)
 {
@@ -1992,22 +1973,23 @@ void analysis_workload_add_dependency(
 	}
 
 	Workload_Pair pair = workload_pair_create(workload, dependency);
-	Dependency_Information* infos = hashtable_find_element(&executer->workload_dependencies, pair);
-	if (infos == 0) {
+	Dependency_Information* infos = executer->workload_dependencies.find(pair);
+	if (infos == 0) 
+	{
 		Dependency_Information info;
-		info.dependency_node = list_add_at_end(&workload->dependencies, dependency);
-		info.dependent_node = list_add_at_end(&dependency->dependents, workload);
-		info.fail_indicators = dynamic_array_create<Dependency_Failure_Info>(1);
+		info.dependency_node = workload->dependencies.append(dependency);
+		info.dependent_node  = dependency->dependents.append(workload);
+		info.fail_indicators = DynArray<Dependency_Failure_Info>::create(&executer->compilation_data->arena);
 		info.can_be_broken = can_be_broken;
 		if (can_be_broken) {
-			dynamic_array_push_back(&info.fail_indicators, failure_info);
+			info.fail_indicators.push_back(failure_info);
 		}
-		bool inserted = hashtable_insert_element(&executer->workload_dependencies, pair, info);
-		assert(inserted, "");
+		executer->workload_dependencies.insert(pair, info);
 	}
-	else {
+	else 
+	{
 		if (can_be_broken) {
-			dynamic_array_push_back(&infos->fail_indicators, failure_info);
+			infos->fail_indicators.push_back(failure_info);
 		}
 		else {
 			infos->can_be_broken = false;
@@ -2020,20 +2002,19 @@ void workload_executer_remove_dependency(
 {
 	auto graph = executer;
 	Workload_Pair pair = workload_pair_create(workload, depends_on);
-	Dependency_Information* info = hashtable_find_element(&graph->workload_dependencies, pair);
+	Dependency_Information* info = graph->workload_dependencies.find(pair);
 	assert(info != 0, "");
-	list_remove_node(&workload->dependencies, info->dependency_node);
-	list_remove_node(&depends_on->dependents, info->dependent_node);
+	workload->dependencies.remove_node(info->dependency_node);
+	depends_on->dependents.remove_node(info->dependent_node);
 
 	// Signal all fail indicators to have passed
 	for (int i = 0; i < info->fail_indicators.size; i++) {
 		*(info->fail_indicators[i].fail_indicator) = !dependency_succeeded;
 	}
-	dynamic_array_destroy(&info->fail_indicators);
 
-	bool worked = hashtable_remove_element(&graph->workload_dependencies, pair);
-	if (allow_add_to_runnables && workload->dependencies.count == 0) {
-		dynamic_array_push_back(&graph->runnable_workloads, workload);
+	graph->workload_dependencies.remove_value(pair);
+	if (allow_add_to_runnables && workload->dependencies.element_count == 0) {
+		graph->runnable_workloads.push_back(workload);
 	}
 }
 
@@ -2150,7 +2131,7 @@ void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* co
 				if (i == 0) {
 					string_append_formated(&tmp, "Runnable workloads:\n");
 				}
-				if (workload->dependencies.count > 0) continue;
+				if (workload->dependencies.element_count > 0) continue;
 				if (workload->is_finished) continue;
 				string_append_formated(&tmp, "  ");
 				analysis_workload_append_to_string(workload, &tmp);
@@ -2173,7 +2154,7 @@ void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* co
 					string_append_formated(&tmp, "\nWorkloads with dependencies:\n");
 				}
 				Workload_Base* workload = all_workloads[i];
-				if (workload->is_finished || workload->dependencies.count == 0) continue;
+				if (workload->is_finished || workload->dependencies.element_count == 0) continue;
 				string_append_formated(&tmp, "  ");
 				analysis_workload_append_to_string(workload, &tmp);
 				string_append_formated(&tmp, "\n");
@@ -2215,7 +2196,7 @@ void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* co
 		for (int i = 0; i < executer->runnable_workloads.size; i++)
 		{
 			Workload_Base* workload = executer->runnable_workloads[i];
-			if (workload->dependencies.count > 0) {
+			if (workload->dependencies.element_count > 0) {
 				continue; // Skip runnable workload
 			}
 			if (workload->is_finished) {
@@ -2243,7 +2224,7 @@ void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* co
 			last_timestamp = now;
 
 			// Note: After a workload executes, it may have added new dependencies to itself
-			if (workload->dependencies.count == 0)
+			if (workload->dependencies.element_count == 0)
 			{
 				assert(finished, "When on dependencies remain, the fiber should have exited normally!\n");
 				workload->is_finished = true;
@@ -2254,13 +2235,13 @@ void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* co
 					node = node->next; // INFO: This is required before remove_dependency, since remove will remove nodes from the list
 					workload_executer_remove_dependency(executer, dependent, workload, true, true);
 				}
-				assert(workload->dependents.count == 0, "Remove dependency should already have cleared the list!");
+				assert(workload->dependents.element_count == 0, "Remove dependency should already have cleared the list!");
 			}
 			else {
 				assert(!finished, "If there are dependencies, the fiber must still be running!");
 			}
 		}
-		dynamic_array_reset(&executer->runnable_workloads);
+		executer->runnable_workloads.reset();
 		if (executer->progress_was_made) {
 			if (PRINT_DEPENDENCIES) {
 				logg("Progress was made!");
@@ -2365,13 +2346,14 @@ void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* co
 								if (dependency_layer > current_layer) {
 									// This means the workload is already queued for the next layer
 								}
-								else if (dependency_layer == current_layer) {
+								else if (dependency_layer == current_layer) 
+								{
 									// Here we need to check for self loops and loops with the breadth-first depth
 									if (dependency == scan_for_loops) { // Self dependency
 										loop_found = true;
 										loop_node_count = 1;
 									}
-									else if (hashtable_find_element(&executer->workload_dependencies, workload_pair_create(dependency, scan_for_loops)) != 0) {
+									else if (executer->workload_dependencies.find(workload_pair_create(dependency, scan_for_loops)) != nullptr) {
 										loop_found = true;
 										loop_node_count = 2;
 									}
@@ -2418,7 +2400,7 @@ void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* co
 					Workload_Base* workload = workload_cycle[i];
 					Workload_Base* depends_on = i + 1 == workload_cycle.size ? workload_cycle[0] : workload_cycle[i + 1];
 					Workload_Pair pair = workload_pair_create(workload, depends_on);
-					Dependency_Information infos = *hashtable_find_element(&executer->workload_dependencies, pair);
+					Dependency_Information infos = *executer->workload_dependencies.find(pair);
 					if (infos.can_be_broken) {
 						breakable_dependency_found = true;
 						for (int j = 0; j < infos.fail_indicators.size; j++) {
@@ -2470,8 +2452,8 @@ void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* co
 
 void workload_add_to_runnable_queue_if_possible(Workload_Executer* executer, Workload_Base* workload)
 {
-	if (!workload->is_finished && workload->dependencies.count == 0) {
-		dynamic_array_push_back(&executer->runnable_workloads, workload);
+	if (!workload->is_finished && workload->dependencies.element_count == 0) {
+		executer->runnable_workloads.push_back(workload);
 		executer->progress_was_made = true;
 	}
 }
@@ -2491,7 +2473,7 @@ bool workload_executer_switch_to_workload(Workload_Executer* executer, Workload_
 	if (PRINT_DEPENDENCIES) {
 		auto tmp = string_create(1);
 		analysis_workload_append_to_string(workload, &tmp);
-		if (workload->dependencies.count == 0) {
+		if (workload->dependencies.element_count == 0) {
 			SCOPE_EXIT(string_destroy(&tmp));
 			logg("FINISHED: %s\n", tmp.characters);
 		}
@@ -2520,7 +2502,7 @@ void workload_executer_wait_for_dependency_resolution(Semantic_Context* semantic
 {
 	Workload_Base* workload = semantic_context->current_workload;
 	if (workload == nullptr) return;
-	if (workload->dependencies.count != 0) {
+	if (workload->dependencies.element_count != 0) {
 		fiber_pool_switch_to_main_fiber(semantic_context->compilation_data->fiber_pool);
 	}
 }
@@ -2532,7 +2514,7 @@ const char* analysis_workload_type_as_string(Analysis_Workload_Type workload_typ
 	case Analysis_Workload_Type::ROOT: return "ROOT";
     case Analysis_Workload_Type::MODULE_ANALYSIS: return "MODULE_ANALYSIS";
     case Analysis_Workload_Type::CUSTOM_OPERATORS: return "CUSTOM_OPERATORS";
-    case Analysis_Workload_Type::GLOBAL: return "GLOBAL";
+    case Analysis_Workload_Type::GLOBAL_OR_COMPTIME_VALUE: return "GLOBAL_OR_COMPTIME_VALUE";
     case Analysis_Workload_Type::EXTERN_IMPORT: return "EXTERN_IMPORT";
     case Analysis_Workload_Type::ENUM: return "ENUM";
     case Analysis_Workload_Type::FAST_CALL: return "FAST_CALL";
@@ -2574,7 +2556,7 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
 		string_append_formated(string, "Fast_Call %s", fast_call->symbol->id->characters);
 		break;
 	}
-	case Analysis_Workload_Type::GLOBAL: 
+	case Analysis_Workload_Type::GLOBAL_OR_COMPTIME_VALUE: 
 	{
 		auto def = downcast<Workload_Global>(workload);
 		string_append_formated(string, "Global/Comptime %s", def->symbol->id->characters);
@@ -3025,14 +3007,15 @@ int cast_type_get_overloading_priority(Auto_Cast_Type cast_type)
 {
 	switch (cast_type)
 	{
-	case Auto_Cast_Type::NO_OPERATION: return 5;
-	case Auto_Cast_Type::TO_BASE_TYPE: return 4;
-	case Auto_Cast_Type::FUNCTION_POINTERS: return 4;
-	case Auto_Cast_Type::ADDRESS_OF: return 3;
-	case Auto_Cast_Type::DEREFERENCE: return 3;
-	case Auto_Cast_Type::PRIMITIVE_CAST: return 2;
-	case Auto_Cast_Type::CUSTOM_CAST: return 2;
-	case Auto_Cast_Type::CUSTOM_CAST_INVALID_FUNCTION: return 2;
+	case Auto_Cast_Type::NO_OPERATION: return 6;
+	case Auto_Cast_Type::TO_BASE_TYPE: return 5;
+	case Auto_Cast_Type::FUNCTION_POINTERS: return 5;
+	case Auto_Cast_Type::ADDRESS_OF: return 4;
+	case Auto_Cast_Type::DEREFERENCE: return 4;
+	case Auto_Cast_Type::PRIMITIVE_CAST: return 3;
+	case Auto_Cast_Type::CUSTOM_CAST: return 3;
+	case Auto_Cast_Type::CUSTOM_CAST_INVALID_FUNCTION: return 3;
+	case Auto_Cast_Type::TO_ANY: return 2; // Any cast should be almost the last thing to pick (Before invalid/unknown)
 	case Auto_Cast_Type::UNKNOWN: return 1;
 	case Auto_Cast_Type::INVALID: return 0;
 	default: panic("");
@@ -3041,27 +3024,33 @@ int cast_type_get_overloading_priority(Auto_Cast_Type cast_type)
 }
 
 // Auto dereference or address-of
-Auto_Cast_Type check_if_type_modifier_update_valid(Type_Modifier_Info src_mods, Type_Modifier_Info dst_mods, bool source_is_temporary)
+Type_Modifier_Update_Result check_if_type_modifier_update_valid(Type_Modifier_Info src_mods, Type_Modifier_Info dst_mods, bool source_is_temporary)
 {
-	Auto_Cast_Type cast_type = Auto_Cast_Type::INVALID;
+	Type_Modifier_Update_Result result;
+	result.auto_cast_type = Auto_Cast_Type::INVALID;
+	result.potential_error_msg = nullptr;
 	if (src_mods.pointer_level > dst_mods.pointer_level && dst_mods.base_type->type != Datatype_Type::PATTERN_VARIABLE) 
 	{
 		// Auto dereference (Only when matching with non $T poly-value, e.g. **[]$T or *Node($T)
-		cast_type = Auto_Cast_Type::DEREFERENCE;
+		result.auto_cast_type = Auto_Cast_Type::DEREFERENCE;
 	}
-	else if (src_mods.pointer_level + 1 == dst_mods.pointer_level && !source_is_temporary)
+	else if (src_mods.pointer_level + 1 == dst_mods.pointer_level)
 	{
-		// Auto address-of
-		cast_type = Auto_Cast_Type::ADDRESS_OF;
+		if (!source_is_temporary) {
+			result.auto_cast_type = Auto_Cast_Type::ADDRESS_OF;
+		}
+		else {
+			result.potential_error_msg = "Cannot automatically take address of temporary value";
+		}
+	}
+	else if (src_mods.pointer_level + 1 < dst_mods.pointer_level) {
+		result.potential_error_msg = "Auto-cast would require multiple address-of operations, which are temporary";
 	}
 	else if (src_mods.pointer_level == dst_mods.pointer_level){
-		cast_type = Auto_Cast_Type::NO_OPERATION;
-	}
-	else {
-		cast_type = Auto_Cast_Type::INVALID;
+		result.auto_cast_type = Auto_Cast_Type::NO_OPERATION;
 	}
 
-	return cast_type;
+	return result;
 }
 
 // Note: This function may still raise errors flags because of custom_casts, as the instanciation/error_checking happens here
@@ -3077,18 +3066,20 @@ Auto_Cast_Info check_if_auto_cast_possible(
 
 	// Disallow pattern type casting (Should be handled by seperate code-path)
 	if (to_type->contains_pattern) {
-		return auto_cast_info_make(Auto_Cast_Type::INVALID, dst);
+		return auto_cast_info_make(Auto_Cast_Type::INVALID, dst, "Casting to polymorphic pattern is invalid");
 	}
 
 	// Check for no-cast and unknown cast
 	if (datatype_is_unknown(src) || datatype_is_unknown(dst)) 
 	{
 		semantic_context_raise_error_flag(true, semantic_context);
-		return auto_cast_info_make(Auto_Cast_Type::UNKNOWN, dst);
+		return auto_cast_info_make(Auto_Cast_Type::UNKNOWN, dst, "Casting to/from unknown type");
 	}
 	if (types_are_equal(from_type, to_type)) {
 		return auto_cast_info_make(Auto_Cast_Type::NO_OPERATION, dst);
 	}
+
+	const char* potential_error_msg = nullptr;
 
 	// Check for function-pointer cast
 	if (src->type == Datatype_Type::FUNCTION_POINTER && dst->type == Datatype_Type::FUNCTION_POINTER)
@@ -3105,6 +3096,9 @@ Auto_Cast_Info check_if_auto_cast_possible(
 
 		if (src_sig->return_type_index != dst_sig->return_type_index || src_params.size != dst_params.size) {
 			cast_valid = false;
+			if (potential_error_msg == nullptr) {
+				potential_error_msg = "Cannot cast function pointers, parameter-count or return-index not equal";
+			}
 		}
 		for (int i = 0; i < src_params.size && cast_valid; i++) 
 		{
@@ -3112,6 +3106,9 @@ Auto_Cast_Info check_if_auto_cast_possible(
 			auto& param2 = dst_params[i];
 			if (!types_are_equal(param1.datatype, param2.datatype)) {
 				cast_valid = false;
+				if (potential_error_msg == nullptr) {
+					potential_error_msg = "Cannot cast function pointers, parameter-count or return-index not equal";
+				}
 			}
 		}
 
@@ -3140,13 +3137,28 @@ Auto_Cast_Info check_if_auto_cast_possible(
 				if (subtype == dst_info.struct_subtype)
 				{
 					result_cast_type = Auto_Cast_Type::TO_BASE_TYPE;
-					if (src_info.pointer_level != 0 && dst_info.pointer_level == 0) {
-						result_cast_type = check_if_type_modifier_update_valid(src_info, dst_info, value_is_temporary);
+					if (src_info.pointer_level != 0 && dst_info.pointer_level == 0) 
+					{
+						Type_Modifier_Update_Result update_result = check_if_type_modifier_update_valid(src_info, dst_info, value_is_temporary);
+						if (update_result.auto_cast_type != Auto_Cast_Type::INVALID) {
+							result_cast_type = update_result.auto_cast_type;
+						}
+						else if (potential_error_msg == nullptr) {
+							potential_error_msg = update_result.potential_error_msg;
+						}
 					}
 				}
+				else if (potential_error_msg == nullptr){
+					potential_error_msg = "Struct subtypes not valid for auto-cast, can only cast upwards in hierarchy";
+				}
 			}
-			else if (src_info.pointer_level != dst_info.pointer_level) {
-				result_cast_type = check_if_type_modifier_update_valid(src_info, dst_info, value_is_temporary);
+			else if (src_info.pointer_level != dst_info.pointer_level) 
+			{
+				Type_Modifier_Update_Result update_result = check_if_type_modifier_update_valid(src_info, dst_info, value_is_temporary);
+				result_cast_type = update_result.auto_cast_type;
+				if (potential_error_msg == nullptr) {
+					potential_error_msg = update_result.potential_error_msg;
+				}
 			}
 
 			if (result_cast_type != Auto_Cast_Type::INVALID) {
@@ -3155,9 +3167,15 @@ Auto_Cast_Info check_if_auto_cast_possible(
 		}
 	}
 
+	// To-Any cast
+	if (datatype_is_builtin_type(dst, Builtin_Type::ANY)) 
+	{
+		return auto_cast_info_make(Auto_Cast_Type::TO_ANY, upcast(types.any_type));
+	}
+
 	// Check if we can access auto-casts
 	if (!semantic_context->can_access_custom_operators || semantic_context->current_symbol_table == nullptr) {
-		return auto_cast_info_make(Auto_Cast_Type::INVALID, dst);
+		return auto_cast_info_make(Auto_Cast_Type::INVALID, dst, potential_error_msg);
 	}
 
 	// Search auto-casts 
@@ -3167,20 +3185,25 @@ Auto_Cast_Info check_if_auto_cast_possible(
 	switch (result.type)
 	{
 	case Custom_Operator_Query_Result_Type::SUCCESS: {
-		return auto_cast_info_make(Auto_Cast_Type::CUSTOM_CAST, dst, result.value.instance_functions[0]);
+		return auto_cast_info_make(Auto_Cast_Type::CUSTOM_CAST, dst, nullptr, result.value.instance_functions[0]);
 	}
-	case Custom_Operator_Query_Result_Type::FOUND_BUT_FUNCTION_INVALID:
+	case Custom_Operator_Query_Result_Type::FOUND_BUT_FUNCTION_INVALID: {
+		// This means an error was already logged
+		semantic_context_raise_error_flag(false, semantic_context);
+		return auto_cast_info_make(Auto_Cast_Type::CUSTOM_CAST_INVALID_FUNCTION, dst, "Cast would be ok if the function set in add_auto_cast was correct", nullptr);
+	}
 	case Custom_Operator_Query_Result_Type::VALUE_MUST_NOT_BE_TEMPORARY: {
-		return auto_cast_info_make(Auto_Cast_Type::CUSTOM_CAST_INVALID_FUNCTION, dst, nullptr);
+		return auto_cast_info_make(Auto_Cast_Type::INVALID, dst, "Custom_Cast would work, but source-value must not be temporary");
 	}
 	case Custom_Operator_Query_Result_Type::NOT_FOUND: break;
 	default: panic("");
 	}
 
-	return auto_cast_info_make(Auto_Cast_Type::INVALID, dst);
+	return auto_cast_info_make(Auto_Cast_Type::INVALID, dst, potential_error_msg);
 }
 
-bool expression_apply_auto_cast_if_possible(
+// Returns new auto-cast_info
+Auto_Cast_Info expression_apply_auto_cast_if_possible(
 	AST::Expression* expression, Datatype* to_type, bool* out_result_is_temp, Semantic_Context* semantic_context)
 {
 	if (out_result_is_temp != nullptr) {
@@ -3201,10 +3224,9 @@ bool expression_apply_auto_cast_if_possible(
 		if (out_result_is_temp != nullptr) {
 			*out_result_is_temp = expression_info_get_value_info(expr_info, semantic_context->compilation_data->type_system).result_value_is_temporary;
 		}
-		return true;
 	}
 
-	return false;
+	return new_cast_info;
 }
 
 
@@ -3918,11 +3940,11 @@ Call_Info* overloading_analyse_call_expression_and_resolve_overloads(
 								parameter_mods.base_type = upcast(parameter_mods.struct_subtype);
 							}
 
-							Auto_Cast_Type cast_type = check_if_type_modifier_update_valid(argument_mods, parameter_mods, false);
-							if (cast_type == Auto_Cast_Type::INVALID) {
+							Type_Modifier_Update_Result update_result = check_if_type_modifier_update_valid(argument_mods, parameter_mods, false);
+							if (update_result.auto_cast_type == Auto_Cast_Type::INVALID) {
 								continue;
 							}
-							else if (cast_type != Auto_Cast_Type::NO_OPERATION) {
+							else if (update_result.auto_cast_type != Auto_Cast_Type::NO_OPERATION) {
 								candidate.poly_type_requires_modifier_update = true;
 							}
 							argument_type = argument_mods.base_type;
@@ -5187,10 +5209,13 @@ Poly_Instance* poly_header_instanciate(
 						src_info.base_type = upcast(src_info.struct_subtype);
 					}
 					Type_Modifier_Info dst_info = datatype_get_modifier_info(parameter_type);
-					Auto_Cast_Type cast_type = check_if_type_modifier_update_valid(src_info, dst_info, value_info.initial_value_is_temporary);
-					if (cast_type != Auto_Cast_Type::INVALID) {
+					Type_Modifier_Update_Result update_result = check_if_type_modifier_update_valid(
+						src_info, dst_info, value_info.initial_value_is_temporary
+					);
+					if (update_result.auto_cast_type != Auto_Cast_Type::INVALID) 
+					{
 						expr_info->auto_cast_info = auto_cast_info_make(
-							cast_type,
+							update_result.auto_cast_type,
 							type_system_make_type_with_modifiers(type_system, src_info.base_type, dst_info.pointer_level)
 						);
 					}
@@ -6502,7 +6527,7 @@ void analysis_workload_entry(void* userdata)
 
 		break;
 	}
-	case Analysis_Workload_Type::GLOBAL:
+	case Analysis_Workload_Type::GLOBAL_OR_COMPTIME_VALUE:
 	{
 		auto workload_global = downcast<Workload_Global>(workload);
 		auto symbol = workload_global->symbol;
@@ -6787,7 +6812,7 @@ Expression_Info analyse_symbol_as_expression(
 			// Additionally, we want some workloads to wait until the size has been resolved
 			switch (workload->type)
 			{
-			case Analysis_Workload_Type::GLOBAL: {
+			case Analysis_Workload_Type::GLOBAL_OR_COMPTIME_VALUE: {
 				analysis_workload_add_dependency(executer, workload, upcast(struct_workload), failure_info);
 				break;
 			}
@@ -7247,6 +7272,34 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			call_info->parameter_values[call_info->origin.signature->return_type_index] = parameter_value_make_datatype_known(context.datatype);
 		}
 
+		auto helper_analyse_param_as_datatype = [&](Parameter_Value* param_value) -> Datatype*
+		{
+			assert(
+				param_value->value_type == Parameter_Value_Type::NOT_SET || 
+				param_value->value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, ""
+			);
+
+			if (param_value->value_type != Parameter_Value_Type::NOT_SET) 
+			{
+				AST::Expression* arg_expr = call_info->argument_infos[param_value->options.argument_index].expression;
+				auto info_opt = pass_get_node_info(semantic_context->current_pass, arg_expr, Info_Query::TRY_READ, semantic_context->compilation_data);
+				if (info_opt == nullptr) {
+					return semantic_analyser_analyse_expression_type(arg_expr, semantic_context);
+				}
+				else 
+				{
+					auto result = expression_calculate_comptime_value(
+						arg_expr, "cast_pointer/cast_primitive arguments \"to\" and \"from\" must be known at comptime", semantic_context
+					);
+					if (result.available) {
+						return upp_constant_as_datatype(result.value, type_system);
+					}
+				}
+			}
+
+			return types.unknown_type;
+		};
+
 		// Handle hardcoded and polymorphic functions
 		switch (call_info->origin.type)
 		{
@@ -7408,39 +7461,37 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				}
 				return info;
 			}
+			case Hardcoded_Type::CAST_ANY: 
+			{
+				analyse_parameter_value_if_not_already_done(
+					call_info, &call_info->parameter_values[0],
+					semantic_context, expression_context_make_specific_type(upcast(types.any_type))
+				);
+
+				Datatype* result_type = nullptr;
+				Parameter_Value* to_value = &call_info->parameter_values[1];
+				if (to_value->value_type == Parameter_Value_Type::NOT_SET) 
+				{
+					if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
+						result_type = context.datatype;
+					}
+					else {
+						log_semantic_error(semantic_context, "any_cast could not figure out result type from context", expr, Node_Section::FIRST_TOKEN);
+						result_type = types.unknown_type;
+					}
+				}
+				else 
+				{
+					result_type = helper_analyse_param_as_datatype(to_value);
+				}
+
+				EXIT_VALUE(result_type, false);
+			}
 			case Hardcoded_Type::CAST_POINTER: 
 			case Hardcoded_Type::CAST_PRIMITIVE: 
 			{
-				// ~cast_primitive(value, to, from)
+				// cast(value, to, from)
 				auto& param_values = call_info->parameter_values;
-
-				auto helper_analyse_param_as_datatype = [&](Parameter_Value* param_value) -> Datatype*
-				{
-					assert(
-						param_value->value_type == Parameter_Value_Type::NOT_SET || 
-						param_value->value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, ""
-					);
-
-					if (param_value->value_type != Parameter_Value_Type::NOT_SET) 
-					{
-						AST::Expression* arg_expr = call_info->argument_infos[param_value->options.argument_index].expression;
-						auto info_opt = pass_get_node_info(semantic_context->current_pass, arg_expr, Info_Query::TRY_READ, semantic_context->compilation_data);
-						if (info_opt == nullptr) {
-							return semantic_analyser_analyse_expression_type(arg_expr, semantic_context);
-						}
-						else 
-						{
-							auto result = expression_calculate_comptime_value(
-								arg_expr, "cast_pointer/cast_primitive arguments \"to\" and \"from\" must be known at comptime", semantic_context
-							);
-							if (result.available) {
-								return upp_constant_as_datatype(result.value, type_system);
-							}
-						}
-					}
-
-					return types.unknown_type;
-				};
 
 				Parameter_Value* param_value = &param_values[0];
 				assert(param_value->value_type != Parameter_Value_Type::NOT_SET, "");
@@ -7502,7 +7553,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 					bool dst_is_active_integer = datatype_is_integer(dst, true);
 					bool src_is_float = datatype_is_primitive_class(src, Primitive_Class::FLOAT);
 					bool dst_is_float = datatype_is_primitive_class(dst, Primitive_Class::FLOAT);
+					bool src_is_any = datatype_is_builtin_type(src, Builtin_Type::ANY);
 					cast_is_valid =
+						src_is_any ||
 						(src_is_integer && dst_is_integer) ||
 						(src_is_float && dst_is_float) ||
 						(src_is_float && dst_is_active_integer) ||
@@ -9498,12 +9551,15 @@ void expression_context_apply(
 	}
 	case Expression_Context_Type::SPECIFIC_TYPE_EXPECTED:
 	{
-		bool cast_was_possible = expression_apply_auto_cast_if_possible(expression, context.datatype, nullptr, semantic_context);
-		if (!cast_was_possible && context.error_if_type_not_matched) 
+		Auto_Cast_Info new_cast_info = expression_apply_auto_cast_if_possible(expression, context.datatype, nullptr, semantic_context);
+		if (new_cast_info.type == Auto_Cast_Type::INVALID && context.error_if_type_not_matched) 
 		{
 			log_semantic_error(semantic_context, "Cannot cast to required type", expression, error_section);
 			log_error_info_given_type(semantic_context, value_info.initial_type);
 			log_error_info_expected_type(semantic_context, context.datatype);
+			if (new_cast_info.potential_error_msg != nullptr) {
+				log_error_info_comptime_msg(semantic_context, new_cast_info.potential_error_msg);
+			}
 			info->auto_cast_info = auto_cast_info_make(Auto_Cast_Type::INVALID, context.datatype);
 		}
 
@@ -11015,7 +11071,8 @@ Datatype* analyse_variable_definition(
 	{
 		Datatype* expected_type = type_system_make_pointer(type_system, right_datatype)->upcast();
 		bool unused = false;
-		if (!expression_apply_auto_cast_if_possible(initial_value_expr.value, expected_type, &unused, semantic_context)) 
+		Auto_Cast_Info new_cast_info = expression_apply_auto_cast_if_possible(initial_value_expr.value, expected_type, &unused, semantic_context);
+		if (new_cast_info.type == Auto_Cast_Type::INVALID) 
 		{
 			log_semantic_error(
 				semantic_context, "Right side of definition must not be temporary for pointer-definition", 
@@ -11501,13 +11558,14 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 		// Analyse loop variable 
 		{
 			Symbol* symbol = symbol_node_define_symbol(
-				for_loop.loop_variable_definition, Symbol_Type::VARIABLE,
+				for_loop.loop_variable_definition, Symbol_Type::VARIABLE_UNDEFINED,
 				symbol_table, Symbol_Access_Level::INTERNAL, semantic_context, false
 			);
 			symbol->options.variable_type = analyse_variable_definition(
 				for_loop.loop_variable_type, optional_make_success(for_loop.initial_value), for_loop.assignment_type, semantic_context,
 				upcast(statement), Node_Section::WHOLE_NO_CHILDREN
 			);
+			symbol->type = Symbol_Type::VARIABLE;
 			info->specifics.for_loop.loop_variable_symbol = symbol;
 		}
 		// Use new symbol table for condition + increment
@@ -11782,11 +11840,12 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 			semantic_context->current_pass, definition_node->options.value.symbol, Info_Query::READ_NOT_NULL, compilation_data
 		)->symbol;
 
-		variable_symbol->type = Symbol_Type::VARIABLE;
+		variable_symbol->type = Symbol_Type::VARIABLE_UNDEFINED;
 		variable_symbol->options.variable_type = analyse_variable_definition(
 			value_node->datatype_expr, value_node->value_expr, value_node->assignment_type, semantic_context,
 			upcast(statement), Node_Section::WHOLE_NO_CHILDREN
 		);
+		variable_symbol->type = Symbol_Type::VARIABLE;
 		EXIT(Control_Flow::SEQUENTIAL);
 	}
 	default: {
@@ -12013,6 +12072,7 @@ const char* auto_cast_type_to_string(Auto_Cast_Type type)
 	{
 	case Auto_Cast_Type::NO_OPERATION: return "NO_OPERATION";
 	case Auto_Cast_Type::CUSTOM_CAST: return "CUSTOM_CAST";
+	case Auto_Cast_Type::TO_ANY: return "TO_ANY";
 	case Auto_Cast_Type::CUSTOM_CAST_INVALID_FUNCTION: return "CUSTOM_CAST_INVALID_FUNCTION";
 	case Auto_Cast_Type::FUNCTION_POINTERS: return "FUNCTION_POINTERS";
 	case Auto_Cast_Type::DEREFERENCE: return "DEREFERENCE";

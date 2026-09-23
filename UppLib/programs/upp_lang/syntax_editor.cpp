@@ -4748,7 +4748,7 @@ void suggestions_fill_with_file_directory(String search_path)
 	for (int i = 0; i < files.size; i++) {
 		auto& file = files[i];
 		if (!file.is_directory) {
-			if (!string_ends_with(file.name.characters, ".upp")) {
+			if (!cstring_ends_with(file.name.characters, ".upp")) {
 				continue;
 			}
 		}
@@ -5240,8 +5240,8 @@ void code_completion_find_suggestions()
 				// Try updating type-modifiers
 				Type_Modifier_Info src_mods = datatype_get_modifier_info(arg_type);
 				Type_Modifier_Info dst_mods = datatype_get_modifier_info(param_type);
-				Auto_Cast_Type cast_type = check_if_type_modifier_update_valid(src_mods, dst_mods, false);
-				if (cast_type == Auto_Cast_Type::INVALID) {
+				Type_Modifier_Update_Result update_result = check_if_type_modifier_update_valid(src_mods, dst_mods, false);
+				if (update_result.auto_cast_type == Auto_Cast_Type::INVALID) {
 					remove_symbol = true;
 					continue;
 				}
@@ -8828,7 +8828,7 @@ void syntax_editor_update(bool& animations_running)
 						start = path_found.value + 1;
 					}
 				}
-				if (string_ends_with(name.characters, ".upp")) {
+				if (cstring_ends_with(name.characters, ".upp")) {
 					end = name.size - 4;
 				}
 				name = string_create_substring_static(&name, start, end);

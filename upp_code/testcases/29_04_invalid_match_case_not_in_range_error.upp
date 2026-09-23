@@ -1,0 +1,15 @@
+Color :: enum
+    RED
+    GREEN
+    BLUE
+
+main :: fn ()
+    color: Color = 15->cast()
+
+    // A value not in range will trigger the default block, otherwise panic
+    match color
+    case Color.RED
+    case Color.GREEN
+    case Color.BLUE
+
+

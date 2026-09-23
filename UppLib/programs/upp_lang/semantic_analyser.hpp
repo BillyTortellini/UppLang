@@ -4,7 +4,6 @@
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/hashtable.hpp"
 #include "../../datastructures/allocators.hpp"
-#include "../../datastructures/list.hpp"
 #include "../../utility/rich_text.hpp"
 
 #include "type_system.hpp"
@@ -235,7 +234,7 @@ enum class Analysis_Workload_Type
 
     MODULE_ANALYSIS, // This is basically just symbol discovery
     CUSTOM_OPERATORS,
-    GLOBAL,
+    GLOBAL_OR_COMPTIME_VALUE,
     EXTERN_IMPORT,
     ENUM,
     FAST_CALL,
@@ -354,7 +353,6 @@ struct Workload_Structure_Header
     Symbol_Table* symbol_table;
 };
 
-void analysis_workload_destroy(Workload_Base* workload);
 void analysis_workload_append_to_string(Workload_Base* workload, String* string);
 
 
@@ -378,21 +376,20 @@ struct Dependency_Information
     List_Node<Workload_Base*>* dependent_node;
     // Information for cyclic resolve
     bool can_be_broken;
-    Dynamic_Array<Dependency_Failure_Info> fail_indicators;
+    DynArray<Dependency_Failure_Info> fail_indicators;
 };
 
 struct Workload_Executer
 {
     Compilation_Data* compilation_data;
-    Dynamic_Array<Workload_Base*> all_workloads; // Owning array
-    Dynamic_Array<Workload_Base*> runnable_workloads;
-    Dynamic_Array<Workload_Base*> finished_workloads;
+    DynArray<Workload_Base*> all_workloads; // Owning array
+    DynArray<Workload_Base*> runnable_workloads;
+    DynArray<Workload_Base*> finished_workloads;
     bool progress_was_made;
-    Hashtable<Workload_Pair, Dependency_Information> workload_dependencies;
+    DynTable<Workload_Pair, Dependency_Information> workload_dependencies;
 };
 
 Workload_Executer* workload_executer_create(Compilation_Data* compilation_data);
-void workload_executer_destroy(Workload_Executer* executer);
 void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* compilation_data);
 Workload_Module_Analysis* workload_executer_add_module_discovery(AST::Root_Node* module_node, Compilation_Data* compilation_data);
 void semantic_analyser_finish_analysis(Compilation_Data* compilation_data);
@@ -537,11 +534,18 @@ enum class Auto_Cast_Type
     FUNCTION_POINTERS,
     TO_BASE_TYPE,
     PRIMITIVE_CAST, // Only happens in array-access, to cast all integer types to size-type (i64)
+    TO_ANY,
 
     PATTERN_CAST, // Kinda needed for polymorphic-stuff
-    CUSTOM_CAST_INVALID_FUNCTION,
+    CUSTOM_CAST_INVALID_FUNCTION, // A custom_cast was registered for given types, but the function is invalid (Contains errors or invalid signature)
     INVALID, // Src and required destination did not match
     UNKNOWN,
+};
+
+struct Type_Modifier_Update_Result
+{
+	Auto_Cast_Type auto_cast_type;
+	const char* potential_error_msg; // May be nullptr
 };
 
 struct Auto_Cast_Info
@@ -550,6 +554,7 @@ struct Auto_Cast_Info
     Datatype* result_type;
     // Function is null if not custom_cast, or if custom_cast has some errors
     Upp_Function* custom_cast_function;
+    const char* potential_error_msg; // If the cast failed, but we have some clues as to why it failed, nullptr if not available
 };
 
 struct Expression_Info
@@ -691,7 +696,7 @@ Definition_Info* pass_get_node_info(Analysis_Pass* pass, AST::Definition* node, 
 Auto_Cast_Info check_if_auto_cast_possible(
     Datatype* from_type, Datatype* to_type, bool value_is_temporary, Semantic_Context* semantic_context
 );
-Auto_Cast_Type check_if_type_modifier_update_valid(Type_Modifier_Info src_mods, Type_Modifier_Info dst_mods, bool source_is_temporary);
+Type_Modifier_Update_Result check_if_type_modifier_update_valid(Type_Modifier_Info src_mods, Type_Modifier_Info dst_mods, bool source_is_temporary);
 
 struct Expression_Value_Info 
 {

@@ -1,31 +1,19 @@
+main :: fn ()
+    // New operator with () creates a slice
+    value_array: [20]int
 
-import ~usize
+    value_slice := ([]int).{value_array.data, value_array.size}
+    loop i := 0; i < value_slice.size; i += 1
+        value_slice[i] = value_slice.size - i - 1
+    
+    array_bubble_sort(value_slice)
+    loop i := 0; i < value_slice.size - 1; i += 1
+        assert(value_slice[i] < value_slice[i + 1])
 
-main :: ()
-	// New operator with () creates a slice
-	arr := new{20} int
-	i: usize = 0
-	while i < arr.size
-		arr[i] = cast (arr.size - i - 1)
-		i = i + 1
-	
-	array_bubble_sort(arr)
-	i = 0
-	while i < arr.size - 1
-		~assert(arr[i] < arr[i + 1])
-		i = i + 1
-	
-	// Deletion on slices
-	delete arr
-
-array_bubble_sort :: (a: []int)
-	i: usize = 0
-	while (i < a.size)
-		j := i + 1
-		while (j < a.size)
-			if (a[j] < a[i])
-				swap := a[i]
-				a[i] = a[j]
-				a[j] = swap
-			j = j + 1
-		i = i + 1
+array_bubble_sort :: fn (a: []int)
+    loop i := 0; i < a.size - 1; i += 1
+        loop j := i + 1; j < a.size; j += 1
+            if a[j] < a[i]
+                swap := a[i]
+                a[i] = a[j]
+                a[j] = swap

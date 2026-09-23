@@ -400,10 +400,10 @@ Upp_Constant Constant_Pool::add_u64(u64 value) {
     return add_valid_primitive(this, &value, upcast(this->compilation_data->type_system->predefined_types.u64_type));
 }
 
-Upp_Constant Constant_Pool::add_int(upp_size value) {
+Upp_Constant Constant_Pool::add_int(upp_int value) {
     return add_valid_primitive(this, &value, upcast(this->compilation_data->type_system->predefined_types.int_type));
 }
-Upp_Constant Constant_Pool::add_uint(uint value) {
+Upp_Constant Constant_Pool::add_uint(upp_uint value) {
     return add_valid_primitive(this, &value, upcast(this->compilation_data->type_system->predefined_types.uint_type));
 }
 Upp_Constant Constant_Pool::add_upp_size(upp_size value) {
@@ -467,6 +467,7 @@ Upp_Constant Constant_Pool::add_enum_value_assume_valid(Datatype_Enum* enum_type
 
 Upp_Constant Constant_Pool::add_type_handle_assume_valid(Upp_Type_Handle type_handle)
 {
+    assert((u64)type_handle.index < compilation_data->type_system->types.size, "");
     Constant_Pool_Result result = constant_pool_add_constant(
         this, compilation_data->type_system->predefined_types.type_handle->upcast(), 
         array_create_static_as_bytes<Upp_Type_Handle>(&type_handle, 1)

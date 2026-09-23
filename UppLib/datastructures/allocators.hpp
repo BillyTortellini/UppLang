@@ -5,6 +5,73 @@
 #include "../utility/hash_functions.hpp"
 #include "../math/scalars.hpp"
 
+
+// Note about 0-sized allocations:
+//   I don't want to deal with 0 sized allocation/deallocation, so we crash if this is the case
+//   The only use case is allocating arrays/slices, as 0-sized slices are OK 
+
+
+// Allocator_Base
+enum class Allocation_Type
+{
+	ALLOCATE,   // Uses new_size and alignment, ignores curr_data, returns allocated data
+	DEALLOCATE, // Uses curr_data and curr_size, ignores new_size, returns nullptr
+	RESIZE,     // Uses new_size, curr_size and curr_data, returns nullptr if resize didn't work
+};
+
+struct Allocator_Base;
+
+typedef void* (*allocate_function)(
+	Allocator_Base* allocator, Allocation_Type allocation_type, uint new_size, uint alignment_or_curr_size, void* curr_data
+);
+
+struct Allocator_Base
+{
+	allocate_function allocate_fn;
+
+	// Helper function so we don't have to use the function pointer directly
+	void* allocate_raw(uint size, uint alignment);
+	bool resize(void* memory, uint old_size, uint new_size);
+	void deallocate(void* memory, uint allocation_size);
+
+	template<typename T> 
+	T* allocate() {	return (T*)allocate_raw(sizeof(T), alignof(T)); } 
+	
+	template<typename T> 
+	Array<T> allocate_array(int size) {
+		if (size == 0) {
+			Array<T> result;
+			result.data = nullptr;
+			result.size = 0;
+			return result;
+		}
+		return array_create_static<T>((T*) allocate_raw(sizeof(T) * size, alignof(T)), size); 
+	} 
+
+	template<typename T> 
+	void deallocate_array(Array<T> array) {
+		if (array.size == 0) {
+			return;
+		}
+		deallocate(array.data, sizeof(T) * array.size);
+	} 
+};
+
+
+
+// System_Allocator
+struct System_Allocator
+{
+	Allocator_Base base;
+	static System_Allocator create();
+	Allocator_Base* upcast();
+};
+
+extern System_Allocator global_system_allocator;
+
+
+
+// Arena
 struct Arena;
 
 struct Arena_Checkpoint
@@ -24,19 +91,18 @@ struct Arena_Buffer
 
 struct Arena
 {
+	Allocator_Base base;
+	Allocator_Base* parent_allocator;
 	Arena_Buffer buffer;
 	void* next;
 
-	static Arena create(uint capacity = 0); 
+	// If parent_allocator == 0, system allocator is used
+	static Arena create(uint capacity = 0, Allocator_Base* parent_allocator = nullptr); 
 	void destroy();
 
 	void* allocate_raw(uint size, u32 alignment);
 	bool resize(void* memory, uint old_size, uint new_size);
 	void reset(bool keep_largest_buffer = false);
-
-	Arena_Checkpoint make_checkpoint();
-	void rewind_to_checkpoint(Arena_Checkpoint checkpoint);
-	void Arena::rewind_to_address(void* pointer);
 
 	template<typename T> 
 	T* allocate() {	return (T*)allocate_raw(sizeof(T), alignof(T)); } 
@@ -51,17 +117,45 @@ struct Arena
 		}
 		return array_create_static<T>((T*) allocate_raw(sizeof(T) * size, alignof(T)), size); 
 	} 
+
+	Arena_Checkpoint make_checkpoint();
+	void rewind_to_checkpoint(Arena_Checkpoint checkpoint);
+	void Arena::rewind_to_address(void* pointer);
+
+	Allocator_Base* upcast();
 };
 
-// Note: Alignment of free-list is always alignof(uint), so this could cause problems for sse types...
+
+
+// Scratch_Arena utility
+void scratch_arena_initialize_for_current_thread(Allocator_Base* parent_allocator = nullptr);
+void scratch_arena_destroy_for_current_thread();
+Arena* scratch_arena_retrieve(Arena* permanent_arena);
+
+#define SCRATCH_ARENA_MAKE_SCOPED(permanent_arena) \
+	Arena* scratch_arena = scratch_arena_retrieve(permanent_arena); \
+	Arena_Checkpoint _scratch_arena_checkpoint = scratch_arena->make_checkpoint(); \
+	SCOPE_EXIT(_scratch_arena_checkpoint.rewind());
+
+
+
+// Free_List
 struct Free_List
 {
-	Arena* arena;
+	Allocator_Base base;
+	Allocator_Base* parent_allocator;
 	uint element_size;
+	uint element_alignment;
 	void* next; // List of allocations
 
-	static Free_List create(Arena* arena, uint element_size);
-	void* allocate_raw(uint size);
+	static Free_List create_with_info(Allocator_Base* parent_allocator, uint element_size, uint element_alignment);
+
+	template<typename T>
+	static Free_List create(Allocator_Base* parent_allocator) {
+		return Free_List::create_with_info(parent_allocator, sizeof(T), alignof(T));
+	}
+
+	void* allocate_raw(uint size, uint alignment);
 	void deallocate_raw(void* data);
 
 	template<typename T> 
@@ -69,7 +163,11 @@ struct Free_List
 
 	template<typename T> 
 	void deallocate(T* data) { deallocate_raw((void*)data); }
+
+	Allocator_Base* upcast();
 };
+
+
 
 template<typename T>
 struct DynArray
@@ -179,6 +277,13 @@ struct DynArray
 };
 
 
+
+// DynSet
+
+u64 find_next_suitable_prime_hashset_size(u64 value);
+
+const float DYNSET_MAX_LOAD_FACTOR = 0.7f;
+
 enum class DynSet_Entry_State
 {
 	OCCUPIED,  // Value is valid
@@ -194,11 +299,6 @@ struct DynSet_Entry
 	DynSet_Entry_State state;
 	int sonding_index; 
 };
-
-
-u64 find_next_suitable_prime_hashset_size(u64 value);
-
-const float DYNSET_MAX_LOAD_FACTOR = 0.7f;
 
 template<typename T>
 struct DynSet
@@ -402,6 +502,7 @@ struct DynSet
 
 
 
+// DynTable
 struct DynTable_Query_Result
 {
 	u64 hash;
@@ -655,7 +756,7 @@ struct DynTable
 	}
 
 	// Returns true if value was in table
-	void remove_value(const K& key)
+	bool remove_value(const K& key)
 	{
 		auto result = query(key, false);
 		remove_with_query(result);
@@ -680,3 +781,124 @@ struct DynTable
 		return sum_sonding_counts / (float)element_count;
 	}
 };
+
+
+
+// List
+template<typename T>
+struct List_Node
+{
+	T value;
+	List_Node<T>* next;
+	List_Node<T>* prev;
+};
+
+template<typename T>
+struct List
+{
+	Allocator_Base* allocator;
+	List_Node<T>* head;
+	List_Node<T>* tail;
+	int element_count;
+
+	static List<T> create(Allocator_Base* allocator = nullptr) 
+	{
+		List<T> result;
+		result.allocator = allocator == nullptr ? &global_system_allocator.base : allocator;
+		result.head = nullptr;
+		result.tail = nullptr;
+		result.element_count = 0;
+		return result;
+	}
+
+	void reset()
+	{
+		while (head != nullptr) {
+			List_Node<T>* next = head->next;
+			allocator->deallocate(head, sizeof(List_Node<T>));
+			head = next;
+		}
+		tail = nullptr;
+		element_count = 0;
+	}
+
+	void destroy() 
+	{
+		reset();
+	}
+
+	List_Node<T>* append(T item) 
+	{
+		element_count += 1;
+
+		List_Node<T>* new_node = allocator->allocate<List_Node<T>>();
+		new_node->value = item;
+
+		if (head == nullptr) {
+			head = new_node;
+			tail = new_node;
+			new_node->prev = nullptr;
+			new_node->next = nullptr;
+		}
+		else {
+			new_node->prev = tail;
+			new_node->next = nullptr;
+			tail->next = new_node;
+			tail = new_node;
+		}
+
+		return new_node;
+	}
+
+	List_Node<T>* prepend(T item) 
+	{
+		element_count += 1;
+
+		List_Node<T>* new_node = allocator->allocate<List_Node<T>>();
+		new_node->value = item;
+
+		if (head == nullptr) {
+			new_node->prev = nullptr;
+			new_node->next = nullptr;
+			head = new_node;
+			tail = new_node;
+		}
+		else {
+			new_node->prev = nullptr;
+			new_node->next = head;
+			head->prev = new_node;
+			head = new_node;
+		}
+
+		return new_node;
+	}
+
+	void remove_node(List_Node<T>* node) 
+	{
+		element_count -= 1;
+
+		List_Node<T>* prev = node->prev;
+		List_Node<T>* next = node->next;
+
+		if (prev == nullptr) {
+			head = next;
+		}
+		else {
+			prev->next = next;
+		}
+
+		if (next == nullptr) {
+			tail = prev;
+		}
+		else {
+			next->prev = prev;
+		}
+
+		allocator->deallocate(node, sizeof(List_Node<T>));
+	}
+
+	void remove_item(T* item) {
+		remove_node((List_Node<T>*) item);
+	}
+};
+

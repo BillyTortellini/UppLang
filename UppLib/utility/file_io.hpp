@@ -5,10 +5,13 @@
 #include "../datastructures/array.hpp"
 #include "../datastructures/string.hpp"
 
-Optional<Array<byte>> file_io_load_binary_file(const char* filepath);
+struct Arena;
+
+// If arena is nullptr, then the file will be allocated with system allocator
+Optional<Array<byte>> file_io_load_binary_file(const char* filepath, Arena* arena = nullptr);
 void file_io_unload_binary_file(Optional<Array<byte>>* file_content);
 
-Optional<String> file_io_load_text_file(const char* filepath);
+Optional<String> file_io_load_text_file(const char* filepath, Arena* arena = nullptr);
 void file_io_unload_text_file(Optional<String>* file_content);
 
 Optional<u64> file_io_get_file_size(const char* filepath);

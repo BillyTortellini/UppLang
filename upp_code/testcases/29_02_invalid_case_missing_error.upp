@@ -1,0 +1,12 @@
+Color :: enum
+    RED
+    GREEN
+    BLUE
+
+main :: fn ()
+    // Error is reported because case is missing
+    match Color.RED
+        case Color.GREEN
+            x := 10
+        case Color.RED
+            x := 10

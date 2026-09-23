@@ -1114,6 +1114,10 @@ Input* window_get_input(Window* window) {
     return &window->input;
 }
 
+void* window_get_hdc_pointer(Window* window) {
+    return (void*) &window->hdc;
+}
+
 void window_set_cursor_constrain(Window* window, bool constrain) {
     if (window->state.cursor_constrained != constrain) {
         window->state.cursor_constrained = constrain;

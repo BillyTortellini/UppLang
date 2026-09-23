@@ -32,8 +32,8 @@ bool output_identifiers = false;
 bool output_ast = false;
 bool output_type_system = false;
 bool output_root_table = false;
-bool output_ir = false;
-bool output_bytecode = false;
+bool output_ir = true;
+bool output_bytecode = true;
 bool output_timing = true;
 
 // Testcases
@@ -530,6 +530,12 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 			call_signature_add_return_type(call_signature, upcast(types.uint_type), compilation_data);
 			hardcoded_signatures[(int)Hardcoded_Type::RAWPTR_TO_UINT] = call_signature_register(call_signature, compilation_data);
 
+			call_signature = call_signature_create_empty();
+			call_signature_add_parameter(call_signature, make_id("value"), upcast(types.any_type), true, false, false);
+			call_signature_add_parameter(call_signature, make_id("to"), upcast(types.any_type), false, false, false);
+			call_signature_add_return_type(call_signature, upcast(types.empty_pattern_variable), compilation_data);
+			hardcoded_signatures[(int)Hardcoded_Type::CAST_ANY] = call_signature_register(call_signature, compilation_data);
+
 			// Memory functions
 			call_signature = call_signature_create_empty();
 			call_signature_add_parameter(call_signature, make_id("destination"), upcast(types.rawptr), true, false, false);
@@ -656,7 +662,6 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 void compilation_data_destroy(Compilation_Data* data)
 {
 	ir_generator_destroy(data->ir_generator);
-	workload_executer_destroy(data->workload_executer);
 
 	constant_pool_destroy(data->constant_pool);
 	extern_sources_destroy(&data->extern_sources);

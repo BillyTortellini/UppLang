@@ -3,6 +3,7 @@
 #include "programs/imgui_test/imgui_test.hpp"
 #include "programs/console_debugger/console_debugger.hpp"
 #include "programs/test/test.hpp"
+#include "programs/rendering_rework/rendering_rework.hpp"
 
 #include "programs/upp_lang/compilation_data.hpp"
 #include "programs/upp_lang/compiler_misc.hpp"
@@ -49,7 +50,7 @@ void syntax_renaming()
         
         string_reset(&filepath);
         string_append_string(&filepath, &input_line);
-        if (!string_ends_with(filepath.characters, "/")) {
+        if (!cstring_ends_with(filepath.characters, "/")) {
             string_append_character(&filepath, '/');
         }
         string_append_string(&filepath, &file.name);
@@ -392,8 +393,81 @@ void test()
     return;
 }
 
+void test_new_allocators()
+{
+    Arena parent_arena = Arena::create();
+    Arena child_arena = Arena::create(0, parent_arena.upcast());
+
+    Array<int*> test_values = child_arena.allocate_array<int*>(20);
+    for (int i = 0; i < test_values.size; i++) {
+        test_values[i] = child_arena.allocate<int>();
+        *test_values[i] = i * 2;
+    }
+
+    // Create list with free-list, and add dummy values
+    Free_List free_list = Free_List::create<int>(child_arena.upcast());
+    List<int> value_list = List<int>::create(free_list.upcast());
+    value_list.append(1);
+    value_list.append(3);
+    List_Node<int>* remove_1 = value_list.append(4);
+    value_list.append(7);
+    List_Node<int>* remove_2 = value_list.append(10);
+    value_list.append(9);
+    assert(value_list.element_count == 6, "");
+
+    // Check list sum
+    {
+        List_Node<int>* next = value_list.head;
+        int sum = 0;
+        while (next != nullptr)
+        {
+            SCOPE_EXIT(next = next->next);
+            int value = next->value;
+            printf("%d\n", value);
+            sum += value;
+        }
+        printf("\n");
+        assert(sum == 34, "");
+    }
+
+    // Remove list items via pointer
+    int alloc_size = (int) ((char*)child_arena.next - (char*)child_arena.buffer.capacity);
+    value_list.remove_node(remove_1);
+    value_list.remove_node(remove_2);
+    assert(value_list.element_count == 4, "");
+
+    // Check list sum
+    {
+        List_Node<int>* next = value_list.head;
+        int sum = 0;
+        while (next != nullptr)
+        {
+            SCOPE_EXIT(next = next->next);
+            int value = next->value;
+            printf("%d\n", value);
+            sum += value;
+        }
+        printf("\n");
+        assert(sum == 20, "");
+    }
+
+    // Add items again, check that allocations used free-list
+    value_list.prepend(0);
+    value_list.prepend(100);
+    assert(value_list.element_count == 6, "");
+
+    int new_alloc_size = (int) ((char*)child_arena.next - (char*)child_arena.buffer.capacity);
+    assert(new_alloc_size == alloc_size, "With free-list the nodes should have been reused");
+}
+
 int main(int argc, char** argv)
 {
+    // test_new_allocators();
+    // return 0;
+
+    // rendering_rework_entry();
+    // return 0;
+
     // test();
 
     // count_lines_of_code();

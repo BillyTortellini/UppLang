@@ -272,7 +272,16 @@ bool string_starts_with(String str, const char* start) {
     return strncmp(str.characters, start, start_length) == 0;
 }
 
-bool string_ends_with(const char* string, const char* ending) {
+bool string_ends_with(String str, const char* ending)
+{
+    int ending_length = (int) strlen(ending);
+    if (ending_length == 0) return true;
+    int string_length = (int)str.size;
+    if (ending_length > string_length) return false;
+    return memory_compare((void*)ending, &(str.characters[string_length - ending_length]), ending_length);
+}
+
+bool cstring_ends_with(const char* string, const char* ending) {
     int ending_length = (int) strlen(ending);
     int string_length = (int) strlen(string);
     if (ending_length > string_length) return false;
@@ -582,23 +591,27 @@ String string_create_filename_from_path_static(String* filepath)
     return string_create_substring_static(filepath, last_seperator + 1, filepath->size);
 }
 
-void String::append(const char* text) {
+String* String::append(const char* text) {
     string_append(this, text);
+    return this;
 }
 
-void String::append(String str) {
+String* String::append(String str) {
     string_append_string(this, &str);
+    return this;
 }
 
-void String::append(String* str) {
+String* String::append(String* str) {
     string_append_string(this, str);
+    return this;
 }
 
-void String::append(char c) {
+String* String::append(char c) {
     string_append_character(this, c);
+    return this;
 }
 
-void String::append_formated(const char* format, ...)
+String* String::append_formated(const char* format, ...)
 {
     va_list args;
     va_start(args, format);
@@ -610,6 +623,13 @@ void String::append_formated(const char* format, ...)
     }
     size = size + message_length;
     va_end(args);
+
+    return this;
+}
+
+String* String::reset() {
+    string_reset(this);
+    return this;
 }
 
 void string_remove_trailing_whitespace(String* str) {

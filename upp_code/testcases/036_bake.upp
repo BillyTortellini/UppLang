@@ -1,24 +1,21 @@
-fib :: (n: int) => int
-	if n < 2
-		return 1
-	return fib(n - 1) + fib(n - 2)
+fib :: fn (n: int) => int
+    if n < 2
+        return 1
+    return fib(n - 1) + fib(n - 2)
 
-main :: ()
-	// But what if know we can calculate a value, but normal constant evaluation cannot evaluate the expression
-	// This is where we use bake, which does a partial compile to bytecode, and then executes the code
-	
-	// Wont work: arr: [doubler(fib(5))]
-	x :: #bake doubler(fib(5))
-	arr: [x]bool
-	~assert(cast arr.size == doubler(fib(5)))
-	
-	///
-		Currently comptime values are needed in
-		 - Array Size Context
-		 - Template arguments
-		 - Comptime Definitions
+main :: fn ()
+    // But what if know we can calculate a value, but normal constant evaluation cannot evaluate the expression
+    // This is where we use bake, which does a partial compile to bytecode, and then executes the code
+    
+    // Wont work: arr: [doubler(fib(5))]
+    comptime x := #bake doubler(fib(5))
+    arr: [x]bool
+    assert(arr.size == doubler(fib(5)))
+    
+    // Currently comptime values are needed in
+    // - Array Size Context
+    // - Template arguments
+    // - Comptime Definitions
 
-doubler :: (val: int) => int
-	return val * 2
-
-
+doubler :: fn (val: int) => int
+    return val * 2

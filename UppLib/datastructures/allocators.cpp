@@ -1,8 +1,102 @@
 #include "allocators.hpp"
 
+#include <stdlib.h> // Alligned alloc
+
 #include "Windows.h"
 #include "../math/scalars.hpp"
 
+
+
+// Allocator_Base
+void* Allocator_Base::allocate_raw(uint size, uint alignment) {
+	return this->allocate_fn(this, Allocation_Type::ALLOCATE, size, alignment, nullptr);
+}
+
+bool Allocator_Base::resize(void* memory, uint old_size, uint new_size) {
+	return this->allocate_fn(this, Allocation_Type::RESIZE, old_size, new_size, memory) != nullptr;
+}
+
+void Allocator_Base::deallocate(void* memory, uint allocation_size) {
+	this->allocate_fn(this, Allocation_Type::DEALLOCATE, allocation_size, allocation_size, memory);
+}
+
+
+
+// System_Allocator
+static void* system_allocator_allocate_function(
+	Allocator_Base* base, Allocation_Type allocation_type, uint new_size, uint alignment_or_old_size, void* current_data)
+{
+	switch (allocation_type)
+	{
+	case Allocation_Type::ALLOCATE: 
+	{
+		if (new_size == 0) {
+			return nullptr;
+		}
+		// Note: alignment may not hold...
+		return malloc(new_size);
+	}
+	case Allocation_Type::RESIZE: 
+	{
+		// Note: Resize is not the same as reallocate, so we dont do realloc() here
+		return nullptr;
+	}
+	case Allocation_Type::DEALLOCATE: 
+	{
+		if (alignment_or_old_size == 0) {
+			return nullptr;
+		}
+		free(current_data);
+		return nullptr;
+	}
+	default: panic("");
+	}
+	return nullptr;
+}
+
+System_Allocator System_Allocator::create()
+{
+	System_Allocator result;
+	result.base.allocate_fn = system_allocator_allocate_function;
+	return result;
+}
+
+Allocator_Base* System_Allocator::upcast() {
+	return &this->base;
+}
+
+// Note: This doesn't need to be thread_local, as new/delete is internally synchronized
+System_Allocator global_system_allocator = System_Allocator::create();
+
+
+
+// Arena
+static void* arena_allocate_function(
+	Allocator_Base* base, Allocation_Type allocation_type, uint new_size, uint alignment_or_old_size, void* current_data)
+{
+	Arena* arena = (Arena*)base;
+
+	switch (allocation_type)
+	{
+	case Allocation_Type::ALLOCATE: 
+	{
+		return arena->allocate_raw(new_size, alignment_or_old_size);
+	}
+	case Allocation_Type::RESIZE: 
+	{
+		return arena->resize(current_data, alignment_or_old_size, new_size) ? current_data : nullptr;
+	}
+	case Allocation_Type::DEALLOCATE: 
+	{
+		// Arenas don't deallocate, altough we could pop the last allocation if we wanted to,
+		// but this isn't as usefull as one might think because of alignment
+		// Although one could store the last aligment and fix this, it's not a priority we have
+		return nullptr;
+	}
+	default: panic("");
+	}
+	return nullptr;
+}
 
 // Makes sure that the current buffer has a capacity of at least new_capacity.
 // if not, a new buffer is allocated
@@ -10,11 +104,23 @@
 static bool arena_reserve_buffer_capacity(Arena* arena, uint new_capacity)
 {
 	if (new_capacity <= arena->buffer.capacity) return false;
+
+	// Try resizing the current allocation
+	if (arena->buffer.data != nullptr) 
+	{
+		if (arena->parent_allocator->resize(arena->buffer.data, arena->buffer.capacity, new_capacity)) 
+		{
+			arena->buffer.capacity = new_capacity;
+			return false;
+		}
+	}
+
+	// Figure out new capacity (Power of 2)
 	new_capacity = math_maximum(128ull, integer_next_power_of_2(new_capacity));
 
 	// Allocate new buffer
 	Arena_Buffer new_buffer;
-	new_buffer.data = malloc(new_capacity);
+	new_buffer.data = arena->parent_allocator->allocate_raw(new_capacity, alignof(Arena_Buffer));
 	new_buffer.capacity = new_capacity;
 
 	// Store linked list to old buffers
@@ -28,9 +134,11 @@ static bool arena_reserve_buffer_capacity(Arena* arena, uint new_capacity)
 	return true;
 }
 
-Arena Arena::create(uint capacity)
+Arena Arena::create(uint capacity, Allocator_Base* parent_allocator)
 {
 	Arena result;
+	result.base.allocate_fn = arena_allocate_function;
+	result.parent_allocator = parent_allocator == nullptr ? &global_system_allocator.base : parent_allocator;
 	result.buffer.data = nullptr;
 	result.buffer.capacity = 0;
 	result.next = nullptr;
@@ -44,7 +152,7 @@ void Arena::destroy() {
 
 void* Arena::allocate_raw(uint size, u32 alignment)
 {
-	assert(size != 0 && alignment != 0, "");
+	assert(size > 0 && alignment > 0, "");
 	uint result_address = math_round_next_multiple((uint)next, (uint)alignment);
 	bool resized = arena_reserve_buffer_capacity(this, result_address - (uint)buffer.data + size + sizeof(Arena_Buffer));
 	if (resized) {
@@ -90,7 +198,7 @@ void Arena::reset(bool keep_largest_buffer)
 	while (curr.data != nullptr)
 	{
 		Arena_Buffer next = *(Arena_Buffer*)curr.data;
-		free(curr.data);
+		this->parent_allocator->deallocate(curr.data, curr.capacity);
 		curr = next;
 	}
 }
@@ -124,25 +232,86 @@ void Arena_Checkpoint::rewind() {
 	arena->rewind_to_checkpoint(*this);
 }
 
+Allocator_Base* Arena::upcast() {
+	return &this->base;
+}
+
+
+
+// Scratch_Arena
+static const int SCRATCH_ARENA_COUNT = 2;
+static thread_local Arena global_scratch_arenas[SCRATCH_ARENA_COUNT];
+
+void scratch_arena_initialize_for_current_thread(Allocator_Base* parent_allocator) 
+{
+	for (int i = 0; i < SCRATCH_ARENA_COUNT; i++) {
+		global_scratch_arenas[i] = Arena::create(0, parent_allocator);
+	}
+}
+
+void scratch_arena_destroy_for_current_thread()
+{
+	for (int i = 0; i < SCRATCH_ARENA_COUNT; i++) {
+		global_scratch_arenas[i].destroy();
+	}
+}
+
+Arena* scratch_arena_retrieve(Arena* permanent_arena)
+{
+	if (&global_scratch_arenas[0] == permanent_arena) {
+		return &global_scratch_arenas[1];
+	}
+	return &global_scratch_arenas[0];
+}
+
+
 
 // FREE LIST
-Free_List Free_List::create(Arena* arena, uint element_size) 
+void* free_list_allocate_function(
+	Allocator_Base* base, Allocation_Type allocation_type, uint new_size, uint alignment_or_old_size, void* current_data)
+{
+	Free_List* free_list = (Free_List*)base;
+	switch (allocation_type)
+	{
+	case Allocation_Type::ALLOCATE: 
+	{
+		return free_list->allocate_raw(new_size, alignment_or_old_size);
+	}
+	case Allocation_Type::RESIZE: 
+	{
+		// Free_List has no resize, as sizes are fixed...
+		return nullptr;
+	}
+	case Allocation_Type::DEALLOCATE: 
+	{
+		free_list->deallocate_raw(current_data);
+		return nullptr;
+	}
+	default: panic("");
+	}
+	return nullptr;
+}
+
+Free_List Free_List::create_with_info(Allocator_Base* parent_allocator, uint element_size, uint element_alignment)
 {
 	Free_List result;
-	result.arena = arena;
+	result.base.allocate_fn = free_list_allocate_function;
+	result.parent_allocator = parent_allocator;
+	result.element_alignment = math_maximum(alignof(void*), element_alignment);
 	result.element_size = math_maximum(sizeof(void*), element_size);
+	result.next = nullptr;
 	return result;
 }
 
-void* Free_List::allocate_raw(uint size)
+void* Free_List::allocate_raw(uint size, uint alignment)
 {
-	assert(size <= element_size, "");
+	assert(size == this->element_size || alignment == this->element_alignment, "");
 	if (next != nullptr) {
 		void* result = next;
 		next = *(void**)next;
 		return result;
 	}
-	return arena->allocate_raw(size, sizeof(void*));
+	return parent_allocator->allocate_raw(size, alignment);
 }
 
 void Free_List::deallocate_raw(void* data)
@@ -150,6 +319,11 @@ void Free_List::deallocate_raw(void* data)
 	*(void**)data = next; // Store list of free allocations
 	next = data;
 }
+
+Allocator_Base* Free_List::upcast() {
+	return &this->base;
+}
+
 
 
 // Contains prime values and values inbetween.

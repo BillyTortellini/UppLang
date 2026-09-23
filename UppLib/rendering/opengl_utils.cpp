@@ -36,19 +36,19 @@ GLuint opengl_utils_create_shader_from_file(const char* filepath)
 {
     // Check extension 
     GLenum shaderType = 0;
-    if (string_ends_with(filepath, ".frag")) {
+    if (cstring_ends_with(filepath, ".frag")) {
         shaderType = GL_FRAGMENT_SHADER;
     }
-    else if (string_ends_with(filepath, ".vert")) {
+    else if (cstring_ends_with(filepath, ".vert")) {
         shaderType = GL_VERTEX_SHADER;
     }
-    else if (string_ends_with(filepath, ".geom")) {
+    else if (cstring_ends_with(filepath, ".geom")) {
         shaderType = GL_GEOMETRY_SHADER;
     }
-    else if (string_ends_with(filepath, ".tese")) {
+    else if (cstring_ends_with(filepath, ".tese")) {
         shaderType = GL_TESS_EVALUATION_SHADER;
     }
-    else if (string_ends_with(filepath, ".tesc")) {
+    else if (cstring_ends_with(filepath, ".tesc")) {
         shaderType = GL_TESS_CONTROL_SHADER;
     }
     else {
@@ -106,7 +106,7 @@ bool opengl_utils_link_program_and_check_errors(GLuint program_id)
 
 GLuint opengl_utils_create_program_from_single_file(const char* filepath)
 {
-    if (!string_ends_with(filepath, ".glsl")) {
+    if (!cstring_ends_with(filepath, ".glsl")) {
         return 0;
     }
 
@@ -178,7 +178,7 @@ GLuint opengl_utils_create_program_from_single_file(const char* filepath)
 GLuint opengl_utils_create_program_from_filepaths(Array<const char*> filepaths)
 {
     if (filepaths.size == 1) {
-        if (string_ends_with(filepaths[0], ".glsl")) {
+        if (cstring_ends_with(filepaths[0], ".glsl")) {
             return opengl_utils_create_program_from_single_file(filepaths[0]);
         }
     }

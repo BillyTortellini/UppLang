@@ -1,0 +1,66 @@
+Color :: enum
+    RED
+    GREEN
+    BLUE
+
+main :: fn ()
+    color := Color.BLUE
+    
+    // A match statement can be used to differentiate enum values
+    // The match must exhaust all options the enum has,
+    // or contain a default case. If not, this leads to a compile-time error
+    value := 15
+    color = Color.RED
+    match color
+        case Color.RED
+            // Every switch case has a unique scope, and there is no fall_through
+            a: int
+            value = 20
+        case Color.GREEN
+            a: int = 120
+        case Color.BLUE
+            a: int = 130
+    
+    assert(value == 20)
+    
+    // Match cases work just like normal blocks
+    color = Color.GREEN
+    match color
+        case Color.RED
+        case Color.GREEN
+            value = 1
+        case Color.BLUE
+            
+    assert(value == 1)
+
+    scope
+        // Cases can also be broken out of 
+        color = Color.GREEN
+        value = 1000
+        match color
+            case Color.RED
+            case Color.GREEN
+                value = 15
+                if true
+                    break color
+                value = 1
+            case Color.BLUE
+                
+        assert(value == 15)
+    
+    // When not all cases are specified, a default statement is needed
+    match color
+        case Color.RED
+            value = 100
+        default
+            value = 12
+    
+    assert(value == 12)
+
+    // Also indentation for cases is not mandatory 
+    match color
+    case Color.RED
+        value = 100
+    default
+        value = 12
+

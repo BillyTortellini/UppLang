@@ -1,13 +1,9 @@
+null_deref :: fn () => int
+    null: uint = 0
+    ip :&= null->uint_to_rawptr()->cast_pointer(&int)
+    return ip-*
 
-import ~u64
-
-null_deref :: () => int
-	ip := cast_pointer {*int} cast {u64} 0
-	return *ip
-
-main :: ()
-	//
-		As mentioned in the previous testcase, the
-		interpreter also checks memory access for errors, so this should not crash
-	x := #bake null_deref()
-		
+main :: fn ()
+    // As mentioned in the previous testcase, the
+    // interpreter also checks memory access for errors, so this should create an error, but not crash
+    x := #bake null_deref()

@@ -565,6 +565,29 @@ IR_Data_Access* ir_data_access_create_non_destructive_cast(IR_Data_Access* value
     return access;
 }
 
+bool ir_data_access_is_temporary_or_const(IR_Data_Access* data_access)
+{
+    switch (data_access->type)
+    {
+    case IR_Data_Access_Type::PARAMETER:
+    case IR_Data_Access_Type::GLOBAL_DATA:
+    case IR_Data_Access_Type::POINTER_DEREFERENCE: // Pointer dereference always has memory address
+    case IR_Data_Access_Type::REGISTER: return false;
+    case IR_Data_Access_Type::CONSTANT:
+    case IR_Data_Access_Type::NOTHING: return true; // Shouldnt happen
+
+    case IR_Data_Access_Type::MEMBER_ACCESS:
+        return ir_data_access_is_temporary_or_const(data_access->option.member_access.struct_access);
+    case IR_Data_Access_Type::ARRAY_ELEMENT_ACCESS:
+        return ir_data_access_is_temporary_or_const(data_access->option.array_access.array_access);
+    case IR_Data_Access_Type::NON_DESTRUCTIVE_CAST:
+        return ir_data_access_is_temporary_or_const(data_access->option.non_destructive_cast.value_access);
+    case IR_Data_Access_Type::ADDRESS_OF_VALUE: return true;
+    default: panic("");
+    }
+    return false;
+}
+
 IR_Data_Access* ir_data_access_create_address_of(IR_Data_Access* value_access)
 {
     // Shortcut for address_of pointer dereference, e.g. &(*xp) == xp
@@ -573,9 +596,17 @@ IR_Data_Access* ir_data_access_create_address_of(IR_Data_Access* value_access)
     }
 
     IR_Data_Access* access = new IR_Data_Access;
-    access->datatype = upcast(type_system_make_pointer(ir_generator->compilation_data->type_system, value_access->datatype));
+    access->datatype = upcast(type_system_make_pointer(ir_generator->compilation_data->type_system, value_access->datatype));;
     access->type = IR_Data_Access_Type::ADDRESS_OF_VALUE;
     access->option.address_of_value = value_access;
+
+    // For C-Generator, if data access is not available, then create a local variable for it
+    if (ir_data_access_is_temporary_or_const(value_access)) {
+        IR_Data_Access* temp_access = ir_data_access_create_intermediate(access->datatype);
+        add_move_instruction(temp_access, value_access);
+        access->option.address_of_value = temp_access;
+    }
+
     dynamic_array_push_back(&ir_generator->data_accesses, access);
     return access;
 }
@@ -679,6 +710,11 @@ IR_Data_Access* ir_data_access_create_constant_i32(i32 value) {
     return ir_data_access_create_constant(upcast(types.i32_type), array_create_static((byte*)&value, sizeof(i32)));
 }
 
+IR_Data_Access* ir_data_access_create_constant_type_handle(Upp_Type_Handle type_handle) {
+    auto& types = ir_generator->compilation_data->type_system->predefined_types;
+    return ir_data_access_create_constant(upcast(types.type_handle), array_create_static((byte*)&type_handle, sizeof(Upp_Type_Handle)));
+}
+
 IR_Data_Access* ir_data_access_create_constant_upp_size(upp_size value) {
     auto& types = ir_generator->compilation_data->type_system->predefined_types;
     return ir_data_access_create_constant(upcast(types.size_type), array_create_static_as_bytes(&value, 1));
@@ -772,6 +808,7 @@ IR_Data_Access* ir_generator_generate_cast(IR_Data_Access* source, IR_Data_Acces
 
     auto type_system = ir_generator->compilation_data->type_system;
     auto& types = type_system->predefined_types;
+    auto& ids = ir_generator->compilation_data->identifier_pool.predefined_ids;
     auto source_type = source->datatype;
 
     auto move_access_to_destination = [&](IR_Data_Access* access) -> IR_Data_Access* {
@@ -804,6 +841,22 @@ IR_Data_Access* ir_generator_generate_cast(IR_Data_Access* source, IR_Data_Acces
     case Auto_Cast_Type::FUNCTION_POINTERS:
     case Auto_Cast_Type::TO_BASE_TYPE: {
         return move_access_to_destination(ir_data_access_create_non_destructive_cast(source, auto_cast_info.result_type));
+    }
+    case Auto_Cast_Type::TO_ANY: 
+    {
+        // Any: 8 bytes rawptr, 4 bytes Type_Handle
+        IR_Data_Access* any_access = ir_data_access_create_intermediate(upcast(types.any_type));
+        IR_Data_Access* data_member_access = ir_data_access_create_member(any_access, struct_member_make(upcast(types.rawptr), ids.data, nullptr, 0, nullptr));
+        IR_Data_Access* type_member_access = ir_data_access_create_member(any_access, struct_member_make(upcast(types.type_handle), ids.type, nullptr, 8, nullptr));
+
+        // If the data-access is a constant, we need a temporary value here (For C-Generator)
+        IR_Data_Access* src_pointer_access = ir_data_access_create_address_of(source);
+        src_pointer_access = ir_data_access_create_non_destructive_cast(src_pointer_access, upcast(types.rawptr));
+        add_move_instruction(data_member_access, src_pointer_access);
+
+        add_move_instruction(type_member_access, ir_data_access_create_constant_type_handle(source->datatype->type_handle));
+
+        return any_access;
     }
     case Auto_Cast_Type::ADDRESS_OF: 
     {
@@ -1218,8 +1271,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
                 exit_instr.options.return_instr.options.exit_code = exit_code_make(Exit_Code_Type::CODE_ERROR, "Assertion failed");
                 add_instruction(exit_instr, if_instr.options.if_instr.false_branch);
 
-                call_instr.options.call.destination = ir_data_access_create_nothing();
-                return call_instr.options.call.destination;
+                return ir_data_access_create_nothing();
             }
             case Hardcoded_Type::PANIC_FN:
             {
@@ -1238,6 +1290,43 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
                 auto structure = downcast<Datatype_Struct>(get_info(arg_expr)->auto_cast_info.result_type);
                 auto struct_access = ir_generator_generate_expression(arg_expr);
                 return move_access_to_destination(ir_data_access_create_member(struct_access, structure->tag_member));
+            }
+            case Hardcoded_Type::CAST_ANY: 
+            {
+                auto call_info = get_info(call.call_node);
+                auto arg_expr = call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression;
+                auto any_access = ir_generator_generate_expression(arg_expr);
+
+                IR_Data_Access* data_member_access = ir_data_access_create_member(
+                    any_access, struct_member_make(upcast(types.rawptr), ids.data, nullptr, 0, nullptr)
+                );
+                IR_Data_Access* type_member_access = ir_data_access_create_member(
+                    any_access, struct_member_make(upcast(types.type_handle), ids.type, nullptr, 8, nullptr)
+                );
+
+                IR_Data_Access* type_valid_bool_access = ir_data_access_create_intermediate(upcast(types.bool_type));
+                add_operation_instruction(
+                    Primitive_Operation::EQUAL, type_valid_bool_access, type_member_access, 
+                    ir_data_access_create_constant_type_handle(result_type->type_handle)
+                );
+
+                // Add check if type-handle is correct
+                IR_Instruction if_instr;
+                if_instr.type = IR_Instruction_Type::IF;
+                if_instr.options.if_instr.condition = type_valid_bool_access;
+                if_instr.options.if_instr.true_branch = ir_code_block_create();
+                if_instr.options.if_instr.false_branch = ir_code_block_create();
+                add_instruction(if_instr);
+
+                IR_Instruction exit_instr;
+                exit_instr.type = IR_Instruction_Type::RETURN;
+                exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
+                exit_instr.options.return_instr.options.exit_code = exit_code_make(Exit_Code_Type::CODE_ERROR, "Type-Handle of Any in any_cast was invalid");
+                add_instruction(exit_instr, if_instr.options.if_instr.false_branch);
+
+                return ir_data_access_create_dereference(
+                    ir_data_access_create_non_destructive_cast(data_member_access, upcast(type_system_make_pointer(type_system, result_type)))
+                );
             }
             default: break; // All other hardcoded-functions are passed on to the next stages
             }

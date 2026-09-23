@@ -112,6 +112,12 @@
     <Filter Include="Natvis">
       <UniqueIdentifier>{c352fd7c-1f54-448c-8968-fdb2ba083e38}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\Programs\Rendering_Rework">
+      <UniqueIdentifier>{e3dc8419-ebd7-4c34-abd5-1194831a3e4c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Programs\Rendering_Rework">
+      <UniqueIdentifier>{4f254ee8-eb80-4792-b5f8-ad9cc504a65d}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="datastructures\array.hpp">
@@ -177,9 +183,6 @@
     <ClInclude Include="upplib.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="datastructures\string_pool.hpp">
-      <Filter>Header Files\Datastructures</Filter>
-    </ClInclude>
     <ClInclude Include="utility\gui.hpp">
       <Filter>Header Files\Utility</Filter>
     </ClInclude>
@@ -227,12 +230,6 @@
     </ClInclude>
     <ClInclude Include="win32\process.hpp">
       <Filter>Header Files\Win32</Filter>
-    </ClInclude>
-    <ClInclude Include="datastructures\list.hpp">
-      <Filter>Header Files\Datastructures</Filter>
-    </ClInclude>
-    <ClInclude Include="datastructures\dependency_graph.hpp">
-      <Filter>Header Files\Datastructures</Filter>
     </ClInclude>
     <ClInclude Include="utility\character_info.hpp">
       <Filter>Header Files\Utility</Filter>
@@ -348,6 +345,9 @@
     <ClInclude Include="programs\upp_lang\incremental_parser.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
+    <ClInclude Include="programs\rendering_rework\rendering_rework.hpp">
+      <Filter>Header Files\Programs\Rendering_Rework</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="datastructures\array.cpp">
@@ -403,9 +403,6 @@
     </ClCompile>
     <ClCompile Include="main.cpp">
       <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="datastructures\string_pool.cpp">
-      <Filter>Source Files\Datastructures</Filter>
     </ClCompile>
     <ClCompile Include="utility\gui.cpp">
       <Filter>Source Files\Utility</Filter>
@@ -472,9 +469,6 @@
     </ClCompile>
     <ClCompile Include="programs\upp_lang\type_system.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
-    </ClCompile>
-    <ClCompile Include="datastructures\dependency_graph.cpp">
-      <Filter>Source Files\Datastructures</Filter>
     </ClCompile>
     <ClCompile Include="programs\upp_lang\syntax_colors.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
@@ -571,6 +565,9 @@
     </ClCompile>
     <ClCompile Include="programs\upp_lang\incremental_parser.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\rendering_rework\rendering_rework.cpp">
+      <Filter>Source Files\Programs\Rendering_Rework</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

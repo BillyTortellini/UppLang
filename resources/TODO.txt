@@ -1,4 +1,181 @@
 
+Dependency_Failure_Info:
+    - only used in workload_add_dependency and
+    - wait_for_type_size_finish
+
+add_dependency --> Breakable? Yes or no
+    
+
+
+Sub-Tasks:
+----------
+Workload_Executer rework, current is kinda stoopid
+Removed list, use new list in dependencies
+
+TODO:
+-----
+ - Allocator Update:
+    * Allocator_Base with allocate, reallocate, free functionality
+    * Free_List datastructure
+    * List Datastructure working with an Allocator
+    * Arena supports Base-Allocator
+    * Scratch_Arena per thread (needs to call scratch_arena_initialize at the start...)
+ - Rewrite File listener with arena/lists probably and smarter
+ - Shaders
+    * Handling includes would be nice
+    * Also check syntax plugin for visual studio
+ - Writing basic shader that draws a triangle
+ - Testing bindless extensions to OpenGL
+    * Vertex-Fetch with bindless buffers would be great!
+    * Bindless Textures should be reasonable
+ - Writing new Rendering Framework
+    * GPU_Buffer
+    * Pipeline_State somewhat differently than currently
+    * Index_Buffer
+    * Framebuffers
+    * Textures
+
+Rendering Core Rework:
+----------------------
+Create new project maybe/probably/very likely
+
+TODO:
+ - Write a shader that creates 3 vertices and draws a triangle, hardcoded
+   ? Loading files/Filewatcher?
+
+DONE:
+ - Reading OpenGL procedure loading
+ - OpenGL extensions
+
+
+
+
+TODO:
+ - cast_any add option for reference
+ - Implement a cast_auto function 
+    cast_pointer
+    u64_to_rawptr
+    rawptr_to_u64
+    cast_any
+    cast_auto
+    cast
+
+cast_any:
+ - Any only contains a pointer, so should we return a pointer in cast_any?
+    cast_any(any: Any, to_type: Type_Handle, as_reference: bool)
+        value :&= cast_any(any, &int, as_pointer = true)
+ - Return value by pointer?
+
+Bugs:
+ - To_Any may be faulty?
+ - C-Compiler cannot take address of temporary value
+
+Implementation:
+ - Add new auto-cast type To_Any
+    * Semantic-Analyser
+    * IR-Generator
+ - Hardcoded_Type::Primitive_Cast (cast function) needs to support from_any
+
+Any-Type not really usefull in the current state:
+ - Requires add_custom_cast to do something
+ - Temporary values not great
+ - Solution:
+    * Everything casts to any-type, even temporary values
+    * Casting from any-type requires explicit cast, users can add auto-cast if they really want to 
+
+Pros/Cons:
+ + Any-Type is flexible to use, maybe for printing
+ - It's a little dangerous, as pointers may be cast to any instead of the value, but this should be fine
+ / For safe construction, struct-initializer is still valid
+ / I don't think there are that many use-cases for any anyway, it's like object in java
+
+
+Do arrays auto-cast to slice?
+    Yeah, I think so...
+    Not sure about that
+
+Other weird things:
+    I cannot explicitly call an auto-cast (Which would select the auto-cast from somewhere...)
+    Why could we possibly want this?
+     * With infered types we may want to set the type on the value side
+        value := i->auto_cast(bool) // Is_even or whatever
+     * For polymorpic instanciations, it would sometimes be required
+        poly_function(value->auto_cast(Any))
+     * Then we have the different cast types:
+        - cast()         ... Casts primitive, explicit
+        - cast_auto()    ... Does a builtin-cast, like auto-deref/whatever
+        - cast_pointer() ... pointer_cast
+        - cast_any()     ... any to anything else
+    - Add this
+
+String-Builders Types:
+C-Style:
+    string_builder_add_string(builder, "Something")
+    string_builder_add_int(builder, 100)
+Any-Array:
+    builder->append_formated("% = % what ligma", .["Hello", 15])
+c_style
+
+
+Language oddities to fix at some point:
+    Scopes are joined together, even if there is a comment between
+    scope
+        x := 10
+	
+	// Hello world
+		print_int(x)
+There is the problem that comments should behave like no comments, and here
+a comment would change something about the problemo...
+    A simple solution would be that the editor should show this correctly
+    Or we report an error in such cases
+
+
+Although we use not instead of !, != and == is still a thing.
+
+
+Enum access differes from subtype access with
+    .>RED
+    .RED
+I feel like this is kinda weird
+
+
+Function pointer syntax:
+    &fn (a: int) => int
+    &&fn (a: int) => int
+    fn-& (a: int) => int
+    add(15)
+I don't like it because pointer pointer is kinda different, and
+    &add is also wrong...
+
+Generally, passing in a function vs passing in a called function is just one () away
+    do_op(value = 5, func = add)
+    do_op(value = 5, func = add())
+
+Is there a better way of doing that?
+I mean, I don't really like the fn keyword in the first place...
+    --> If I change this shit everything changes -_-
+        to be fair, only if function pointer syntax changes
+
+So I would need syntax for:
+    * Taking a function pointer from a function
+        e.g. fn_pointer = adder-&
+    * Declaring a variable that is a function pointer
+        a: &fn (a: int, b: int)
+    pointer->cast_to_rawptr()->cast_to_uint()
+fnptr
+fn_ptr
+fn-&
+
+add :: fn (a: int) => int
+add :: func (a: int) => int
+add :: function (a: int) => int
+add :: proc (a: int) => int
+add :: procedure (a: int) => int
+add :: (a: int) => int
+struct vs structure vs record vs class
+
+    
+
 Current Task:
  - Re-implement all Testcases, probably add new ones...
 
@@ -17,6 +194,12 @@ struct-init:
     case .>Ligma
 
 DONE:
+11.08:
+ - Added potential errors to casting
+
+10.08:
+ - Testcases
+
 06.08:
  - Unifying Structs/Subtypes syntax with .>
  - Working on testcases

@@ -4,6 +4,7 @@
 #include <Windows.h>
 
 #include "../utility/utils.hpp"
+#include "../datastructures/allocators.hpp"
 
 Optional<u64> file_io_get_file_size(const char* filepath)
 {
@@ -24,10 +25,7 @@ Optional<u64> file_io_get_file_size(const char* filepath)
     return result;
 }
 
-Optional<Array<byte>> file_io_load_binary_file(const char* filepath);
-Optional<String> file_io_load_text_file(const char* filepath);
-
-Optional<Array<byte>> file_io_load_binary_file(const char* filepath)
+Optional<Array<byte>> file_io_load_binary_file(const char* filepath, Arena* arena)
 {
     Optional<Array<byte>> result;
     result.available = false;
@@ -40,18 +38,36 @@ Optional<Array<byte>> file_io_load_binary_file(const char* filepath)
 
     // Get File size
     fseek(file, 0, SEEK_END); 
-    u64 fileSize =  ftell(file);
+    u64 file_size =  ftell(file);
     fseek(file, 0, SEEK_SET); // Put cursor back to start of file
-    
-    // Read 
-    result.value = array_create<byte>((int)fileSize);
 
-    u64 readSize = (u64) fread(result.value.data, 1, fileSize, file); 
-    if (readSize != fileSize) {
-        array_destroy(&result.value);
+    if (file_size == 0) {
+        result.available = true;
+        result.value.data = nullptr;
+        result.value.size = 0;
+        return result;
+    }
+    
+    // Allocate memory for result 
+    if (arena == nullptr) {
+        result.value = array_create<byte>((int)file_size);
+    }
+    else {
+        result.value = arena->allocate_array<byte>(file_size);
+    }
+
+    // Read from file handle
+    u64 read_size = (u64) fread(result.value.data, 1, file_size, file); 
+    if (read_size != file_size) // If not all could be read, return error
+    {
+        if (arena == nullptr) {
+            array_destroy(&result.value);
+        }
+        result.available = false;
         return result;
     }
 
+    // Return result
     result.available = true;
     return result;
 }
@@ -62,12 +78,12 @@ void file_io_unload_binary_file(Optional<Array<byte>>* memory) {
     }
 }
 
-Optional<String> file_io_load_text_file(const char* filepath)
+Optional<String> file_io_load_text_file(const char* filepath, Arena* arena)
 {
     Optional<String> result;
     result.available = false;
 
-    Optional<Array<byte>> binary_file_content = file_io_load_binary_file(filepath);
+    Optional<Array<byte>> binary_file_content = file_io_load_binary_file(filepath, arena);
     if (binary_file_content.available == false) {
         return result;
     }

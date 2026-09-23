@@ -40,6 +40,7 @@ void window_calculate_vsynch_beat(double& vsync_start, double& time_between_vsyn
 
 Window_State* window_get_window_state(Window* window);
 Input* window_get_input(Window* window);
+void* window_get_hdc_pointer(Window* window);
 
 void window_set_fullscreen(Window* window, bool fullscreen);
 void window_set_cursor_visibility(Window* window, bool visible);

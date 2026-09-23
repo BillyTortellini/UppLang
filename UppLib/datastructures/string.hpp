@@ -16,11 +16,12 @@ struct String
         return characters[index];
     }
 
-    void append(const char* text);
-    void append(String str);
-    void append(String* str);
-    void append(char c);
-    void append_formated(const char* format, ...);
+    String* append(const char* text);
+    String* append(String str);
+    String* append(String* str);
+    String* append(char c);
+    String* append_formated(const char* format, ...);
+    String* reset();
 
     char at(int index, char backup = '\0');
 };
@@ -61,7 +62,8 @@ void string_append_character_array(String* string, Array<char> appendix); // Dif
 void string_truncate(String* string, int vector_length);
 void string_replace_character(String* string, char to_replace, char replace_with);
 bool string_starts_with(String str, const char* start);
-bool string_ends_with(const char* string, const char* ending);
+bool string_ends_with(String str, const char* ending);
+bool cstring_ends_with(const char* string, const char* ending);
 void string_remove_character(String* string, int index);
 void string_insert_character_before(String* string, byte character, int index);
 void string_insert_string(String* string, String* insertion, int position);

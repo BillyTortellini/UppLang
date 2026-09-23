@@ -13,6 +13,7 @@ struct Call_Signature;
 
 typedef i64 upp_size;
 typedef i64 upp_int;
+typedef u64 upp_uint;
 
 #define DEFAULT_ENUM_SIZE 8
 #define DEFAULT_ENUM_ALIGNMENT 8
@@ -222,6 +223,7 @@ enum class Hardcoded_Type
 	CAST_POINTER,
 	RAWPTR_TO_UINT,
 	UINT_TO_RAWPTR,
+	CAST_ANY, // Any to whatever
 
 	MEMORY_COPY,
 	MEMORY_COPY_NO_OVERLAP,

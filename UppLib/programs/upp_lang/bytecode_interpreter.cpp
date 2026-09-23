@@ -346,7 +346,7 @@ void bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         {
             auto& type_system = thread->compilation_data->type_system;
 
-            byte* argument_start = thread->stack_pointer + i->op2 + 16;
+            byte* argument_start = return_buffer + 8; // Return buffer is 8 byte pointer
             Upp_Type_Handle type_handle = *(Upp_Type_Handle*)(argument_start);
             if ((u64)type_handle.index >= type_system->types.size) {
                 thread->exit_code = exit_code_make(

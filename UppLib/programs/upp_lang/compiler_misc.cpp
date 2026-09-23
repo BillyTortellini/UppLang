@@ -76,6 +76,7 @@ Hardcoded_Type_Info hardcoded_type_get_info(Hardcoded_Type type)
 	case Hardcoded_Type::CAST_POINTER: return make_info_operation(Hardcoded_Type_Class::ESSENTIAL, "cast_pointer", Primitive_Operation::PRIMITIVE_CAST);
 	case Hardcoded_Type::RAWPTR_TO_UINT: return make_info_operation(Hardcoded_Type_Class::ESSENTIAL, "rawptr_to_uint", Primitive_Operation::PRIMITIVE_CAST);
 	case Hardcoded_Type::UINT_TO_RAWPTR: return make_info_operation(Hardcoded_Type_Class::ESSENTIAL, "uint_to_rawptr", Primitive_Operation::PRIMITIVE_CAST);
+	case Hardcoded_Type::CAST_ANY: return make_info(Hardcoded_Type_Class::ESSENTIAL, "cast_any");
 
 	case Hardcoded_Type::MEMORY_COPY: 
 		return make_info_builtin(Hardcoded_Type_Class::ESSENTIAL, "memory_copy", IR_Builtin_Function::MEMORY_COPY);

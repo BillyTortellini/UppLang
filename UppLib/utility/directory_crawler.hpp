@@ -8,7 +8,7 @@ struct Directory_Crawler;
 
 struct File_Info
 {
-    String name;
+    String name; // Filename without directory attached
     i64 size;
     bool is_directory;
 };

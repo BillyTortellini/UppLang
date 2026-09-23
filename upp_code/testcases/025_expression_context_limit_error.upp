@@ -1,7 +1,6 @@
-print_int::(val:**int)
-	
+print_int :: fn (val: &&int)
 
-main :: ()
-	// Expression-Context must not work if the address cannot be taken
-	x: int = 5
-	print_int(x)
+main :: fn ()
+    // Expression-Context must not work if the address cannot be taken
+    x: int = 5
+    print_int(x)

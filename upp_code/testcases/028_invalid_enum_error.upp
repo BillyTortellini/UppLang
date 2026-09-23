@@ -1,10 +1,10 @@
-Color::enum
-	RED
-	GREEN::15
-	BLUE
-	YELLOW::13
-	YELLOW2
-	YELLOW3
+// Enum values must not start overlapping
+Color :: enum
+    RED
+    GREEN = 15
+    BLUE
+    YELLOW = 13
+    YELLOW2 // 14
+    YELLOW3 // Error: 15 already in use by GREEN
 
-main::()
-	
+main :: fn

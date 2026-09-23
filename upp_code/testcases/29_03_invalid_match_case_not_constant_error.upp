@@ -1,0 +1,14 @@
+Color :: enum
+    RED
+    GREEN
+    BLUE
+
+main :: fn ()
+    other_color := Color.GREEN
+
+    match Color.RED
+        case Color.BLUE
+
+        case Color.GREEN
+
+        case other_color
