@@ -742,7 +742,7 @@ void compilation_data_destroy(Compilation_Data* data)
 Compilation_Unit* compilation_data_add_compilation_unit_unique(Compilation_Data* compilation_data, String filepath, bool load_file_if_new, bool parse_ast)
 {
     String full_file_path = string_copy(filepath);
-    file_io_relative_to_full_path(&full_file_path);
+    filepath_relative_to_absolute_path(&full_file_path);
     SCOPE_EXIT(string_destroy(&full_file_path)); // On success capacity is set to 0, so this won't do anything
 
 	// Check if filename alreay exists
@@ -1574,6 +1574,8 @@ void compiler_run_testcases(bool force_run)
 
     logg("STARTING ALL TESTS:\n-----------------------------\n");
 
+	SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+
     Fiber_Pool* fiber_pool = fiber_pool_create();
     SCOPE_EXIT(fiber_pool_destroy(fiber_pool));
 
@@ -1592,7 +1594,7 @@ void compiler_run_testcases(bool force_run)
         const auto& file = files[i];
         if (file.is_directory) continue;
 
-        auto name = files[i].name;
+        auto name = files[i].filename;
         bool case_should_succeed = string_contains_substring(name, 0, string_create_static("error")) == -1;
         bool skip_file = string_contains_substring(name, 0, string_create_static("notest")) != -1;
         if (skip_file) {
@@ -1654,8 +1656,7 @@ void compiler_run_testcases(bool force_run)
     --------------------------
     Each character gets typed one by one, then the text is parsed and analysed
     */
-    Optional<String> text = file_io_load_text_file("upp_code/testcases/045_unions.upp");
-    SCOPE_EXIT(file_io_unload_text_file(&text););
+    Optional<String> text = file_io_load_text_file(string_create_static("upp_code/testcases/045_unions.upp"), scratch_arena);
     if (!text.available) {
         logg("Couldn't execute stresstest, file not found\n");
         return;

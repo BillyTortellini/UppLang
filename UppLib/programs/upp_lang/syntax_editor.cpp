@@ -2961,7 +2961,7 @@ Editor_Suggestion suggestion_make_file(int file_index) {
 	Editor_Suggestion result;
 	result.type = Suggestion_Type::FILE;
 	result.options.file_index_in_crawler = file_index;
-	result.text = string_view_from_string(directory_crawler_get_content(syntax_editor.directory_crawler)[file_index].name);
+	result.text = string_view_from_string(directory_crawler_get_content(syntax_editor.directory_crawler)[file_index].filename);
 	return result;
 }
 
@@ -3021,7 +3021,7 @@ int syntax_editor_add_tab(String file_path)
 
 	String new_filepath = string_copy(file_path);
 	SCOPE_EXIT(string_destroy(&new_filepath)); // Note: on success capacity is set to 0, so it wont be destroyed
-    file_io_relative_to_full_path(&new_filepath);
+    filepath_relative_to_absolute_path(&new_filepath);
 
 	// Check if file is already open in another tab
 	for (int i = 0; i < editor.tabs.size; i++) {
@@ -3030,7 +3030,7 @@ int syntax_editor_add_tab(String file_path)
 	}
 
 	// Return current tab if file cannot be loaded
-	if (!file_io_check_if_file_exists(new_filepath.characters)) {
+	if (file_io_get_file_info(new_filepath).status != File_Info_Status::SUCCESS) {
 		return editor.open_tab_index;
 	}
 
@@ -3426,7 +3426,7 @@ void syntax_editor_save_text_file()
 		SCOPE_EXIT(string_destroy(&whole_text));
 		source_code_append_to_string(tab->code, &whole_text);
 		auto path = tab->filepath;
-		auto success = file_io_write_file(path.characters, array_create_static((byte*)whole_text.characters, whole_text.size));
+		auto success = file_io_write_text_file(path, whole_text);
 		if (!success) {
 			logg("Saving file failed for path \"%s\"\n", path.characters);
 		}
@@ -3438,10 +3438,17 @@ void syntax_editor_save_text_file()
 
 unsigned long compiler_thread_entry_fn(void* userdata)
 {
-	Compiler_Thread_Data* compiler_thread_data = (Compiler_Thread_Data*) userdata;
+	// Setup stuff for new thread
+	Arena main_scratch_arena = Arena::create();
+	Arena fallback_scratch_arena = Arena::create();
+	SCOPE_EXIT(main_scratch_arena.destroy());
+	SCOPE_EXIT(fallback_scratch_arena.destroy());
+	scratch_arena_set_arenas(scratch_arena_pair_make(&main_scratch_arena, &fallback_scratch_arena));
 
 	bool worked = fiber_initialize();
 	assert(worked, "panic");
+
+	Compiler_Thread_Data* compiler_thread_data = (Compiler_Thread_Data*) userdata;
 
 	// logg("Compiler thread waiting now\n");
 	semaphore_wait(compiler_thread_data->compiler_wait_semaphore);
@@ -3788,7 +3795,7 @@ void syntax_editor_save_state(String file_path)
 		string_append_formated(&output, "%s=%s\n", toggle_option_as_string(option), (syntax_editor.get_option_value(option) ? "true" : "false"));
 	}
 
-	file_io_write_file(file_path.characters, array_create_static((byte*)output.characters, output.size));
+	file_io_write_text_file(file_path, output);
 }
 
 void syntax_editor_load_state(String file_path)
@@ -3796,8 +3803,9 @@ void syntax_editor_load_state(String file_path)
 	auto& editor = syntax_editor;
 	editor.mode = Editor_Mode::NORMAL;
 
-	auto file_opt = file_io_load_text_file(file_path.characters);
-	SCOPE_EXIT(file_io_unload_text_file(&file_opt));
+	SCRATCH_ARENA_MAKE_SCOPED(&editor.arena);
+
+	auto file_opt = file_io_load_text_file(file_path, scratch_arena);
 	if (!file_opt.available) {
 		return;
 	}
@@ -4728,7 +4736,7 @@ void suggestions_fill_with_file_directory(String search_path)
 		bool found = false;
 		for (int j = 0; j < files.size; j++) {
 			auto file = files[j];
-			if (string_equals(&file.name, &part)) {
+			if (string_equals(&file.filename, &part)) {
 				directory_crawler_go_down_one_directory(crawler, j);
 				found = true;
 				break;
@@ -4748,11 +4756,11 @@ void suggestions_fill_with_file_directory(String search_path)
 	for (int i = 0; i < files.size; i++) {
 		auto& file = files[i];
 		if (!file.is_directory) {
-			if (!cstring_ends_with(file.name.characters, ".upp")) {
+			if (!cstring_ends_with(file.filename.characters, ".upp")) {
 				continue;
 			}
 		}
-		fuzzy_search_add_item(file.name, i);
+		fuzzy_search_add_item(file.filename, i);
 	}
 
 	auto items = fuzzy_search_get_results(true, 3);
@@ -7818,14 +7826,14 @@ void syntax_editor_process_key_message(Key_Message & msg)
 			else
 			{
 				assert(suggestion.type == Suggestion_Type::FILE, "Nothing else should be in fuzzy find");
-				File_Info file_info = directory_crawler_get_content(editor.directory_crawler)[suggestion.options.file_index_in_crawler];
+				Directory_Item file_info = directory_crawler_get_content(editor.directory_crawler)[suggestion.options.file_index_in_crawler];
 				if (file_info.is_directory) {
 					return;
 				}
 				String full_path = string_copy(directory_crawler_get_path(editor.directory_crawler));
 				SCOPE_EXIT(string_destroy(&full_path));
 				string_append(&full_path, "/");
-				string_append_string(&full_path, &file_info.name);
+				string_append_string(&full_path, &file_info.filename);
 
 				int tab_index = syntax_editor_add_tab(full_path);
 				syntax_editor_switch_tab(tab_index);
@@ -7860,7 +7868,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 			else
 			{
 				assert(sugg.type == Suggestion_Type::FILE, "Nothing else should be in fuzzy find");
-				File_Info file_info = directory_crawler_get_content(editor.directory_crawler)[sugg.options.file_index_in_crawler];
+				Directory_Item file_info = directory_crawler_get_content(editor.directory_crawler)[sugg.options.file_index_in_crawler];
 
 				int reset_pos = 0;
 				Optional<int> result = string_find_character_index_reverse(&search, '/', search.size - 1);
@@ -7868,7 +7876,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 					reset_pos = result.value + 1;
 				}
 				string_remove_substring(&search, reset_pos, search.size);
-				string_append_string(&search, &file_info.name);
+				string_append_string(&search, &file_info.filename);
 				if (file_info.is_directory) {
 					string_append_character(&search, '/');
 				}
@@ -8678,7 +8686,7 @@ void syntax_editor_update(bool& animations_running)
 				auto& tab = *editor.tabs[i];
 				if (i == editor.open_tab_index) continue;
 				if (tab.breakpoints.size == 0) continue;
-				String name = string_create_filename_from_path_static(&tab.filepath);
+				String name = filepath_get_parts(tab.filepath).filename;
 				ui_system_push_label(name, false);
 				push_tab_breakpoints(i);
 			}

@@ -493,6 +493,10 @@ void workload_base_initialize(Workload_Base* workload, Analysis_Workload_Type wo
 		semantic_context->current_workload == nullptr ? 0 : semantic_context->current_workload->polymorphic_instanciation_depth;
 	workload->parent_workload = semantic_context->current_workload;
 
+	// This is kinda annoying, but because of fibers we need new scratch arenas per fiber
+	workload->main_scratch_arena     = Arena::create(0, semantic_context->compilation_data->arena.upcast());
+	workload->fallback_scratch_arena = Arena::create(0, semantic_context->compilation_data->arena.upcast());
+
     // Add to workload queue
     executer.all_workloads.push_back(workload);
 	// Note: There exists a check for dependencies before executing runnable workloads, so this is ok
@@ -2468,7 +2472,11 @@ bool workload_executer_switch_to_workload(Workload_Executer* executer, Workload_
 		workload->fiber_handle = fiber_pool_get_handle(executer->compilation_data->fiber_pool, analysis_workload_entry, &entry_info);
 		workload->was_started = true;
 	}
+	// Store scratch arenas, restore when returning
+	Scratch_Arena_Pair current_pair = scratch_arena_get_arenas_in_use();
+	scratch_arena_set_arenas(scratch_arena_pair_make(&workload->main_scratch_arena, &workload->fallback_scratch_arena));
 	bool result = fiber_pool_switch_to_handel(workload->fiber_handle);
+	scratch_arena_set_arenas(current_pair);
 
 	if (PRINT_DEPENDENCIES) {
 		auto tmp = string_create(1);
@@ -5832,7 +5840,7 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 				    string_reset(&path);
 				}
 				string_append_string(&path, import_node->options.file_import.relative_path);
-				file_io_relative_to_full_path(&path);
+				filepath_relative_to_absolute_path(&path);
 				imported_unit = compilation_data_add_compilation_unit_unique(compilation_data, path, true, true);
 			}
 

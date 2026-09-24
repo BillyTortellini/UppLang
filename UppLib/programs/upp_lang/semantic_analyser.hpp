@@ -266,6 +266,9 @@ struct Workload_Base
     // Polymorphic info
     int polymorphic_instanciation_depth; 
     Workload_Base* parent_workload;
+
+    Arena main_scratch_arena;
+    Arena fallback_scratch_arena;
 };
 
 struct Workload_Root

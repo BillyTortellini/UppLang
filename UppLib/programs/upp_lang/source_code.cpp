@@ -318,8 +318,8 @@ void source_code_append_to_string(Source_Code* code, String* text)
 
 Source_Code* source_code_load_from_file(String filepath)
 {
-	Optional<String> file_content = file_io_load_text_file(filepath.characters);
-	SCOPE_EXIT(file_io_unload_text_file(&file_content));
+    SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+	Optional<String> file_content = file_io_load_text_file(filepath, scratch_arena);
 	if (!file_content.available) {
 	    return nullptr;
 	}

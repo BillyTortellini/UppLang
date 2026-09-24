@@ -128,9 +128,16 @@ struct Arena
 
 
 // Scratch_Arena utility
-void scratch_arena_initialize_for_current_thread(Allocator_Base* parent_allocator = nullptr);
-void scratch_arena_destroy_for_current_thread();
-Arena* scratch_arena_retrieve(Arena* permanent_arena);
+struct Scratch_Arena_Pair
+{
+	Arena* main_arena;
+	Arena* fallback_arena;
+};
+
+Scratch_Arena_Pair scratch_arena_pair_make(Arena* main_arena, Arena* fallback_arena);
+void scratch_arena_set_arenas(Scratch_Arena_Pair scratch_arenas);
+Scratch_Arena_Pair scratch_arena_get_arenas_in_use();
+Arena* scratch_arena_retrieve(Arena* arena_to_avoid);
 
 #define SCRATCH_ARENA_MAKE_SCOPED(permanent_arena) \
 	Arena* scratch_arena = scratch_arena_retrieve(permanent_arena); \

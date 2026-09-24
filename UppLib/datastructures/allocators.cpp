@@ -239,29 +239,25 @@ Allocator_Base* Arena::upcast() {
 
 
 // Scratch_Arena
-static const int SCRATCH_ARENA_COUNT = 2;
-static thread_local Arena global_scratch_arenas[SCRATCH_ARENA_COUNT];
+static thread_local Scratch_Arena_Pair scratch_arenas;
 
-void scratch_arena_initialize_for_current_thread(Allocator_Base* parent_allocator) 
-{
-	for (int i = 0; i < SCRATCH_ARENA_COUNT; i++) {
-		global_scratch_arenas[i] = Arena::create(0, parent_allocator);
-	}
+Scratch_Arena_Pair scratch_arena_pair_make(Arena* main_arena, Arena* fallback_arena) {
+	Scratch_Arena_Pair pair;
+	pair.main_arena = main_arena;
+	pair.fallback_arena = fallback_arena;
+	return pair;
 }
 
-void scratch_arena_destroy_for_current_thread()
-{
-	for (int i = 0; i < SCRATCH_ARENA_COUNT; i++) {
-		global_scratch_arenas[i].destroy();
-	}
+void scratch_arena_set_arenas(Scratch_Arena_Pair new_scratch_arenas) {
+	scratch_arenas = new_scratch_arenas;
 }
 
-Arena* scratch_arena_retrieve(Arena* permanent_arena)
-{
-	if (&global_scratch_arenas[0] == permanent_arena) {
-		return &global_scratch_arenas[1];
-	}
-	return &global_scratch_arenas[0];
+Scratch_Arena_Pair scratch_arena_get_arenas_in_use() {
+	return scratch_arenas;
+}
+
+Arena* scratch_arena_retrieve(Arena* arena_to_avoid) {
+	return scratch_arenas.main_arena == arena_to_avoid ? scratch_arenas.fallback_arena : scratch_arenas.main_arena;
 }
 
 

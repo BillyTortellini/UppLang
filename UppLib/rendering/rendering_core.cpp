@@ -882,11 +882,12 @@ bool shader_compile(Shader* shader)
 
 void hotreload_shader(void* userdata, const char* filename)
 {
+    SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+
     Shader* shader = (Shader*)userdata;
     // logg("Compiling shader: %s\n", filename);
 
-    auto shader_code_opt = file_io_load_text_file(filename);
-    SCOPE_EXIT(file_io_unload_text_file(&shader_code_opt));
+    auto shader_code_opt = file_io_load_text_file(string_create_static(filename), scratch_arena);
     if (!shader_code_opt.available) {
         panic("File listener file wasnt able to read!");
     }

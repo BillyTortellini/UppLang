@@ -1144,8 +1144,8 @@ struct Window_Saved_Position
 
 void window_load_position(Window* window, const char* filename)
 {
-    auto result = file_io_load_binary_file(filename);
-    SCOPE_EXIT(file_io_unload_binary_file(&result));
+    SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+    auto result = file_io_load_binary_file(string_create_static(filename), scratch_arena);
     if (result.available)
     {
         assert(result.value.size == sizeof(Window_Saved_Position), "Hey");
@@ -1186,7 +1186,7 @@ void window_save_position(Window* window, const char* filename)
     }
 
     auto data = array_create_static_as_bytes(&pos, 1);
-    file_io_write_file(filename, data);
+    file_io_write_binary_file(string_create_static(filename), data);
 }
 
 IDXGIOutput* g_output = 0;

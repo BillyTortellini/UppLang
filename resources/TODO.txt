@@ -1,16 +1,54 @@
 
-Dependency_Failure_Info:
-    - only used in workload_add_dependency and
-    - wait_for_type_size_finish
 
-add_dependency --> Breakable? Yes or no
-    
+TODO:
+-----
+ X Fix Bugs from file_io
+ X Scratch-Arenas need to be supported in compiler thread + in fibers (Just store 2 arenas per workload, and switch them in.)
+ X Editor should be working again
+ - Git-Commit
+ - Rewrite String to DynString, use String for other shit
+    DynString can not be static? Maybe I'll add it, with capacity 0
+    DynString needs an arena? Probably
+ - Add String_List
+
+Base-Library:
+ - Allocators
+    * Allocator_Base
+    * Arena
+    * Free_List
+    * System_Allocator
+ - Scratch_Arena System
+ - Datastructures
+    * Array (With data and size, nothing else)
+    * Dynamic_Array
+    * Hashset and Hashtable
+    * List
+ - String/Text support
+    * String for immutable strings (Literals, or just passing things around)
+    * String_Builder
+    * String_List
+        - Pointer to first block
+        - Size (In bytes)
+        - String_List_Node:
+            32 bytes payload,
+            8 bytes next pointer
+ - Math
+    * Linear Algebra (Vectors and matrices)
+    * Intervals (box1, box2, box3, ibox1, ibox2, ibox3)
+    * Scalar functions (min, max, lerp, whatever)
+    * Trigonometry
+
+Stuff ontop of Base-Library:
+ - File-IO
+ - Window System with Input
+ - Rendering-Core
+ - 2D-Rendering (Roundend Rectangles, Text, Lines)
+ - GUI
 
 
 Sub-Tasks:
 ----------
-Workload_Executer rework, current is kinda stoopid
-Removed list, use new list in dependencies
+
 
 TODO:
 -----
@@ -20,6 +58,7 @@ TODO:
     * List Datastructure working with an Allocator
     * Arena supports Base-Allocator
     * Scratch_Arena per thread (needs to call scratch_arena_initialize at the start...)
+ - File_IO rewrite
  - Rewrite File listener with arena/lists probably and smarter
  - Shaders
     * Handling includes would be nice
@@ -59,6 +98,9 @@ TODO:
     cast_any
     cast_auto
     cast
+Semantic-Analyser:
+ - Rework Workload executer at some point to be deterministic, also better cycle detection possible 
+
 
 cast_any:
  - Any only contains a pointer, so should we return a pointer in cast_any?
@@ -223,6 +265,7 @@ TODO:
 
 Open Tasks:
  - Overwriting parameters by-redefining them would be cool (For permutability...)
+    e.g. shadowing to have mutable parameters...
  - Base-Library: Hashtable/Hashset
  - Enum updates
     * Maybe start Enums at 0 (Get rid of the whole +1 thing for enums/function indices)
@@ -231,7 +274,7 @@ Open Tasks:
     * Enum analysis needs to check if the type fits
     * Start enum at 0 again
  - Null initialization by default
- - Parameter passing by pointer if they are large enough (In basically all backends)
+ - Parameter passing by pointer if they are large enough (Just a backend update, not something I need to worry about now)
  - Number-Literal update, maybe custom datatype
  - break statement with if, loop, match, block
      break if, break loop, break case, break match, break scope

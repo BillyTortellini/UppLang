@@ -1673,6 +1673,8 @@ Optional<C_Import_Package> c_importer_parse_header(
     const char* file_name, Identifier_Pool* id_pool, Dynamic_Array<String> include_dirs, Dynamic_Array<String> defines
 )
 {
+    SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+    
     logg("Parsing header file: %s\n---------------------\n", file_name);
     // Run preprocessor on file_name
     {
@@ -1708,8 +1710,7 @@ Optional<C_Import_Package> c_importer_parse_header(
     }
 
     // Load preprocessed file
-    Optional<String> text_file_opt = file_io_load_text_file("backend/c_importer/preprocessed.txt");
-    SCOPE_EXIT(file_io_unload_text_file(&text_file_opt));
+    Optional<String> text_file_opt = file_io_load_text_file(string_create_static("backend/c_importer/preprocessed.txt"), scratch_arena);
     if (!text_file_opt.available) {
         return optional_make_failure<C_Import_Package>();
     }
@@ -1796,13 +1797,12 @@ Optional<C_Import_Package> c_importer_parse_header(
         }
         string_append_formated(&output_program, "\n    return 0;\n}\n");
 
-        file_io_write_file("backend/c_importer/sizeof_program.cpp", array_create_static((byte*)output_program.characters, output_program.size));
-        file_io_write_file("backend/c_importer/found_symbols.txt", array_create_static((byte*)found_symbols.characters, found_symbols.size));
-
+        file_io_write_text_file(string_create_static("backend/c_importer/sizeof_program.cpp"), output_program);
+        file_io_write_text_file(string_create_static("backend/c_importer/found_symbols.txt"), found_symbols);
         
         String command = string_create("cl");
-        string_append(&command, " backend/c_importer/sizeof_program.cpp");
         SCOPE_EXIT(string_destroy(&command));
+        string_append(&command, " backend/c_importer/sizeof_program.cpp");
         for (int i = 0; i < include_dirs.size; i++) {
             String str = include_dirs[i];
             if (str.size > 0 && str.characters[0] == '\"') {

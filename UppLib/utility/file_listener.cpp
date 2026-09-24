@@ -21,8 +21,8 @@ struct File_Listener {
 
 Watched_File* watched_file_create(const char* filepath, file_listener_callback_func callback, void* userdata) 
 {
-    Optional<u64> last_access = file_io_get_last_write_access_time(filepath);
-    if (last_access.available == false) {
+    File_Info file_info = file_io_get_file_info(string_create_static(filepath));
+    if (file_info.status != File_Info_Status::SUCCESS) {
         return nullptr;
     }
 
@@ -30,7 +30,7 @@ Watched_File* watched_file_create(const char* filepath, file_listener_callback_f
     Watched_File* file = new Watched_File();
     file->callback = callback;
     file->filepath = string_create(filepath);
-    file->last_write_time = last_access.value;
+    file->last_write_time = file_info.last_write_access_time;
     file->userdata = userdata;
     return file;
 }
@@ -84,12 +84,13 @@ void file_listener_check_if_files_changed(File_Listener* listener)
     for (int i = 0; i < listener->files.size; i++) 
     {
         Watched_File* file = listener->files.data[i];
-        Optional<u64> newest_write_time = file_io_get_last_write_access_time(file->filepath.characters);
-        if (newest_write_time.available)
+        File_Info file_info = file_io_get_file_info(file->filepath);
+        if (file_info.status == File_Info_Status::SUCCESS)
         {
-            if (newest_write_time.value > file->last_write_time) // First value is later than second
+            u64 newest_write_time = file_info.last_write_access_time;
+            if (newest_write_time > file->last_write_time) // First value is later than second
             {
-                file->last_write_time = newest_write_time.value;
+                file->last_write_time = newest_write_time;
                 file->callback(file->userdata, file->filepath.characters); // Call callback
             }
         }

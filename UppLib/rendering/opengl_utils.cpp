@@ -34,6 +34,8 @@ bool opengl_utils_check_shader_compilation_status(GLuint shader_id)
 
 GLuint opengl_utils_create_shader_from_file(const char* filepath)
 {
+    SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+
     // Check extension 
     GLenum shaderType = 0;
     if (cstring_ends_with(filepath, ".frag")) {
@@ -57,8 +59,7 @@ GLuint opengl_utils_create_shader_from_file(const char* filepath)
     }
 
     // Load shader file
-    Optional<String> shader_file_content_optional = file_io_load_text_file(filepath);
-    SCOPE_EXIT(file_io_unload_text_file(&shader_file_content_optional));
+    Optional<String> shader_file_content_optional = file_io_load_text_file(string_create_static(filepath), scratch_arena);
     if (!shader_file_content_optional.available) {
         logg("Could not load file shaderfile \"%s\"\n", filepath);
         return 0;
@@ -106,6 +107,8 @@ bool opengl_utils_link_program_and_check_errors(GLuint program_id)
 
 GLuint opengl_utils_create_program_from_single_file(const char* filepath)
 {
+    SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+
     if (!cstring_ends_with(filepath, ".glsl")) {
         return 0;
     }
@@ -120,8 +123,7 @@ GLuint opengl_utils_create_program_from_single_file(const char* filepath)
     SCOPE_EXIT(if (!success) glDeleteProgram(program_id));
 
     // Load file
-    Optional<String> file_content_optional = file_io_load_text_file(filepath);
-    SCOPE_EXIT(file_io_unload_text_file(&file_content_optional));
+    Optional<String> file_content_optional = file_io_load_text_file(string_create_static(filepath), scratch_arena);
     if (!file_content_optional.available) {
         logg("Could not load file %s\n", filepath);
         return 0;

@@ -21,6 +21,8 @@
 
 void syntax_renaming()
 {
+    SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+
     String input_line = string_create(1024);
     SCOPE_EXIT(string_destroy(&input_line));
 
@@ -38,7 +40,7 @@ void syntax_renaming()
     string_replace_character(&input_line, '\\', '/');
 
     directory_crawler_set_path(crawler, input_line);
-    Array<File_Info> files = directory_crawler_get_content(crawler);
+    Array<Directory_Item> files = directory_crawler_get_content(crawler);
     String filepath = string_create(0);
     SCOPE_EXIT(string_destroy(&filepath));
     for (int i = 0; i < files.size; i++)
@@ -46,17 +48,16 @@ void syntax_renaming()
         // Load file
         auto file = files[i];
         if (file.is_directory) continue;
-        printf("Editing file %s\n", file.name.characters);
+        printf("Editing file %.*s\n", file.filename.size, file.filename.characters);
         
         string_reset(&filepath);
         string_append_string(&filepath, &input_line);
         if (!cstring_ends_with(filepath.characters, "/")) {
             string_append_character(&filepath, '/');
         }
-        string_append_string(&filepath, &file.name);
+        string_append_string(&filepath, &file.filename);
 
-        Optional<String> text_opt = file_io_load_text_file(filepath.characters);
-        SCOPE_EXIT(file_io_unload_text_file(&text_opt));
+        Optional<String> text_opt = file_io_load_text_file(filepath, scratch_arena);
         if (!text_opt.available) {
             printf("    File not available, skipping!\n");
             continue;
@@ -91,7 +92,7 @@ void syntax_renaming()
             }
         }
         // Write back new file
-        file_io_write_file(filepath.characters, array_create_static_as_bytes(result_text.characters, result_text.size));
+        file_io_write_text_file(filepath, result_text);
     }
 
     printf("Enter to exit");
@@ -262,11 +263,11 @@ int count_lines_of_code()
             directory_queue.size -= 1;
 
             directory_crawler_set_path(crawler, dir);
-            Array<File_Info> infos = directory_crawler_get_content(crawler);
+            Array<Directory_Item> infos = directory_crawler_get_content(crawler);
             for (int i = 0; i < infos.size; i++)
             {
-                File_Info& file_info = infos[i];
-                if (string_equals(file_info.name, string_create_static("..")) || string_equals(file_info.name, string_create_static("."))) {
+                Directory_Item& file_info = infos[i];
+                if (string_equals(file_info.filename, string_create_static("..")) || string_equals(file_info.filename, string_create_static("."))) {
                     continue;
                 }
 
@@ -275,8 +276,8 @@ int count_lines_of_code()
                 if (path.size > 0 && path.characters[path.size - 1] != '/') {
                     path.append('/');
                 }
-                path.append(file_info.name);
-                file_io_relative_to_full_path(&path);
+                path.append(file_info.filename);
+                filepath_relative_to_absolute_path(&path);
 
                 if (file_info.is_directory) {
                     directory_queue.push_back(path);
@@ -314,8 +315,7 @@ int count_lines_of_code()
         string_add_null_terminator(&filename);
 
         int line_count = -1;
-        auto file_opt = file_io_load_text_file(filename.characters);
-        SCOPE_EXIT(file_io_unload_text_file(&file_opt));
+        auto file_opt = file_io_load_text_file(filename, &arena);
         if (file_opt.available) {
             String text = file_opt.value;
             for (int j = 0; j < text.size; j++) {
@@ -462,6 +462,10 @@ void test_new_allocators()
 
 int main(int argc, char** argv)
 {
+    Arena main_scratch_arena = Arena::create();
+    Arena fallback_scratch_arena = Arena::create();
+    scratch_arena_set_arenas(scratch_arena_pair_make(&main_scratch_arena, &fallback_scratch_arena));
+
     // test_new_allocators();
     // return 0;
 

@@ -43,11 +43,12 @@ void c_compiler_initialize()
     result.initialized = true;
     result.last_compile_successfull = false;
 
+    SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+
     // Load system vars (Required to use cl.exe and link.exe)
     // These are generated once with the batch script in some misc folder, and then loaded from that file.
     //  Otherwise the initialization takes quite a while...
-    Optional<String> file_content = file_io_load_text_file("backend/misc/env_vars.txt");
-    SCOPE_EXIT(file_io_unload_text_file(&file_content));
+    Optional<String> file_content = file_io_load_text_file(string_create_static("backend/misc/env_vars.txt"), scratch_arena);
 
     if (!file_content.available) {
         panic("System-Variables file for compilation (Pre-generated) were not available!");
@@ -1226,7 +1227,7 @@ void c_generator_generate(C_Generator* generator)
     }
 
     // Write to file
-    file_io_write_file("backend/src/main.cpp", array_create_static((byte*)source_code.characters, source_code.size));
+    file_io_write_text_file(string_create_static("backend/src/main.cpp"), source_code);
 
     // Calculate line-translations
     {

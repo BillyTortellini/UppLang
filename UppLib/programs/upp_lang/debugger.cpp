@@ -1152,7 +1152,7 @@ namespace PDB_Analysis
             String tmp = string_create(2048);
             SCOPE_EXIT(string_destroy(&tmp));
             symbol_tree_append_to_string_recursive(&tmp, global_scope, 0, session, &visited);
-            file_io_write_file("backend/build/pdb_info_tree.txt", array_create_static<byte>((byte*)tmp.characters, tmp.size));
+            file_io_write_text_file(string_create_static("backend/build/pdb_info_tree.txt"), tmp);
         }
 
         DWORD machine_type;
@@ -2278,7 +2278,7 @@ Closest_Symbol_Info debugger_find_closest_symbol_name(Debugger* debugger, u64 ad
             if (address >= section.rva + pe_info.base_address && address < section.rva + section.size + pe_info.base_address) {
                 info.pe_index = i;
                 info.section_index = j;
-                info.pe_name = string_create_filename_from_path_static(&pe_info.name);
+                info.pe_name = filepath_get_parts(pe_info.name).filename;
                 info.section_name = section.name;
                 break;
             }

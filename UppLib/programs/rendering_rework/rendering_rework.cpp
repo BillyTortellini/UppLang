@@ -19,6 +19,62 @@
 #include "../../utility/file_listener.hpp"
 #include "../../utility/directory_crawler.hpp"
 
+#include <Windows.h>
+
+typedef void (*file_change_callback_fn)(void* userdata, String filepath);
+
+struct Monitored_Directory;
+
+struct Monitored_File
+{
+    String filename;
+    Monitored_Directory* directory;
+    file_change_callback_fn callback_fn;
+    void* userdata;
+    bool was_removed;
+};
+
+struct Monitored_Directory
+{
+    String path; // Full undecorated path to directory without trailing /
+    HANDLE listener;
+    DynSet<Monitored_File*> files; // Filename to monitored mapping
+};
+
+struct File_Change_Listener
+{
+    Arena* arena;
+    List<Monitored_Directory> directories;
+};
+
+File_Change_Listener file_change_listener_create(Arena* arena)
+{
+    File_Change_Listener result;
+    result.arena = arena;
+    result.directories = List<Monitored_Directory>::create(arena->upcast());
+    return result;
+}
+
+// Returns nullptr if file does not exist or file is already beeing watched
+Monitored_File* file_change_listener_add_file(File_Change_Listener* listener, String filepath)
+{
+    SCRATCH_ARENA_MAKE_SCOPED(listener->arena);
+
+    // Extract infos from path
+    String path_copy = string_copy(filepath, scratch_arena);
+    // file_io_relative_to_full_path(&path_copy);
+    // string_create_from_filepath_to_path_and_filename
+    return nullptr;
+}
+
+void file_change_listener_remove_file(Monitored_File* file) {
+    assert(!file->was_removed, "");
+    file->was_removed = true;
+}
+
+
+
+
 struct GRX_Core;
 struct GRX_Shader;
 
@@ -32,7 +88,7 @@ struct GRX_Shader
 
 struct GRX_Core
 {
-    Arena arena;
+    Arena* arena;
     Window* window;
     File_Listener* file_listener;
     bool logging_enabled;
@@ -56,12 +112,12 @@ void grx_core_log_cstring(GRX_Core* core, const char* msg) {
     grx_core_log(core, string_create_static(msg));
 }
 
-void grx_core_initialize(GRX_Core* core, Window* window, File_Listener* file_listener, String shader_directory)
+void grx_core_initialize(GRX_Core* core, Arena* arena, Window* window, File_Listener* file_listener, String shader_directory)
 {
-    core->arena = Arena::create();
+    core->arena = arena;
     core->window = window;
     core->file_listener = file_listener;
-    core->shader_directory = string_copy(shader_directory, &core->arena);
+    core->shader_directory = string_copy(shader_directory, arena);
     core->logging_enabled = true;
 
     Arena tmp_arena_stack = Arena::create();
@@ -75,29 +131,29 @@ void grx_core_initialize(GRX_Core* core, Window* window, File_Listener* file_lis
         SCOPE_EXIT(directory_crawler_destroy(crawler));
 
         directory_crawler_set_path(crawler, shader_directory);
-        Array<File_Info> file_infos = directory_crawler_get_content(crawler);
+        Array<Directory_Item> file_infos = directory_crawler_get_content(crawler);
         if (file_infos.size == 0) {
             grx_core_log_cstring(core, "Either shader directory does not exist or it's empty");
         }
 
         for (int i = 0; i < file_infos.size; i++)
         {
-            File_Info file_info = file_infos[i];
+            Directory_Item file_info = file_infos[i];
 
             // Ignore directory and files with non .shader ending
             if (file_info.is_directory) 
             {
                 grx_core_log(
                     core,
-                    tmp_string.reset()->append("Ignoring sub-directory of shader directory: \"")->append(file_info.name)->append("\"")
+                    tmp_string.reset()->append("Ignoring sub-directory of shader directory: \"")->append(file_info.filename)->append("\"")
                 );
                 continue;
             }
-            if (!string_ends_with(file_info.name, ".shader")) 
+            if (!string_ends_with(file_info.filename, ".shader")) 
             {
                 grx_core_log(
                     core,
-                    tmp_string.reset()->append("Shader directory contains file with non .shader ending: \"")->append(file_info.name)->append("\"")
+                    tmp_string.reset()->append("Shader directory contains file with non .shader ending: \"")->append(file_info.filename)->append("\"")
                 );
                 continue;
             }
@@ -111,7 +167,8 @@ void grx_core_initialize(GRX_Core* core, Window* window, File_Listener* file_lis
 
 void grx_core_destroy(GRX_Core* core)
 {
-    core->arena.destroy();
+    // Loop over opengl objects? Not even sure if needed....
+    
 }
 
 

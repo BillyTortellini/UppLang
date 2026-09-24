@@ -375,7 +375,7 @@ void output_import_interface(String* output_filename)
     string_append_string(&result, &importer.struct_definitions);
 
     // Write to file
-    file_io_write_file(output_filename->characters, array_create_static<byte>((byte*)result.characters, result.size));
+    file_io_write_text_file(*output_filename, result);
 }
 
 int run_import_gui()
