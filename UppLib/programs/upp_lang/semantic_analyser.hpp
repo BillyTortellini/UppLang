@@ -91,7 +91,7 @@ struct Poly_Header
     // Origin infos
     AST::Signature* signature_node;
     Symbol_Table* base_parameter_table;
-    String* name; // Either struct or function name, used for dot-calls auto id
+    DynString* name; // Either struct or function name, used for dot-calls auto id
     bool is_function;
     union {
         Upp_Struct*   upp_struct;
@@ -164,7 +164,7 @@ struct Upp_Function
 {
     Call_Signature* signature; // Note: Signature is nullptr until function-header is analysed
     int function_index; // Index in functions array
-    String* name; // Symbol name, or "bake_function"/"lambda_function"
+    DynString* name; // Symbol name, or "bake_function"/"lambda_function"
     Symbol* symbol; // May be nullptr if function is anonymous
     Optional<Function_Body> body_node;
     Analysis_Pass* body_pass; // Used later in ir-generator
@@ -223,7 +223,7 @@ struct Upp_Global
     void* memory;
 };
 
-Upp_Function* upp_function_create_empty(Call_Signature* signature, String* name, Compilation_Data* compilation_data);
+Upp_Function* upp_function_create_empty(Call_Signature* signature, DynString* name, Compilation_Data* compilation_data);
 
 
 
@@ -356,7 +356,7 @@ struct Workload_Structure_Header
     Symbol_Table* symbol_table;
 };
 
-void analysis_workload_append_to_string(Workload_Base* workload, String* string);
+void analysis_workload_append_to_string(Workload_Base* workload, DynString* string);
 
 
 
@@ -438,7 +438,7 @@ struct Parameter_Value
 struct Argument_Info
 {
 	AST::Expression* expression;
-	Optional<String*> name;
+	Optional<DynString*> name;
 	int parameter_index; // -1 if no matching parameter was found
 };
 
@@ -802,14 +802,14 @@ struct Error_Information
             int expected;
             int given;
         } invalid_argument_count;
-        String* id;
+        DynString* id;
         Symbol* symbol;
         Exit_Code exit_code;
         Datatype* type;
         Datatype_Function_Pointer* function;
         struct {
             Datatype_Struct* struct_signature;
-            String* member_id;
+            DynString* member_id;
         } invalid_member;
         Workload_Base* cycle_workload;
         struct {
@@ -825,10 +825,10 @@ struct Error_Information
 void log_semantic_error(Semantic_Context* semantic_context, const char* msg, AST::Node* node, Node_Section node_section = Node_Section::WHOLE);
 void semantic_context_raise_error_flag(bool error_due_to_unknown, Semantic_Context* semantic_context);
 void error_information_append_to_rich_string(
-    const Error_Information& info, Compilation_Data* compilation_data, String* text, 
+    const Error_Information& info, Compilation_Data* compilation_data, DynString* text, 
     Datatype_Format format = datatype_format_make_default()
 );
-void compilation_data_append_code_errors_to_string(Compilation_Data* compilation_data, String* string, int indentation);
+void compilation_data_append_code_errors_to_string(Compilation_Data* compilation_data, DynString* string, int indentation);
 void log_error_info_symbol(Semantic_Context* context, Symbol* symbol);
 
 const char* auto_cast_type_to_string(Auto_Cast_Type type);

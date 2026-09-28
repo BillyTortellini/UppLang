@@ -2,7 +2,7 @@
 
 #include "rendering_core.hpp"
 
-String shader_datatype_as_string(Shader_Datatype type)
+DynString shader_datatype_as_string(Shader_Datatype type)
 {
     switch (type)
     {

@@ -11,7 +11,7 @@ Line_Editor line_editor_make()
     return editor;
 }
 
-bool line_editor_feed_key_message(Line_Editor& editor, String* text, Key_Message msg)
+bool line_editor_feed_key_message(Line_Editor& editor, DynString* text, Key_Message msg)
 {
     if (!msg.key_down) {
         return false;
@@ -23,7 +23,7 @@ bool line_editor_feed_key_message(Line_Editor& editor, String* text, Key_Message
     pos = math_clamp(pos, 0, text->size);
     select_start = math_clamp(select_start, 0, text->size);
 
-    auto move_next_word = [](String* text, int pos, bool forwards) -> int
+    auto move_next_word = [](DynString* text, int pos, bool forwards) -> int
     {
         if (forwards) {
             if (pos >= text->size) return pos;
@@ -90,7 +90,7 @@ bool line_editor_feed_key_message(Line_Editor& editor, String* text, Key_Message
         {
         case Key_Code::U: {
             if (pos <= 0) return false;
-            string_remove_substring(text, 0, math_maximum(pos, select_start));
+            dynstring_remove_substring(text, 0, math_maximum(pos, select_start));
             pos = 0;
             select_start = 0;
             return true;
@@ -100,7 +100,7 @@ bool line_editor_feed_key_message(Line_Editor& editor, String* text, Key_Message
         {
             int i = move_next_word(text, pos, false);
             if (i != pos) {
-                string_remove_substring(text, i, pos);
+                dynstring_remove_substring(text, i, pos);
                 pos = i;
                 select_start = i;
                 return true;
@@ -118,7 +118,7 @@ bool line_editor_feed_key_message(Line_Editor& editor, String* text, Key_Message
             int end = math_maximum(pos, select_start);
             if (start == end) return false;
 
-            String substring = string_create_substring_static(text, start, end);
+            DynString substring = string_create_substring_static(text, start, end);
             clipboard_store_text(substring);
             return false;
         }
@@ -128,9 +128,9 @@ bool line_editor_feed_key_message(Line_Editor& editor, String* text, Key_Message
 
             int start = math_minimum(pos, select_start);
             int end = math_maximum(pos, select_start);
-            String substring = string_create_substring_static(text, start, end);
+            DynString substring = string_create_substring_static(text, start, end);
             clipboard_store_text(substring);
-            string_remove_substring(text, start, end);
+            dynstring_remove_substring(text, start, end);
             pos = start;
             select_start = start;
 
@@ -143,12 +143,12 @@ bool line_editor_feed_key_message(Line_Editor& editor, String* text, Key_Message
             if (select_start != pos) {
                 int start = math_minimum(pos, select_start);
                 int end = math_maximum(pos, select_start);
-                string_remove_substring(text, start, end);
+                dynstring_remove_substring(text, start, end);
                 pos = start;
                 select_start = start;
                 changed = true;
             }
-            String clipboard = string_create();
+            DynString clipboard = dynstring_create();
             SCOPE_EXIT(string_destroy(&clipboard));
 
             bool success = clipboard_load_text(&clipboard);
@@ -216,7 +216,7 @@ bool line_editor_feed_key_message(Line_Editor& editor, String* text, Key_Message
         else {
             int start = math_minimum(pos, select_start);
             int end = math_maximum(pos, select_start);
-            string_remove_substring(text, start, end);
+            dynstring_remove_substring(text, start, end);
             pos = start;
             select_start = start;
             changed = true;
@@ -232,7 +232,7 @@ bool line_editor_feed_key_message(Line_Editor& editor, String* text, Key_Message
         if (select_start != pos) {
             int start = math_minimum(pos, select_start);
             int end = math_maximum(pos, select_start);
-            string_remove_substring(text, start, end);
+            dynstring_remove_substring(text, start, end);
             pos = start;
             select_start = start;
             changed = true;

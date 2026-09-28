@@ -6,7 +6,7 @@
 #include "../../win32/process.hpp"
 
 struct Datatype;
-struct String;
+struct DynString;
 struct Poly_Header;
 struct Upp_Function;
 struct Call_Signature;
@@ -391,7 +391,7 @@ struct Exit_Code
 };
 
 Exit_Code exit_code_make(Exit_Code_Type type, const char* error_msg = 0);
-void exit_code_append_to_string(String* string, Exit_Code code);
+void exit_code_append_to_string(DynString* string, Exit_Code code);
 
 struct Poly_Function
 {
@@ -404,7 +404,7 @@ struct Poly_Function
 // CALLABLES AND PARAMETERS
 struct Call_Parameter
 {
-    String* name;
+    DynString* name;
     Datatype* datatype;
     bool required;                      // Default values and implicit parameters don't require values
     bool requires_named_addressing;     // Implicit arguments and #instanciate, #get_overload?
@@ -431,7 +431,7 @@ struct Call_Signature
 struct Extern_Sources
 {
 	Dynamic_Array<Upp_Function*> extern_functions;
-	Dynamic_Array<String*> compiler_settings[(int)Extern_Compiler_Setting::MAX_ENUM_VALUE];
+	Dynamic_Array<DynString*> compiler_settings[(int)Extern_Compiler_Setting::MAX_ENUM_VALUE];
 };
 
 Extern_Sources extern_sources_create();
@@ -443,83 +443,83 @@ void extern_sources_destroy(Extern_Sources* sources);
 struct Predefined_IDs
 {
 	// Other
-	String* main;
-	String* id_struct;
-	String* empty_string;
-	String* root_module;
-	String* invalid_symbol_name;
-	String* byte;
-	String* value;
-	String* is_available;
-	String* uninitialized_token; // _
-	String* return_type_name; // !return_type
-	String* operators;
-	String* dot_calls;
+	DynString* main;
+	DynString* id_struct;
+	DynString* empty_string;
+	DynString* root_module;
+	DynString* invalid_symbol_name;
+	DynString* byte;
+	DynString* value;
+	DynString* is_available;
+	DynString* uninitialized_token; // _
+	DynString* return_type_name; // !return_type
+	DynString* operators;
+	DynString* dot_calls;
 
-	String* hashtag_instanciate;
-	String* hashtag_bake;
-	String* hashtag_get_overload;
-	String* hashtag_get_overload_poly;
+	DynString* hashtag_instanciate;
+	DynString* hashtag_bake;
+	DynString* hashtag_get_overload;
+	DynString* hashtag_get_overload_poly;
 
-	String* custom_operator_function_names[(int)Custom_Operator_Type::MAX_ENUM_VALUE];
+	DynString* custom_operator_function_names[(int)Custom_Operator_Type::MAX_ENUM_VALUE];
 
-	String* defer_restore;
-	String* cast;
-	String* defer;
-	String* from;
-	String* to;
+	DynString* defer_restore;
+	DynString* cast;
+	DynString* defer;
+	DynString* from;
+	DynString* to;
 
-	String* lambda_function;
-	String* bake_function;
+	DynString* lambda_function;
+	DynString* bake_function;
 
-	String* function;
-	String* create_fn;
-	String* next_fn;
-	String* has_next_fn;
-	String* value_fn;
-	String* name;
-	String* as_member_access;
-	String* commutative;
-	String* binop;
-	String* unop;
-	String* global;
-	String* option;
-	String* lib;
-	String* lib_dir;
-	String* source;
-	String* header;
-	String* header_dir;
-	String* definition;
+	DynString* function;
+	DynString* create_fn;
+	DynString* next_fn;
+	DynString* has_next_fn;
+	DynString* value_fn;
+	DynString* name;
+	DynString* as_member_access;
+	DynString* commutative;
+	DynString* binop;
+	DynString* unop;
+	DynString* global;
+	DynString* option;
+	DynString* lib;
+	DynString* lib_dir;
+	DynString* source;
+	DynString* header;
+	DynString* header_dir;
+	DynString* definition;
 
 	// Hardcoded functions
-	String* type_of;
-	String* type_info;
+	DynString* type_of;
+	DynString* type_info;
 
 	// Members
-	String* type; // Any.type
-	String* data;
-	String* size;
-	String* tag;
-	String* anon_struct;
-	String* anon_enum;
-	String* c_string;
-	String* string;
-	String* allocator;
-	String* bytes;
-	String* transitive;
-	String* symbols;
-	String* all;
+	DynString* type; // Any.type
+	DynString* data;
+	DynString* size;
+	DynString* tag;
+	DynString* anon_struct;
+	DynString* anon_enum;
+	DynString* c_string;
+	DynString* string;
+	DynString* allocator;
+	DynString* bytes;
+	DynString* transitive;
+	DynString* symbols;
+	DynString* all;
 };
 
 struct Identifier_Pool
 {
-	Hashtable<String, String*> identifier_lookup_table;
+	Hashtable<DynString, DynString*> identifier_lookup_table;
 	Predefined_IDs predefined_ids;
 };
 
 Identifier_Pool identifier_pool_create();
 void identifier_pool_destroy(Identifier_Pool* pool);
-String* identifier_pool_add(Identifier_Pool* pool, String identifier);
+DynString* identifier_pool_add(Identifier_Pool* pool, DynString identifier);
 void identifier_pool_print(Identifier_Pool* pool);
 
 

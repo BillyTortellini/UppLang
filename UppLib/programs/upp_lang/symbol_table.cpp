@@ -20,7 +20,7 @@ bool default_value_query_equals(Default_Value_Query* a, Default_Value_Query* b) 
 Symbol_Table* symbol_table_create(Compilation_Data* compilation_data)
 {
     Symbol_Table* result = new Symbol_Table;
-    result->symbols = hashtable_create_pointer_empty<String*, Dynamic_Array<Symbol*>>(1);
+    result->symbols = hashtable_create_pointer_empty<DynString*, Dynamic_Array<Symbol*>>(1);
 
 	result->parent_table = nullptr;
 	result->parent_access_level = Symbol_Access_Level::GLOBAL;
@@ -102,7 +102,7 @@ void symbol_destroy(Symbol* symbol) {
 }
 
 Symbol* symbol_table_define_symbol(
-	Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Symbol_Node* definition_node, Symbol_Access_Level access_level,
+	Symbol_Table* symbol_table, DynString* id, Symbol_Type type, AST::Symbol_Node* definition_node, Symbol_Access_Level access_level,
 	Semantic_Context* semantic_context, bool error_if_not_unique)
 {
     assert(id != 0, "HEY");
@@ -224,7 +224,7 @@ DynArray<Reachable_Table> symbol_table_query_all_reachable_tables(Symbol_Table* 
 	return reachable_tables;
 }
 
-DynArray<Symbol*> symbol_table_query_id(Symbol_Table* symbol_table, String* id, Symbol_Query_Info query_info, Arena* arena)
+DynArray<Symbol*> symbol_table_query_id(Symbol_Table* symbol_table, DynString* id, Symbol_Query_Info query_info, Arena* arena)
 {
 	// Find all tables we are searching through
 	DynArray<Reachable_Table> query_tables = symbol_table_query_all_reachable_tables(symbol_table, query_info, arena);
@@ -460,73 +460,73 @@ bool equals_custom_operator_query_node(Custom_Operator_Query_Node* node_a, Custo
 
 
 // PRINTING
-void symbol_type_append_to_string(Symbol_Type type, String* string)
+void symbol_type_append_to_string(Symbol_Type type, DynString* string)
 {
 	switch (type)
 	{
 	case Symbol_Type::VARIABLE_UNDEFINED:
-		string_append_formated(string, "Variable Undefined");
+		dynstring_append_formated(string, "Variable Undefined");
 		break;
 	case Symbol_Type::PARAMETER:
-		string_append_formated(string, "Parameter");
+		dynstring_append_formated(string, "Parameter");
 		break;
 	case Symbol_Type::FAST_CALL:
-		string_append_formated(string, "Fast_Call");
+		dynstring_append_formated(string, "Fast_Call");
 		break;
 	case Symbol_Type::POLYMORPHIC_FUNCTION:
-		string_append_formated(string, "Polymorphic Function");
+		dynstring_append_formated(string, "Polymorphic Function");
 		break;
 	case Symbol_Type::WAITING_FOR_WORKLOAD:
-		string_append_formated(string, "Definition Unfinished");
+		dynstring_append_formated(string, "Definition Unfinished");
 		break;
 	case Symbol_Type::PATTERN_VARIABLE:
-		string_append_formated(string, "Pattern value");
+		dynstring_append_formated(string, "Pattern value");
 		break;
 	case Symbol_Type::ALIAS_UNFINISHED:
-		string_append_formated(string, "Alias not yet defined");
+		dynstring_append_formated(string, "Alias not yet defined");
 		break;
 	case Symbol_Type::ALIAS:
-		string_append_formated(string, "Alias or imported symbol");
+		dynstring_append_formated(string, "Alias or imported symbol");
 		break;
 	case Symbol_Type::VARIABLE:
-		string_append_formated(string, "Variable");
+		dynstring_append_formated(string, "Variable");
 		break;
 	case Symbol_Type::GLOBAL:
-		string_append_formated(string, "Global");
+		dynstring_append_formated(string, "Global");
 		break;
 	case Symbol_Type::DATATYPE:
-		string_append_formated(string, "Type");
+		dynstring_append_formated(string, "Type");
 		break;
 	case Symbol_Type::ERROR_SYMBOL:
-		string_append_formated(string, "Error");
+		dynstring_append_formated(string, "Error");
 		break;
 	case Symbol_Type::COMPTIME_VALUE:
-		string_append_formated(string, "Constant");
+		dynstring_append_formated(string, "Constant");
 		break;
 	case Symbol_Type::HARDCODED_FUNCTION:
-		string_append_formated(string, "Hardcoded Function");
+		dynstring_append_formated(string, "Hardcoded Function");
 		break;
 	case Symbol_Type::FUNCTION:
-		string_append_formated(string, "Function");
+		dynstring_append_formated(string, "Function");
 		break;
 	case Symbol_Type::MODULE:
-		string_append_formated(string, "Module");
+		dynstring_append_formated(string, "Module");
 		break;
 	default: panic("What");
 	}
 }
 
-void symbol_append_to_string(Symbol* symbol, String* string)
+void symbol_append_to_string(Symbol* symbol, DynString* string)
 {
-	string_append_formated(string, "%s ", symbol->id->characters);
+	dynstring_append_formated(string, "%s ", symbol->id->characters);
 	symbol_type_append_to_string(symbol->type, string);
 }
 
-void symbol_table_append_to_string_with_parent_info(String* string, Symbol_Table* table, bool is_parent, bool print_root)
+void symbol_table_append_to_string_with_parent_info(DynString* string, Symbol_Table* table, bool is_parent, bool print_root)
 {
 	// if (!print_root && table->parent == 0) return;
 	if (!is_parent) {
-		string_append_formated(string, "Symbols: \n");
+		dynstring_append_formated(string, "Symbols: \n");
 	}
 	for (auto iter = hashtable_iterator_create(&table->symbols); hashtable_iterator_has_next(&iter); hashtable_iterator_next(&iter))
 	{
@@ -534,10 +534,10 @@ void symbol_table_append_to_string_with_parent_info(String* string, Symbol_Table
 		for (int i = 0; i < symbols.size; i++) {
 			Symbol* s = symbols[i];
 			if (is_parent) {
-				string_append_formated(string, "\t");
+				dynstring_append_formated(string, "\t");
 			}
 			symbol_append_to_string(s, string);
-			string_append_formated(string, "\n");
+			dynstring_append_formated(string, "\n");
 		}
 	}
 	// if (table->parent != 0) {
@@ -545,6 +545,6 @@ void symbol_table_append_to_string_with_parent_info(String* string, Symbol_Table
 	// }
 }
 
-void symbol_table_append_to_string(String* string, Symbol_Table* table, bool print_root) {
+void symbol_table_append_to_string(DynString* string, Symbol_Table* table, bool print_root) {
 	symbol_table_append_to_string_with_parent_info(string, table, false, print_root);
 }

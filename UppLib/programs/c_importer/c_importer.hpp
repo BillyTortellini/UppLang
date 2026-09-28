@@ -41,7 +41,7 @@ struct C_Import_Type_Array
 
 struct C_Import_Structure_Member
 {
-    String* id;
+    DynString* id;
     int offset;
     C_Import_Type* type;
 };
@@ -50,21 +50,21 @@ struct C_Import_Type_Structure
 {
     bool is_union;
     bool is_anonymous;
-    String* id;
+    DynString* id;
     bool contains_bitfield;
     Dynamic_Array<C_Import_Structure_Member> members;
 };
 
 struct C_Import_Enum_Member
 {
-    String* id;
+    DynString* id;
     int value;
 };
 
 struct C_Import_Type_Enum
 {
     bool is_anonymous;
-    String* id;
+    DynString* id;
     Dynamic_Array<C_Import_Enum_Member> members;
 };
 
@@ -72,7 +72,7 @@ struct C_Import_Parameter
 {
     C_Import_Type* type;
     bool has_name;
-    String* id;
+    DynString* id;
 };
 
 struct C_Import_Type_Function_Signature
@@ -130,7 +130,7 @@ struct C_Import_Symbol
 
 struct C_Import_Symbol_Table
 {
-    Hashtable<String*, C_Import_Symbol> symbols;
+    Hashtable<DynString*, C_Import_Symbol> symbols;
 };
 
 struct C_Import_Package
@@ -142,16 +142,16 @@ struct C_Import_Package
 struct C_Importer
 {
     Identifier_Pool identifier_pool;
-    Hashtable<String, C_Import_Package> cache;
+    Hashtable<DynString, C_Import_Package> cache;
 };
 
 C_Importer* c_importer_create();
 void c_importer_destroy(C_Importer* importer);
 Optional<C_Import_Package> c_importer_import_header(
-    C_Importer* importer, String header_name,
-    Dynamic_Array<String> include_directories, Dynamic_Array<String> defines
+    C_Importer* importer, DynString header_name,
+    Dynamic_Array<DynString> include_directories, Dynamic_Array<DynString> defines
 );
-void c_import_type_append_to_string(C_Import_Type* type, String* string, int indentation, bool print_array_members);
+void c_import_type_append_to_string(C_Import_Type* type, DynString* string, int indentation, bool print_array_members);
 
 
 

@@ -7,7 +7,7 @@
 #include "code_history.hpp"
 
 
-struct String;
+struct DynString;
 
 enum class Literal_Type
 {
@@ -23,7 +23,7 @@ struct Literal_Value
 {
     Literal_Type type;
     union {
-        String* string;
+        DynString* string;
         i64 int_val;
         f64 float_val;
         bool boolean;
@@ -121,14 +121,14 @@ namespace AST
     struct Get_Overload_Argument
     {
         Node base;
-        String* id;
+        DynString* id;
         Optional<Expression*> type_expr;
     };
 
     struct Symbol_Node
     {
         Node base;
-        String* name;
+        DynString* name;
         bool is_root_lookup; // If it is a ~
         bool is_definition;  // Symbol nodes are either definitions or lookups
     };
@@ -194,7 +194,7 @@ namespace AST
     struct Structure_Member_Node
     {
         Node base;
-        String* name;
+        DynString* name;
         bool is_expression; // Either expression or subtype_members
         union {
             Expression* expression;
@@ -231,7 +231,7 @@ namespace AST
             Path_Lookup* struct_type_lookup; // This should be a path to an already defined struct
             struct {
                 Extern_Compiler_Setting type;
-                String* value;
+                DynString* value;
             } setting;
         } options;
     };
@@ -250,7 +250,7 @@ namespace AST
         {
             Path_Lookup* path;
             struct {
-                String* relative_path;
+                DynString* relative_path;
                 Compilation_Unit* node_unit;
             } file_import;
         } options;
@@ -259,7 +259,7 @@ namespace AST
     struct Enum_Member_Node
     {
         Node base;
-        String* name;
+        DynString* name;
         Optional<Expression*> value;
     };
 
@@ -289,14 +289,14 @@ namespace AST
     struct Argument
     {
         Node base;
-        Optional<String*> name;
+        Optional<DynString*> name;
         Expression* value;
     };
 
     struct Subtype_Initializer
     {
         Node base;
-        Optional<String*> name; // If not available, supertype initializer
+        Optional<DynString*> name; // If not available, supertype initializer
         Call_Node* call_node;
     };
 
@@ -328,7 +328,7 @@ namespace AST
     {
         Node base;
         Array<Statement*> statements;
-        Optional<String*> block_id;
+        Optional<DynString*> block_id;
     };
 
     enum class Expression_Type
@@ -392,18 +392,18 @@ namespace AST
             } call;
             struct {
                 Expression* expr;
-                String* name;
+                DynString* name;
             } subtype_access;
             Expression* basetype_access_expr;
             Path_Lookup* path_lookup;
-            String* auto_enum;
+            DynString* auto_enum;
             Literal_Value literal_read;
             struct {
                 Expression* array_expr;
                 Expression* index_expr;
             } array_access;
             struct {
-                String* name;
+                DynString* name;
                 Expression* expr;
             } member_access;
             Function_Body inferred_function_body;
@@ -452,7 +452,7 @@ namespace AST
         Match_Case_Type case_type;
         union {
             Expression* expression;
-            String* subtype_name;
+            DynString* subtype_name;
         } options;
         Optional<Symbol_Node*> variable_definition; // case .IPv4 => v4
         Code_Block* block;
@@ -530,20 +530,20 @@ namespace AST
             struct {
                 Expression* condition;
                 Array<Match_Case*> cases;
-                Optional<String*> label;
+                Optional<DynString*> label;
             } match_statement;
-            Optional<String*> break_name;
-            Optional<String*> continue_name;
+            Optional<DynString*> break_name;
+            Optional<DynString*> continue_name;
             Optional<Expression*> return_value;
         } options;
     };
 
     Node* base_get_child(Node* node, int child_index);
     void base_print(Node* node);
-    void expression_append_to_string(AST::Expression* expr, String* str);
-    void base_append_to_string(Node* base, String* str);
+    void expression_append_to_string(AST::Expression* expr, DynString* str);
+    void base_append_to_string(Node* base, DynString* str);
 
-    void path_lookup_append_to_string(Path_Lookup* read, String* string);
+    void path_lookup_append_to_string(Path_Lookup* read, DynString* string);
     int binop_priority(Binop binop);
 
     namespace Helpers

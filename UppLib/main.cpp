@@ -23,14 +23,14 @@ void syntax_renaming()
 {
     SCRATCH_ARENA_MAKE_SCOPED(nullptr);
 
-    String input_line = string_create(1024);
+    DynString input_line = dynstring_create(1024);
     SCOPE_EXIT(string_destroy(&input_line));
 
     Directory_Crawler* crawler = directory_crawler_create();
     SCOPE_EXIT(directory_crawler_destroy(crawler));
 
     printf("Directory to scan: ");
-    string_reset(&input_line);
+    dynstring_reset(&input_line);
     fgets(input_line.characters, input_line.capacity - 1, stdin);
     input_line.size = (int)strlen(input_line.characters);
     if (input_line.size > 0 && input_line.characters[input_line.size - 1] == '\n') {
@@ -41,7 +41,7 @@ void syntax_renaming()
 
     directory_crawler_set_path(crawler, input_line);
     Array<Directory_Item> files = directory_crawler_get_content(crawler);
-    String filepath = string_create(0);
+    DynString filepath = dynstring_create(0);
     SCOPE_EXIT(string_destroy(&filepath));
     for (int i = 0; i < files.size; i++)
     {
@@ -50,39 +50,39 @@ void syntax_renaming()
         if (file.is_directory) continue;
         printf("Editing file %.*s\n", file.filename.size, file.filename.characters);
         
-        string_reset(&filepath);
+        dynstring_reset(&filepath);
         string_append_string(&filepath, &input_line);
         if (!cstring_ends_with(filepath.characters, "/")) {
             string_append_character(&filepath, '/');
         }
         string_append_string(&filepath, &file.filename);
 
-        Optional<String> text_opt = file_io_load_text_file(filepath, scratch_arena);
+        Optional<DynString> text_opt = file_io_load_text_file(filepath, scratch_arena);
         if (!text_opt.available) {
             printf("    File not available, skipping!\n");
             continue;
         }
 
-        String text = text_opt.value;
+        DynString text = text_opt.value;
         auto lines = string_split(text, '\n');
         SCOPE_EXIT(string_split_destroy(lines));
-        String result_text = string_create(text.size);
+        DynString result_text = dynstring_create(text.size);
         SCOPE_EXIT(string_destroy(&result_text));
 
         // Replace assert with ~assert
-        String replace_text = string_create_static("Upp~");
-        String replace_with = string_create_static("~");
+        DynString replace_text = string_create_static("Upp~");
+        DynString replace_with = string_create_static("~");
         for (int line_index = 0; line_index < lines.size; line_index += 1)
         {
-            String line = lines[line_index];
-            String new_line = string_copy(line);
+            DynString line = lines[line_index];
+            DynString new_line = dynstring_copy(line);
             SCOPE_EXIT(string_destroy(&new_line));
             int replace_index = string_contains_substring(line, 0, replace_text);
             if (replace_index != -1) 
             {
                 printf("Found assert line: \n");
                 printf("----%s\n", new_line.characters);
-                string_remove_substring(&new_line, replace_index, replace_index + replace_text.size);
+                dynstring_remove_substring(&new_line, replace_index, replace_index + replace_text.size);
                 string_insert_string(&new_line, &replace_with, replace_index);
                 printf("----%s\n", new_line.characters);
             }
@@ -212,11 +212,11 @@ void next_test()
 
 struct File_Line_Info
 {
-    String filename;
+    DynString filename;
     int line_count;
 };
 
-File_Line_Info file_line_info_make(String full_path, int line_count) 
+File_Line_Info file_line_info_make(DynString full_path, int line_count) 
 {
     File_Line_Info result;
     result.line_count = line_count;
@@ -248,18 +248,18 @@ int count_lines_of_code()
 {
     Arena arena = arena.create();
     SCOPE_EXIT(arena.destroy());
-    DynArray<String> filenames = DynArray<String>::create(&arena);
+    DynArray<DynString> filenames = DynArray<DynString>::create(&arena);
 
     // Find all files
     {
-        DynArray<String> directory_queue = DynArray<String>::create(&arena);
-        directory_queue.push_back(string_create("D:/Projects/UppLang/UppLib", &arena));
+        DynArray<DynString> directory_queue = DynArray<DynString>::create(&arena);
+        directory_queue.push_back(dynstring_create("D:/Projects/UppLang/UppLib", &arena));
         Directory_Crawler* crawler = directory_crawler_create();
         SCOPE_EXIT(directory_crawler_destroy(crawler));
 
         while (directory_queue.size > 0)
         {
-            String dir = directory_queue.last();
+            DynString dir = directory_queue.last();
             directory_queue.size -= 1;
 
             directory_crawler_set_path(crawler, dir);
@@ -271,7 +271,7 @@ int count_lines_of_code()
                     continue;
                 }
 
-                String path = string_create(&arena);
+                DynString path = dynstring_create(&arena);
                 path.append(dir);
                 if (path.size > 0 && path.characters[path.size - 1] != '/') {
                     path.append('/');
@@ -296,7 +296,7 @@ int count_lines_of_code()
                     }
 
                     if (dot_index == -1) continue;
-                    String filetype = string_create_substring_static(&path, dot_index + 1, path.size);
+                    DynString filetype = string_create_substring_static(&path, dot_index + 1, path.size);
                     if (!(string_equals_cstring(&filetype, "cpp") || string_equals_cstring(&filetype, "hpp"))) {
                         continue;
                     }
@@ -311,13 +311,13 @@ int count_lines_of_code()
     int line_count_total = 0;
     for (int i = 0; i < filenames.size; i++)
     {
-        String& filename = filenames[i];
+        DynString& filename = filenames[i];
         string_add_null_terminator(&filename);
 
         int line_count = -1;
         auto file_opt = file_io_load_text_file(filename, &arena);
         if (file_opt.available) {
-            String text = file_opt.value;
+            DynString text = file_opt.value;
             for (int j = 0; j < text.size; j++) {
                 if (text[j] == '\n') {
                     line_count += 1;

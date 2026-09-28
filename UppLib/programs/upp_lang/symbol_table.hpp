@@ -143,14 +143,14 @@ bool equals_custom_operator_query_node(Custom_Operator_Query_Node* node_a, Custo
 // Default values
 struct Default_Value_Query
 {
-    String* name;
+    DynString* name;
     Datatype* datatype;
 };
 
 struct Default_Value
 {
     // Name and datatype must not be null, function can be null
-    String* name;
+    DynString* name;
     Datatype* datatype;
     Upp_Function* function;
     Upp_Constant value;
@@ -208,7 +208,7 @@ struct Symbol
         Upp_Constant constant;
     } options;
 
-    String* id;
+    DynString* id;
     Symbol_Table* origin_table;
     Symbol_Access_Level access_level;
     Dynamic_Array<AST::Symbol_Node*> references;
@@ -228,7 +228,7 @@ struct Symbol_Table_Import
 
 struct Symbol_Table
 {
-    Hashtable<String*, Dynamic_Array<Symbol*>> symbols;
+    Hashtable<DynString*, Dynamic_Array<Symbol*>> symbols;
 
     // Connections to other symbol tables
     Symbol_Table* parent_table;
@@ -276,7 +276,7 @@ void symbol_table_destroy(Symbol_Table* symbol_table);
 void symbol_destroy(Symbol* symbol);
 
 Symbol* symbol_table_define_symbol(
-    Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Symbol_Node* definition_node, Symbol_Access_Level access_level,
+    Symbol_Table* symbol_table, DynString* id, Symbol_Type type, AST::Symbol_Node* definition_node, Symbol_Access_Level access_level,
     Semantic_Context* semantic_context, bool error_if_not_unique
 );
 void symbol_table_add_import(
@@ -289,11 +289,11 @@ Symbol_Query_Info symbol_query_info_make(
     Symbol_Access_Level access_level, Import_Type import_search_type, bool search_parents
 );
 DynArray<Reachable_Table> symbol_table_query_all_reachable_tables(Symbol_Table* symbol_table, Symbol_Query_Info query_info, Arena* arena);
-DynArray<Symbol*> symbol_table_query_id(Symbol_Table* symbol_table, String* id, Symbol_Query_Info query_info, Arena* arena);
+DynArray<Symbol*> symbol_table_query_id(Symbol_Table* symbol_table, DynString* id, Symbol_Query_Info query_info, Arena* arena);
 DynArray<Symbol*> symbol_table_query_all_symbols(Symbol_Table* symbol_table, Symbol_Query_Info query_info, Arena* arena);
 void symbol_table_query_resolve_aliases(DynArray<Symbol*>& symbols);
 
-void symbol_table_append_to_string(String* string, Symbol_Table* table, bool print_root);
-void symbol_append_to_string(Symbol* symbol, String* string);
-void symbol_type_append_to_string(Symbol_Type type, String* string);
+void symbol_table_append_to_string(DynString* string, Symbol_Table* table, bool print_root);
+void symbol_append_to_string(Symbol* symbol, DynString* string);
+void symbol_type_append_to_string(Symbol_Type type, DynString* string);
 

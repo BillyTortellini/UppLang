@@ -7,8 +7,8 @@
 // Tokenizer
 struct Tokenizer
 {
-    Hashtable<String, Token_Type> keyword_table;
-    Hashtable<String, Token_Type> operator_table;
+    Hashtable<DynString, Token_Type> keyword_table;
+    Hashtable<DynString, Token_Type> operator_table;
 };
 
 static Tokenizer tokenizer;
@@ -189,9 +189,9 @@ int tokenizer_initialize()
 {
     // Initialize keyword lookup table
     {
-        tokenizer.keyword_table = hashtable_create_empty<String, Token_Type>(1, hash_string, string_equals);
+        tokenizer.keyword_table = hashtable_create_empty<DynString, Token_Type>(1, hash_string, string_equals);
         auto insert_keyword_token = [](Token_Type token_type) {
-            String string = string_create_static(token_type_as_cstring(token_type));
+            DynString string = string_create_static(token_type_as_cstring(token_type));
             bool worked = hashtable_insert_element(&tokenizer.keyword_table, string, token_type);
             assert(worked, "all keywords must be unique!");
             };
@@ -208,7 +208,7 @@ int tokenizer_initialize()
 
     // Initializer operator lookup table
     {
-        tokenizer.operator_table = hashtable_create_empty<String, Token_Type>(1, hash_string, string_equals);
+        tokenizer.operator_table = hashtable_create_empty<DynString, Token_Type>(1, hash_string, string_equals);
         for (int i = (int)Token_Type::_OPERATORS_START_ + 1; i < (int)Token_Type::_OPERATORS_END_; i++)
         {
             bool worked = hashtable_insert_element(
@@ -235,7 +235,7 @@ Token token_make(Token_Type type, int start, int end, int line) {
 }
 
 
-void tokenizer_tokenize_single_line(String text, DynArray<Token>* tokens, int line_index, bool remove_comments)
+void tokenizer_tokenize_single_line(DynString text, DynArray<Token>* tokens, int line_index, bool remove_comments)
 {
     int index = 0;
     while (index < text.size)
@@ -252,7 +252,7 @@ void tokenizer_tokenize_single_line(String text, DynArray<Token>* tokens, int li
                 index += 1;
             }
 
-            String substring = string_create_substring_static(&text, token.start, index);
+            DynString substring = string_create_substring_static(&text, token.start, index);
             Token_Type* keyword = hashtable_find_element(&tokenizer.keyword_table, substring);
             if (keyword != nullptr) {
                 token.type = *keyword;
@@ -389,7 +389,7 @@ void tokenizer_tokenize_single_line(String text, DynArray<Token>* tokens, int li
             for (int length = 1; length <= 3; length += 1) 
             {
                 if (index + length > text.size) break;
-                String str = string_create_substring_static(&text, index, index + length);
+                DynString str = string_create_substring_static(&text, index, index + length);
                 Token_Type* matching_op = hashtable_find_element(&tokenizer.operator_table, str);
                 if (matching_op != nullptr) {
                     token.type = *matching_op;
@@ -408,7 +408,7 @@ void tokenizer_tokenize_single_line(String text, DynArray<Token>* tokens, int li
     }
 }
 
-void tokenizer_parse_string_literal(String literal, String* append_to)
+void tokenizer_parse_string_literal(DynString literal, DynString* append_to)
 {
     // Note: We expect the literal to contain " and ", so we start at 1
 	for (int i = 1; i < literal.size - 1; i++)

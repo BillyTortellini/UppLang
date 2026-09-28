@@ -36,7 +36,7 @@ struct Raster_Font
 	Array<u8> char_to_glyph_index;
 
 	// Position is bottom-left of line
-	void push_line(ivec2 pos, String text, vec3 color);
+	void push_line(ivec2 pos, DynString text, vec3 color);
 	void add_draw_call(Render_Pass* pass);
 };
 

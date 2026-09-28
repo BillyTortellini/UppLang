@@ -165,14 +165,14 @@ const char* exit_code_type_as_string(Exit_Code_Type type)
 	return "";
 }
 
-void exit_code_append_to_string(String* string, Exit_Code code)
+void exit_code_append_to_string(DynString* string, Exit_Code code)
 {
-	string_append_formated(string, exit_code_type_as_string(code.type));
+	dynstring_append_formated(string, exit_code_type_as_string(code.type));
 	if (code.type == Exit_Code_Type::TYPE_INFO_WAITING_FOR_TYPE_FINISHED || code.type == Exit_Code_Type::CALL_TO_UNFINISHED_FUNCTION) {
 		return;
 	}
 	if (code.options.error_msg != 0) {
-		string_append_formated(string, ", %s", code.options.error_msg);
+		dynstring_append_formated(string, ", %s", code.options.error_msg);
 	}
 }
 
@@ -184,7 +184,7 @@ Extern_Sources extern_sources_create()
 	Extern_Sources result;
 	result.extern_functions = dynamic_array_create<Upp_Function*>();
 	for (int i = 0; i < (int)Extern_Compiler_Setting::MAX_ENUM_VALUE; i++) {
-		result.compiler_settings[i] = dynamic_array_create<String*>();
+		result.compiler_settings[i] = dynamic_array_create<DynString*>();
 	}
 	return result;
 }
@@ -203,12 +203,12 @@ void extern_sources_destroy(Extern_Sources* sources)
 Identifier_Pool identifier_pool_create()
 {
 	Identifier_Pool result;
-	result.identifier_lookup_table = hashtable_create_empty<String, String*>(128, hash_string, string_equals);
+	result.identifier_lookup_table = hashtable_create_empty<DynString, DynString*>(128, hash_string, string_equals);
 
 	// Add predefined IDs
 	{
 		auto& ids = result.predefined_ids;
-		auto add_id = [&](const char* id) -> String* {
+		auto add_id = [&](const char* id) -> DynString* {
 			return identifier_pool_add(&result, string_create_static(id));
 		};
 
@@ -301,7 +301,7 @@ void identifier_pool_destroy(Identifier_Pool* pool)
 {
 	auto iter = hashtable_iterator_create(&pool->identifier_lookup_table);
 	while (hashtable_iterator_has_next(&iter)) {
-		String* str = *iter.value;
+		DynString* str = *iter.value;
 		string_destroy(str);
 		delete str;
 		hashtable_iterator_next(&iter);
@@ -309,15 +309,15 @@ void identifier_pool_destroy(Identifier_Pool* pool)
 	hashtable_destroy(&pool->identifier_lookup_table);
 }
 
-String* identifier_pool_add(Identifier_Pool* pool, String identifier)
+DynString* identifier_pool_add(Identifier_Pool* pool, DynString identifier)
 {
-	String** found = hashtable_find_element(&pool->identifier_lookup_table, identifier);
+	DynString** found = hashtable_find_element(&pool->identifier_lookup_table, identifier);
 	if (found != 0) {
 		return *found;
 	}
 	else {
-		String* copy = new String;
-		*copy = string_create(identifier.size);
+		DynString* copy = new DynString;
+		*copy = dynstring_create(identifier.size);
 		string_append_string(copy, &identifier);
 		hashtable_insert_element(&pool->identifier_lookup_table, *copy, copy);
 		return copy;
@@ -326,19 +326,19 @@ String* identifier_pool_add(Identifier_Pool* pool, String identifier)
 
 void identifier_pool_print(Identifier_Pool* pool)
 {
-	String msg = string_create(256);
+	DynString msg = dynstring_create(256);
 	SCOPE_EXIT(string_destroy(&msg));
-	string_append_formated(&msg, "Identifiers: ");
+	dynstring_append_formated(&msg, "Identifiers: ");
 
 	auto iter = hashtable_iterator_create(&pool->identifier_lookup_table);
 	int i = 0;
 	while (hashtable_iterator_has_next(&iter)) {
-		String* str = *iter.value;
-		string_append_formated(&msg, "\n\t%d: %s", i, str->characters);
+		DynString* str = *iter.value;
+		dynstring_append_formated(&msg, "\n\t%d: %s", i, str->characters);
 		hashtable_iterator_next(&iter);
 		i++;
 	}
-	string_append_formated(&msg, "\n");
+	dynstring_append_formated(&msg, "\n");
 	logg("%s", msg.characters);
 }
 

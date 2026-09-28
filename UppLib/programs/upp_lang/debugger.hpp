@@ -102,13 +102,13 @@ struct Closest_Symbol_Info
 {
     int pe_index;
     int section_index;
-    String section_name;
-    String pe_name;
+    DynString section_name;
+    DynString pe_name;
 
     int exception_handling_index; // -1 if not found
     bool found_symbol;
     u64 distance;
-    String symbol_name; // Name from pdb or PE export table
+    DynString symbol_name; // Name from pdb or PE export table
 };
 
 struct Assembly_Source_Information
@@ -188,10 +188,10 @@ void debugger_step_out(Debugger* debugger);
 Debugger_State debugger_get_state(Debugger* debugger);
 Assembly_Source_Information debugger_get_assembly_source_information(Debugger* debugger, u64 virtual_address);
 Closest_Symbol_Info debugger_find_closest_symbol_name(Debugger* debugger, u64 address);
-void closest_symbol_info_append_to_string(Debugger* debugger, Closest_Symbol_Info symbol_info, String* string);
+void closest_symbol_info_append_to_string(Debugger* debugger, Closest_Symbol_Info symbol_info, DynString* string);
 void debugger_wait_for_console_command(Debugger* debugger);
 Debugger_Value_Read debugger_read_variable_value(
-    Debugger* debugger, String variable_name, Dynamic_Array<u8>* value_buffer, int stack_frame_start, int max_frame_depth);
+    Debugger* debugger, DynString variable_name, Dynamic_Array<u8>* value_buffer, int stack_frame_start, int max_frame_depth);
 
 Source_Breakpoint* debugger_add_source_breakpoint(Debugger* debugger, int line_index, Compilation_Unit* unit);
 void debugger_remove_source_breakpoint(Debugger* debugger, Source_Breakpoint* breakpoint);

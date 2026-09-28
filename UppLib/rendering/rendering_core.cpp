@@ -35,10 +35,10 @@ void rendering_core_initialize(int backbuffer_width, int backbuffer_height, floa
     result.render_event_listeners = dynamic_array_create<Render_Event_Listener>(1);
     result.vertex_attributes = dynamic_array_create<Vertex_Attribute_Base*>(1);
     result.vertex_descriptions = dynamic_array_create<Vertex_Description*>(1);
-    result.meshes = hashtable_create_empty<String, Mesh*>(4, hash_string, string_equals);
-    result.shaders = hashtable_create_empty<String, Hotreload_Shader>(4, hash_string, string_equals);
-    result.render_passes = hashtable_create_empty<String, Render_Pass*>(4, hash_string, string_equals);
-    result.framebuffers = hashtable_create_empty<String, Framebuffer*>(4, hash_string, string_equals);
+    result.meshes = hashtable_create_empty<DynString, Mesh*>(4, hash_string, string_equals);
+    result.shaders = hashtable_create_empty<DynString, Hotreload_Shader>(4, hash_string, string_equals);
+    result.render_passes = hashtable_create_empty<DynString, Render_Pass*>(4, hash_string, string_equals);
+    result.framebuffers = hashtable_create_empty<DynString, Framebuffer*>(4, hash_string, string_equals);
 
     // Generate predefined objects
     {
@@ -532,7 +532,7 @@ void rendering_core_clear_bound_framebuffer(Framebuffer_Clear_Type clear_type)
 Vertex_Attribute_Base* vertex_attribute_make_base(Shader_Datatype type, const char* name)
 {
     auto& core = rendering_core;
-    String str = string_create_static(name);
+    DynString str = string_create_static(name);
     for (int i = 0; i < core.vertex_attributes.size; i++) {
         auto attrib = core.vertex_attributes[i];
         if (string_equals(&str, &attrib->name)) {
@@ -546,7 +546,7 @@ Vertex_Attribute_Base* vertex_attribute_make_base(Shader_Datatype type, const ch
     }
 
     Vertex_Attribute_Base* base = new Vertex_Attribute_Base();
-    base->name = string_create(name);
+    base->name = dynstring_create(name);
     base->type = type;
     static int next_free_binding = 0;
     base->binding_location = next_free_binding;
@@ -748,7 +748,7 @@ Shader* shader_create_empty()
     shader->program_id = 0;
     shader->input_layout = dynamic_array_create<Shader_Input_Info>(1);
     shader->uniform_infos = dynamic_array_create<Uniform_Info>(1);
-    shader->allocated_strings = dynamic_array_create<String>(1);
+    shader->allocated_strings = dynamic_array_create<DynString>(1);
     return shader;
 }
 
@@ -776,7 +776,7 @@ void shader_destroy(Shader* shader)
     delete shader;
 }
 
-void shader_add_shader_stage(Shader* shader, Shader_Stage stage, String source_code)
+void shader_add_shader_stage(Shader* shader, Shader_Stage stage, DynString source_code)
 {
     assert(!shader->compiled, "Reset must be called before recompiling");
     if (shader->program_id == 0) {
@@ -838,7 +838,7 @@ bool shader_compile(Shader* shader)
 
         int longest_uniform_name_length;
         glGetProgramiv(shader->program_id, GL_ACTIVE_UNIFORM_MAX_LENGTH, &longest_uniform_name_length);
-        String buffer = string_create(longest_uniform_name_length);
+        DynString buffer = dynstring_create(longest_uniform_name_length);
         SCOPE_EXIT(string_destroy(&buffer));
 
         // Loop over all uniforms
@@ -854,7 +854,7 @@ bool shader_compile(Shader* shader)
 
             Uniform_Info info;
             info.array_size = array_size;
-            info.uniform_name = string_copy(buffer);
+            info.uniform_name = dynstring_copy(buffer);
             info.location = glGetUniformLocation(shader->program_id, buffer.characters);
             dynamic_array_push_back(&shader->allocated_strings, info.uniform_name);
 
@@ -897,7 +897,7 @@ void hotreload_shader(void* userdata, const char* filename)
     // Recompile and add shader-stages to the program
     {
         int possible_shader_defines_count = 6;
-        String possible_shader_defines[] = {
+        DynString possible_shader_defines[] = {
             string_create_static("VERTEX"),
             string_create_static("FRAGMENT"),
             string_create_static("GEOMETRY"),
@@ -915,7 +915,7 @@ void hotreload_shader(void* userdata, const char* filename)
         };
         // Note: This array corresponds to the Shader_Datatypes enum!
         const int type_count = 9;
-        String type_names[] = {
+        DynString type_names[] = {
             string_create_static("float"),
             string_create_static("uint"),
             string_create_static("vec2"),
@@ -928,10 +928,10 @@ void hotreload_shader(void* userdata, const char* filename)
         };
 
         // Split input into lines
-        String buffer = string_create(256);
+        DynString buffer = dynstring_create(256);
         SCOPE_EXIT(string_destroy(&buffer));
-        string_append_formated(&buffer, "#version 430 core\n\n");
-        Array<String> lines = string_split(shader_code_opt.value, '\n');
+        dynstring_append_formated(&buffer, "#version 430 core\n\n");
+        Array<DynString> lines = string_split(shader_code_opt.value, '\n');
         SCOPE_EXIT(string_split_destroy(lines));
         Shader_Stage shader_stage = Shader_Stage::SHADER_STAGE_COUNT;
         int slot_index = 0;
@@ -942,19 +942,19 @@ void hotreload_shader(void* userdata, const char* filename)
 
             // Do pattern matching
             // Shader type defines
-            String escape_sequence = string_create_static("//@");
-            String ifdef = string_create_static("#ifdef");
-            String endif = string_create_static("#endif");
+            DynString escape_sequence = string_create_static("//@");
+            DynString ifdef = string_create_static("#ifdef");
+            DynString endif = string_create_static("#endif");
             if (string_compare_substring(&line, 0, &ifdef))
             {
                 // Split line into words
-                Array<String> words = string_split(line, ' ');
+                Array<DynString> words = string_split(line, ' ');
                 SCOPE_EXIT(string_split_destroy(words));
                 if (words.size != 2) {
                     logg("Shader error, couldn't parse #ifdef!\n");
                     continue; // Next line
                 }
-                String stage_name = words[1];
+                DynString stage_name = words[1];
                 if (stage_name.size > 0 && stage_name.characters[words[1].size - 1] == '\r') {
                     stage_name.size -= 1;
                 }
@@ -980,8 +980,8 @@ void hotreload_shader(void* userdata, const char* filename)
 
             if (string_compare_substring(&line, 0, &endif)) {
                 shader_add_shader_stage(shader, shader_stage, buffer);
-                string_reset(&buffer);
-                string_append_formated(&buffer, "#version 430 core\n\n");
+                dynstring_reset(&buffer);
+                dynstring_append_formated(&buffer, "#version 430 core\n\n");
                 inside_code = false;
             }
 
@@ -998,7 +998,7 @@ void hotreload_shader(void* userdata, const char* filename)
                 Shader_Input_Info input_info;
 
                 // Split line into words
-                Array<String> words = string_split(line, ' ');
+                Array<DynString> words = string_split(line, ' ');
                 SCOPE_EXIT(string_split_destroy(words));
                 if (words.size < 3) {
                     logg("Shader error, couldn't parse in/inout attribute!\n");
@@ -1007,7 +1007,7 @@ void hotreload_shader(void* userdata, const char* filename)
 
                 // Variable base_name
                 {
-                    String var_name = words[2];
+                    DynString var_name = words[2];
                     if (var_name.size == 0) {
                         panic("Shouldnt happen with split...");
                     }
@@ -1018,14 +1018,14 @@ void hotreload_shader(void* userdata, const char* filename)
                         logg("Shader error, expected variable name!\n");
                         continue;
                     }
-                    input_info.variable_name = string_copy(var_name);
+                    input_info.variable_name = dynstring_copy(var_name);
                     dynamic_array_push_back(&shader->allocated_strings, input_info.variable_name);
                 }
 
                 // Parse type + set location
                 Shader_Datatype datatype;
                 {
-                    String type = words[1];
+                    DynString type = words[1];
                     int type_index = -1;
                     for (int j = 0; j < type_count; j++) {
                         if (string_equals(&type_names[j], &type)) {
@@ -1042,7 +1042,7 @@ void hotreload_shader(void* userdata, const char* filename)
 
                 // Parse attribute base_name
                 {
-                    String suffix = words[words.size - 1];
+                    DynString suffix = words[words.size - 1];
                     if (suffix.size < escape_sequence.size + 1) {
                         logg("Expected valid suffix for inout qualifier");
                         continue;
@@ -1058,7 +1058,7 @@ void hotreload_shader(void* userdata, const char* filename)
                         logg("Expected valid suffix");
                         continue;
                     }
-                    String attribute_name = string_create_substring(&suffix, escape_sequence.size, suffix.size);
+                    DynString attribute_name = string_create_substring(&suffix, escape_sequence.size, suffix.size);
                     dynamic_array_push_back(&shader->allocated_strings, attribute_name);
                     input_info.attribute = vertex_attribute_make_base(datatype, attribute_name.characters);
                     input_info.location = input_info.attribute->binding_location;
@@ -1066,7 +1066,7 @@ void hotreload_shader(void* userdata, const char* filename)
 
                 // Store Vertex attribute
                 dynamic_array_push_back(&shader->input_layout, input_info);
-                string_append_formated(&buffer, "layout (location = %d) ", input_info.attribute->binding_location);
+                dynstring_append_formated(&buffer, "layout (location = %d) ", input_info.attribute->binding_location);
             }
 
             // Add line to buffer if its not a special line
@@ -1101,7 +1101,7 @@ Shader* rendering_core_query_shader(const char* filename)
     hotreload.shader = shader_create_empty();
 
     // Register to file-listener (Hot-reloading)
-    String full_path = string_create("resources/shaders/");
+    DynString full_path = dynstring_create("resources/shaders/");
     SCOPE_EXIT(string_destroy(&full_path));
     string_append(&full_path, filename);
     string_add_null_terminator(&full_path);

@@ -16,7 +16,7 @@ bool Allocator_Base::resize(void* memory, uint old_size, uint new_size) {
 	return this->allocate_fn(this, Allocation_Type::RESIZE, old_size, new_size, memory) != nullptr;
 }
 
-void Allocator_Base::deallocate(void* memory, uint allocation_size) {
+void Allocator_Base::deallocate_raw(void* memory, uint allocation_size) {
 	this->allocate_fn(this, Allocation_Type::DEALLOCATE, allocation_size, allocation_size, memory);
 }
 
@@ -198,7 +198,7 @@ void Arena::reset(bool keep_largest_buffer)
 	while (curr.data != nullptr)
 	{
 		Arena_Buffer next = *(Arena_Buffer*)curr.data;
-		this->parent_allocator->deallocate(curr.data, curr.capacity);
+		this->parent_allocator->deallocate_raw(curr.data, curr.capacity);
 		curr = next;
 	}
 }

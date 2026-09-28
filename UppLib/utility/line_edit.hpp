@@ -17,4 +17,4 @@ struct Line_Editor
 };
 
 Line_Editor line_editor_make();
-bool line_editor_feed_key_message(Line_Editor& editor, String* text, Key_Message msg);
+bool line_editor_feed_key_message(Line_Editor& editor, DynString* text, Key_Message msg);

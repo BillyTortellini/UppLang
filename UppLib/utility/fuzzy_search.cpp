@@ -5,14 +5,14 @@
 struct Fuzzy_Searcher {
     Dynamic_Array<Fuzzy_Item> items;
     Dynamic_Array<bool> used_chars;
-    String search_term;
+    DynString search_term;
     int max_result_count;
 };
 
 static bool searcher_initialized = false;
 static Fuzzy_Searcher searcher;
 
-void fuzzy_search_start_search(String search_term, int max_result_count)
+void fuzzy_search_start_search(DynString search_term, int max_result_count)
 {
     if (!searcher_initialized) {
         searcher.items = dynamic_array_create<Fuzzy_Item>();
@@ -86,13 +86,13 @@ void fuzzy_search_insert_item_ordered(Fuzzy_Item& item)
     }
 }
 
-void fuzzy_search_add_item(String item_name, int user_index)
+void fuzzy_search_add_item(DynString item_name, int user_index)
 {
     if (item_name.size == 0) {
         return;
     }
-    String option = item_name;
-    String typed = searcher.search_term;
+    DynString option = item_name;
+    DynString typed = searcher.search_term;
 
     Fuzzy_Item result;
     result.item_name = item_name;

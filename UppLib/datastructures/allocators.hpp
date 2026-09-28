@@ -31,11 +31,14 @@ struct Allocator_Base
 
 	// Helper function so we don't have to use the function pointer directly
 	void* allocate_raw(uint size, uint alignment);
+	void deallocate_raw(void* memory, uint allocation_size);
 	bool resize(void* memory, uint old_size, uint new_size);
-	void deallocate(void* memory, uint allocation_size);
 
 	template<typename T> 
 	T* allocate() {	return (T*)allocate_raw(sizeof(T), alignof(T)); } 
+
+	template<typename T> 
+	void deallocate(T* item) { return deallocate_raw(item, sizeof(T)); }
 	
 	template<typename T> 
 	Array<T> allocate_array(int size) {
@@ -280,6 +283,10 @@ struct DynArray
 	T& operator[](int index) {
 		assert(index < size && index >= 0, "");
 		return buffer.data[index];
+	}
+
+	Array<T> as_array() {
+		return array_create_static<T>(buffer.data, (int) size);
 	}
 };
 

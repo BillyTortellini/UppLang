@@ -20,7 +20,7 @@ bool opengl_utils_check_shader_compilation_status(GLuint shader_id)
         GLint maxLength = 0;
         glGetShaderiv(shader_id, GL_INFO_LOG_LENGTH, &maxLength);
 
-        String error_message = string_create(maxLength);
+        DynString error_message = dynstring_create(maxLength);
         SCOPE_EXIT(string_destroy(&error_message));
 
         glGetShaderInfoLog(shader_id, maxLength, &maxLength, error_message.characters);
@@ -59,7 +59,7 @@ GLuint opengl_utils_create_shader_from_file(const char* filepath)
     }
 
     // Load shader file
-    Optional<String> shader_file_content_optional = file_io_load_text_file(string_create_static(filepath), scratch_arena);
+    Optional<DynString> shader_file_content_optional = file_io_load_text_file(string_create_static(filepath), scratch_arena);
     if (!shader_file_content_optional.available) {
         logg("Could not load file shaderfile \"%s\"\n", filepath);
         return 0;
@@ -95,7 +95,7 @@ bool opengl_utils_link_program_and_check_errors(GLuint program_id)
         GLint maxLength = 0;
         glGetProgramiv(program_id, GL_INFO_LOG_LENGTH, &maxLength);
 
-        String error_message = string_create(maxLength);
+        DynString error_message = dynstring_create(maxLength);
         SCOPE_EXIT(string_destroy(&error_message));
         glGetProgramInfoLog(program_id, maxLength, &maxLength, (GLchar*)error_message.characters);
         logg("PROGRAM LINKING FAILED!\n");
@@ -123,12 +123,12 @@ GLuint opengl_utils_create_program_from_single_file(const char* filepath)
     SCOPE_EXIT(if (!success) glDeleteProgram(program_id));
 
     // Load file
-    Optional<String> file_content_optional = file_io_load_text_file(string_create_static(filepath), scratch_arena);
+    Optional<DynString> file_content_optional = file_io_load_text_file(string_create_static(filepath), scratch_arena);
     if (!file_content_optional.available) {
         logg("Could not load file %s\n", filepath);
         return 0;
     }
-    String file_content = file_content_optional.value;
+    DynString file_content = file_content_optional.value;
 
     int possible_shader_defines_count = 6;
     const char* possible_shader_defines[] = {

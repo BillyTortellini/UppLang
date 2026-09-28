@@ -55,7 +55,7 @@ const int EDITOR_TAB_MAX_RECENT_SCREEN_COUNT = 16;
 
 struct Editor_Tab
 {
-	String filepath;
+	DynString filepath;
     Source_Code* code; // Note: This is different than the code in the compilation unit
     Code_History history;
 	Arena arena;
@@ -100,8 +100,8 @@ void syntax_editor_destroy();
 void syntax_editor_update(bool& animations_running);
 void syntax_editor_render();
 
-void syntax_editor_save_state(String file_path);
-void syntax_editor_load_state(String file_path);
+void syntax_editor_save_state(DynString file_path);
+void syntax_editor_load_state(DynString file_path);
 
 
 

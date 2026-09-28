@@ -70,7 +70,7 @@ namespace NEW_AST
 
 	union Node_Info
 	{
-		String* id;
+		DynString* id;
 		Binop_Type binop_type;
 		Unop_Type unop_type;
 	};

@@ -377,7 +377,7 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 			auto& hardcoded_signatures = compilation_data->hardcoded_function_signatures;
 			auto& context_signatures   = compilation_data->context_change_type_signatures;
 			auto& ids = identifier_pool->predefined_ids;
-			auto make_id = [&](const char* name) -> String* {
+			auto make_id = [&](const char* name) -> DynString* {
 				return identifier_pool_add(id_pool, string_create_static(name));
 			};
 
@@ -739,9 +739,9 @@ void compilation_data_destroy(Compilation_Data* data)
 	delete data;
 }
 
-Compilation_Unit* compilation_data_add_compilation_unit_unique(Compilation_Data* compilation_data, String filepath, bool load_file_if_new, bool parse_ast)
+Compilation_Unit* compilation_data_add_compilation_unit_unique(Compilation_Data* compilation_data, DynString filepath, bool load_file_if_new, bool parse_ast)
 {
-    String full_file_path = string_copy(filepath);
+    DynString full_file_path = dynstring_copy(filepath);
     filepath_relative_to_absolute_path(&full_file_path);
     SCOPE_EXIT(string_destroy(&full_file_path)); // On success capacity is set to 0, so this won't do anything
 
@@ -874,7 +874,7 @@ void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Un
             if (do_analysis && output_root_table)
             {
                 logg("\n--------ROOT TABLE RESULT---------\n");
-                String root_table = string_create(1024);
+                DynString root_table = dynstring_create(1024);
                 SCOPE_EXIT(string_destroy(&root_table));
                 symbol_table_append_to_string(&root_table, compilation_data->root_symbol_table, false);
                 logg("%s", root_table.characters);
@@ -885,7 +885,7 @@ void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Un
                 if (do_ir_gen && output_ir)
                 {
                     logg("\n--------IR_PROGRAM---------\n");
-                    String tmp = string_create(1024);
+                    DynString tmp = dynstring_create(1024);
                     SCOPE_EXIT(string_destroy(&tmp));
                     ir_program_append_to_string(&tmp, false, compilation_data);
                     string_style_remove_codes(&tmp);
@@ -894,7 +894,7 @@ void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Un
 
                 if (do_bytecode_gen && output_bytecode)
                 {
-                    String result_str = string_create(32);
+                    DynString result_str = dynstring_create(32);
                     SCOPE_EXIT(string_destroy(&result_str));
                     if (do_bytecode_gen && output_bytecode) {
                         bytecode_generator_append_bytecode_to_string(compilation_data, &result_str);
@@ -1587,7 +1587,7 @@ void compiler_run_testcases(bool force_run)
 
     bool errors_occured = false;
     int test_case_count = 0;
-    String result = string_create(256);
+    DynString result = dynstring_create(256);
     SCOPE_EXIT(string_destroy(&result));
     for (int i = 0; i < files.size; i++)
     {
@@ -1607,12 +1607,12 @@ void compiler_run_testcases(bool force_run)
         Compilation_Data* compilation_data = compilation_data_create(fiber_pool);
         SCOPE_EXIT(compilation_data_destroy(compilation_data));
 
-        String path = string_create();
+        DynString path = dynstring_create();
         path.append_formated("upp_code/testcases/%s", name.characters);
         SCOPE_EXIT(string_destroy(&path));
         Compilation_Unit* main_unit = compilation_data_add_compilation_unit_unique(compilation_data, path, true, false);
         if (main_unit == nullptr) {
-            string_append_formated(&result, "ERROR:   Test %s could not load test file\n", name.characters);
+            dynstring_append_formated(&result, "ERROR:   Test %s could not load test file\n", name.characters);
             errors_occured = true;
             continue;
         }
@@ -1621,9 +1621,9 @@ void compiler_run_testcases(bool force_run)
         Exit_Code exit_code = compiler_execute(compilation_data);
         if (exit_code.type != Exit_Code_Type::SUCCESS && case_should_succeed)
         {
-            string_append_formated(&result, "ERROR:   Test %s exited with Code ", name.characters);
+            dynstring_append_formated(&result, "ERROR:   Test %s exited with Code ", name.characters);
             exit_code_append_to_string(&result, exit_code);
-            string_append_formated(&result, "\n");
+            dynstring_append_formated(&result, "\n");
             if (exit_code.type == Exit_Code_Type::COMPILATION_FAILED)
             {
                 compilation_data_append_code_errors_to_string(compilation_data, &result, 1);
@@ -1632,11 +1632,11 @@ void compiler_run_testcases(bool force_run)
             errors_occured = true;
         }
         else if (exit_code.type == Exit_Code_Type::SUCCESS && !case_should_succeed) {
-            string_append_formated(&result, "ERROR:   Test %s successfull, but should fail!\n", name.characters);
+            dynstring_append_formated(&result, "ERROR:   Test %s successfull, but should fail!\n", name.characters);
             errors_occured = true;
         }
         else {
-            string_append_formated(&result, "SUCCESS: Test %s\n", name.characters);
+            dynstring_append_formated(&result, "SUCCESS: Test %s\n", name.characters);
         }
     }
 
@@ -1656,7 +1656,7 @@ void compiler_run_testcases(bool force_run)
     --------------------------
     Each character gets typed one by one, then the text is parsed and analysed
     */
-    Optional<String> text = file_io_load_text_file(string_create_static("upp_code/testcases/045_unions.upp"), scratch_arena);
+    Optional<DynString> text = file_io_load_text_file(string_create_static("upp_code/testcases/045_unions.upp"), scratch_arena);
     if (!text.available) {
         logg("Couldn't execute stresstest, file not found\n");
         return;
@@ -1664,10 +1664,10 @@ void compiler_run_testcases(bool force_run)
 
     double time_stress_start = timer_current_time_in_seconds();
 
-    String code = text.value;
+    DynString code = text.value;
     for (int i = 0; i < code.size; i++)
     {
-        String cut_code = string_create(i + 10);
+        DynString cut_code = dynstring_create(i + 10);
         for (int j = 0; j < i; j++) {
             char c = code.characters[j];
             string_append_character(&cut_code, c);
@@ -1686,7 +1686,7 @@ void compiler_run_testcases(bool force_run)
     for (int i = 0; i < code.size; i++)
     {
         dynamic_array_reset(&stack_parenthesis);
-        String cut_code = string_create(i + 10);
+        DynString cut_code = dynstring_create(i + 10);
         for (int j = 0; j < i; j++)
         {
             char c = code.characters[j];
@@ -1750,7 +1750,7 @@ Call_Signature* call_signature_create_empty()
 }
 
 Call_Parameter* call_signature_add_parameter(
-	Call_Signature* signature, String* name, Datatype* datatype,
+	Call_Signature* signature, DynString* name, Datatype* datatype,
 	bool required, bool requires_named_addressing, bool must_not_be_set)
 {
 	assert(!signature->is_registered, "");
@@ -1792,7 +1792,7 @@ Call_Signature* call_signature_register(Call_Signature* signature, Compilation_D
 	return signature;
 }
 
-void call_signature_append_to_string(Call_Signature* signature, String* string, Type_System* type_system, Datatype_Format format)
+void call_signature_append_to_string(Call_Signature* signature, DynString* string, Type_System* type_system, Datatype_Format format)
 {
 	auto& parameters = signature->parameters;
 	string->append("(");

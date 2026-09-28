@@ -21,25 +21,25 @@ bool style_code_has_color(Style_Code code)
         code == Style_Code::PUSH_UNDERLINE;
 }
 
-void string_style_push(String* str, Mark_Type type, Palette_Color color)
+void string_style_push(DynString* str, Mark_Type type, Palette_Color color)
 {
     string_append_character(str, '\0');
     string_append_character(str, (char)type);
     string_append_character(str, (char)color);
 }
 
-void string_style_push(String* str, Mark_Type type, Syntax_Color color)
+void string_style_push(DynString* str, Mark_Type type, Syntax_Color color)
 {
     string_style_push(str, type, syntax_color_to_palette_color(color));
 }
 
-void string_style_pop(String* str)
+void string_style_pop(DynString* str)
 {
     string_append_character(str, '\0');
     string_append_character(str, (char)Style_Code::POP);
 }
 
-void string_style_remove_codes(String* str)
+void string_style_remove_codes(DynString* str)
 {
     int next = 0;
     for (int i = 0; i < str->size; i++)
@@ -56,7 +56,7 @@ void string_style_remove_codes(String* str)
     str->size = next;
 }
 
-ivec2 string_style_calculated_2D_size(String string)
+ivec2 string_style_calculated_2D_size(DynString string)
 {
     ivec2 result = ivec2(0, 1);
     int x = 0;
@@ -134,7 +134,7 @@ Text_Style text_style_make(Palette_Color text, Palette_Color background, Palette
     return result;
 }
 
-void Rich_Text_Area::fill_from_string(String string, Palette_Color default_text, Palette_Color default_bg, Palette_Color default_underline)
+void Rich_Text_Area::fill_from_string(DynString string, Palette_Color default_text, Palette_Color default_bg, Palette_Color default_underline)
 {
     auto checkpoint = arena->make_checkpoint();
     SCOPE_EXIT(checkpoint.rewind());
@@ -212,7 +212,7 @@ void Rich_Text_Area::fill_from_string(String string, Palette_Color default_text,
     }
 }
 
-void Rich_Text_Area::fill_from_string(String string, Syntax_Color default_text, Syntax_Color default_bg, Syntax_Color default_underline)
+void Rich_Text_Area::fill_from_string(DynString string, Syntax_Color default_text, Syntax_Color default_bg, Syntax_Color default_underline)
 {
     fill_from_string(
         string, 
@@ -228,7 +228,7 @@ Rich_Char* Rich_Text_Area::get_char(ivec2 pos)
     return &buffer[pos.x + size.x * pos.y];
 }
 
-void Rich_Text_Area::set_text(ivec2 pos, String string)
+void Rich_Text_Area::set_text(ivec2 pos, DynString string)
 {
     for (int i = 0; i < string.size; i += 1) {
         get_char(ivec2(pos.x + i, pos.y))->character = string[i];
@@ -256,7 +256,7 @@ void Rich_Text_Area::mark(ivec2 pos, int length, Mark_Type type, Syntax_Color co
 
 void Rich_Text_Area::render(ibox2 box, Raster_Font* font, Renderer_2D* renderer_2D, Render_Pass* render_pass)
 {
-    String text_buffer = string_create(64);
+    DynString text_buffer = dynstring_create(64);
     SCOPE_EXIT(string_destroy(&text_buffer));
 
     ivec2 char_size = font->char_size;
@@ -312,7 +312,7 @@ void Rich_Text_Area::render(ibox2 box, Raster_Font* font, Renderer_2D* renderer_
         assert(line >= 0 && line < size.y && start <= size.x && end <= size.x, "");
 
         // Create string from buffer
-        string_reset(&text_buffer);
+        dynstring_reset(&text_buffer);
         for (int i = start; i < end; i += 1) {
             string_append_character(
                 &text_buffer, buffer[line * size.x + i].character
@@ -350,7 +350,7 @@ void Rich_Text_Area::render(ibox2 box, Raster_Font* font, Renderer_2D* renderer_
         Palette_Color text_color = start_char.text_color;
         x = 0;
         same_style_start = -1;
-        string_reset(&text_buffer);
+        dynstring_reset(&text_buffer);
         while (x < size.x)
         {
             SCOPE_EXIT(x += 1);

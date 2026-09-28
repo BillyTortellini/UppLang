@@ -76,8 +76,8 @@ struct Bytecode_Instruction
 };
 
 void bytecode_generator_compile_function(Compilation_Data* compilation_data, Upp_Function* function);
-void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction instruction);
-void bytecode_generator_append_bytecode_to_string(Compilation_Data* compilation_data, String* string);
+void bytecode_instruction_append_to_string(DynString* string, Bytecode_Instruction instruction);
+void bytecode_generator_append_bytecode_to_string(Compilation_Data* compilation_data, DynString* string);
 Exit_Code exit_code_from_exit_instruction(Bytecode_Instruction& exit_instr);
 
 int bytecode_pack_operation_and_types_to_int(Primitive_Operation operation, Bytecode_Type dst_type, Bytecode_Type left_type, Bytecode_Type right_type);

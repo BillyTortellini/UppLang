@@ -876,25 +876,25 @@ void gui_find_mouse_hover_node(int node_index, bool& return_child_took_input, bo
     return_child_took_mouse_wheel_input = node.has_mouse_wheel_input || child_took_wheel_input;
 }
 
-void gui_append_to_string(String* append_to, int indentation_level, int node_index)
+void gui_append_to_string(DynString* append_to, int indentation_level, int node_index)
 {
     auto& nodes = gui.nodes;
     auto& node = nodes[node_index];
 
     for (int i = 0; i < indentation_level; i++) {
-        string_append_formated(append_to, "  ");
+        dynstring_append_formated(append_to, "  ");
     }
 
     bool print_bb = true;
     bool print_layout = true;
 
-    string_append_formated(append_to, "#%d: ", node_index);
+    dynstring_append_formated(append_to, "#%d: ", node_index);
     if (print_bb) {
         if (!node.clipped_box.available) {
-            string_append_formated(append_to, "CLIPPED");
+            dynstring_append_formated(append_to, "CLIPPED");
         }
         else if (node.hidden_by_parent) {
-            string_append_formated(append_to, "Hidden");
+            dynstring_append_formated(append_to, "Hidden");
         }
         else {
             auto bb = node.bounding_box;
@@ -903,9 +903,9 @@ void gui_append_to_string(String* append_to, int indentation_level, int node_ind
             int h = bb[1].max - bb[1].min;
             int cw = cl[0].max - cl[0].min;
             int ch = cl[1].max - cl[1].min;
-            string_append_formated(append_to, "(%d, %d)", w, h);
+            dynstring_append_formated(append_to, "(%d, %d)", w, h);
             if (cw != w || ch != h) {
-                string_append_formated(append_to, ", Clipped (%d, %d)", cw, ch);
+                dynstring_append_formated(append_to, ", Clipped (%d, %d)", cw, ch);
             }
         }
     }
@@ -1310,23 +1310,23 @@ void gui_update_and_render(Render_Pass* render_pass)
 
 
 
-String* gui_store_string(GUI_Handle parent_handle, const char* initial_string) {
+DynString* gui_store_string(GUI_Handle parent_handle, const char* initial_string) {
     auto node_handle = gui_add_node(parent_handle, gui_size_make_fixed(0.0f), gui_size_make_fixed(0.0f), gui_drawable_make_none());
     gui_node_hide(node_handle);
     if (node_handle.userdata == 0) {
-        String* string = new String;
-        *string = string_create(initial_string);
+        DynString* string = new DynString;
+        *string = dynstring_create(initial_string);
         gui_node_set_userdata(
             node_handle, (void*)string,
             [](void* data) -> void {
-                String* str = (String*)data;
+                DynString* str = (DynString*)data;
                 string_destroy(str);
                 delete str;
             }
         );
         return string;
     }
-    return (String*)node_handle.userdata;
+    return (DynString*)node_handle.userdata;
 }
 
 GUI_Handle gui_root_handle() {
@@ -1540,11 +1540,11 @@ GUI_Drawable gui_drawable_make_none() {
     return drawable;
 }
 
-GUI_Drawable gui_drawable_make_text(String text, vec2 char_size, vec4 color) {
+GUI_Drawable gui_drawable_make_text(DynString text, vec2 char_size, vec4 color) {
     GUI_Drawable drawable;
     drawable.type = GUI_Drawable_Type::TEXT;
     drawable.color = color;
-    drawable.text = string_copy(text);
+    drawable.text = dynstring_copy(text);
     drawable.char_size = char_size;
     return drawable;
 }
@@ -1569,7 +1569,7 @@ void gui_drawable_destroy(GUI_Drawable& drawable) {
 
 
 // GUI PREDEFINED OBJECTS
-GUI_Handle gui_push_text(GUI_Handle parent_handle, String text, vec4 color)
+GUI_Handle gui_push_text(GUI_Handle parent_handle, DynString text, vec4 color)
 {
     auto char_size = gui.default_text_size;
     return gui_add_node(
@@ -1580,7 +1580,7 @@ GUI_Handle gui_push_text(GUI_Handle parent_handle, String text, vec4 color)
     );
 }
 
-GUI_Handle gui_push_text_with_size(GUI_Handle parent_handle, String text, vec2 char_size, vec4 color)
+GUI_Handle gui_push_text_with_size(GUI_Handle parent_handle, DynString text, vec2 char_size, vec4 color)
 {
     return gui_add_node(
         parent_handle,
@@ -1869,7 +1869,7 @@ GUI_Handle gui_push_window(GUI_Handle parent_handle, const char* name)
     return gui_push_scroll_area(window_handle, gui_size_make_fill(false), gui_size_make_fill(false));
 }
 
-bool gui_push_button(GUI_Handle parent_handle, String text)
+bool gui_push_button(GUI_Handle parent_handle, DynString text)
 {
     const vec4 border_color = vec4(vec3(0.2f), 1.0f); // Some shade of gray
     const vec4 normal_color = vec4(vec3(0.8f), 1.0f); // Some shade of gray
@@ -1923,7 +1923,7 @@ GUI_Handle gui_push_focusable(GUI_Handle parent_handle, GUI_Size size_x, GUI_Siz
     return container;
 }
 
-Text_Edit_Input gui_push_text_edit(GUI_Handle parent_handle, String* string, vec2 char_size)
+Text_Edit_Input gui_push_text_edit(GUI_Handle parent_handle, DynString* string, vec2 char_size)
 {
     Text_Edit_Input result;
     result.enter_pressed = false;
@@ -2044,7 +2044,7 @@ void gui_push_example_gui()
     static bool preferred_test = false;
 
     auto window = gui_push_window(gui_root_handle(), "Test");
-    String* str = gui_store_string(window, "");
+    DynString* str = gui_store_string(window, "");
     gui_push_text_edit(window, str, gui.default_text_size);
     if (gui_push_button(window, string_create_static("Test me!"))) {
         logg("%s\n", str->characters);
@@ -2256,7 +2256,7 @@ void gui_push_example_gui()
                 if (pressed) {
                     *value += 1;
                 }
-                String tmp = string_create();
+                DynString tmp = dynstring_create();
                 SCOPE_EXIT(string_destroy(&tmp));
                 tmp.append_formated("%d", *value);
                 gui_push_text(toggle_area, tmp);

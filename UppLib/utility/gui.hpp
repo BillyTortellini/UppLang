@@ -123,7 +123,7 @@ enum class GUI_Drawable_Type
 struct GUI_Drawable
 {
     GUI_Drawable_Type type;
-    String text;
+    DynString text;
     vec2 char_size;
     vec4 color;
 
@@ -134,7 +134,7 @@ struct GUI_Drawable
 };
 
 GUI_Drawable gui_drawable_make_none();
-GUI_Drawable gui_drawable_make_text(String text, vec2 char_size, vec4 color = vec4(0.0f, 0.0f, 0.0f, 1.0f));
+GUI_Drawable gui_drawable_make_text(DynString text, vec2 char_size, vec4 color = vec4(0.0f, 0.0f, 0.0f, 1.0f));
 GUI_Drawable gui_drawable_make_rect(vec4 color, int border_thickness = 0, vec4 border_color = vec4(0, 0, 0, 1), int edge_radius = 0);
 void gui_drawable_destroy(GUI_Drawable& drawable);
 
@@ -159,7 +159,7 @@ T* gui_store_primitive(GUI_Handle parent_handle, T default_value) {
     return (T*)node_handle.userdata;
 }
 
-String* gui_store_string(GUI_Handle parent_handle, const char* initial_string);
+DynString* gui_store_string(GUI_Handle parent_handle, const char* initial_string);
 
 
 
@@ -170,14 +170,14 @@ struct Text_Edit_Input
 };
 
 // PREDEFINED OBJECTS
-GUI_Handle gui_push_text(GUI_Handle parent_handle, String text, vec4 color = vec4(0.0f, 0.0f, 0.0f, 1.0f));
-GUI_Handle gui_push_text_with_size(GUI_Handle parent_handle, String text, vec2 char_size, vec4 color = vec4(0.0f, 0.0f, 0.0f, 1.0f));
+GUI_Handle gui_push_text(GUI_Handle parent_handle, DynString text, vec4 color = vec4(0.0f, 0.0f, 0.0f, 1.0f));
+GUI_Handle gui_push_text_with_size(GUI_Handle parent_handle, DynString text, vec2 char_size, vec4 color = vec4(0.0f, 0.0f, 0.0f, 1.0f));
 GUI_Handle gui_push_scroll_area(GUI_Handle parent_handle, GUI_Size size_x, GUI_Size size_y);
 GUI_Handle gui_push_window(GUI_Handle parent_handle, const char* name);
-bool gui_push_button(GUI_Handle parent_handle, String text);
+bool gui_push_button(GUI_Handle parent_handle, DynString text);
 bool gui_push_toggle(GUI_Handle parent_handle, bool* value);
 GUI_Handle gui_push_text_description(GUI_Handle parent_handle, const char* text);
-Text_Edit_Input gui_push_text_edit(GUI_Handle parent_handle, String* string, vec2 char_size);
+Text_Edit_Input gui_push_text_edit(GUI_Handle parent_handle, DynString* string, vec2 char_size);
 
 void gui_push_example_gui();
 

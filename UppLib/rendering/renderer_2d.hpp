@@ -15,7 +15,7 @@ struct Renderer_2D
     Text_Renderer* text_renderer;
     Pipeline_State pipeline_state;
     Mesh* mesh;
-    String string_buffer;
+    DynString string_buffer;
 
     int batch_start;
     int batch_size;

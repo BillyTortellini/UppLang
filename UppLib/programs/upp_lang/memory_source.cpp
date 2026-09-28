@@ -120,9 +120,9 @@ void Memory_Source::read_as_much_as_possible(void* address, Dynamic_Array<u8>* o
 }
 
 bool Memory_Source::read_null_terminated_string(
-	void* virtual_address, String* out_string, uint max_char_count, bool is_wide_char, Dynamic_Array<u8>* byte_buffer)
+	void* virtual_address, DynString* out_string, uint max_char_count, bool is_wide_char, Dynamic_Array<u8>* byte_buffer)
 {
-	string_reset(out_string);
+	dynstring_reset(out_string);
 	if (virtual_address == nullptr || max_char_count == 0) {
 		return false;
 	}
@@ -175,7 +175,7 @@ bool Memory_Source::read_null_terminated_string(
 
 		// Otherwise copy to string
 		char_count += 1; // Include null-terminator in calculation
-		string_reserve(out_string, char_count);
+		dynstring_reserve(out_string, char_count);
 		memory_copy(out_string->characters, byte_buffer->data, char_count);
 		out_string->size = char_count - 1;
 	}
@@ -205,11 +205,11 @@ void wide_string_from_utf8(Dynamic_Array<wchar_t>* character_buffer, const char*
     character_buffer->size = written_chars;
 }
 
-void wide_string_to_utf8(const wchar_t* wide_string, String* string)
+void wide_string_to_utf8(const wchar_t* wide_string, DynString* string)
 {
-    string_reset(string);
+    dynstring_reset(string);
     int character_count = lstrlenW(wide_string) + 1;
-    string_reserve(string, character_count * 4); // Max 4 bytes per char in UTF-8
+    dynstring_reserve(string, character_count * 4); // Max 4 bytes per char in UTF-8
     int written_chars = WideCharToMultiByte(CP_UTF8, 0, wide_string, character_count, string->characters, string->capacity, 0, 0);
     if (written_chars == 0) {
         string->size = 0;

@@ -12,7 +12,7 @@
 
 struct C_Variable_Instance
 {
-    String* id;
+    DynString* id;
     C_Import_Type* type;
 };
 
@@ -25,7 +25,7 @@ struct C_Variable_Definition
 C_Import_Package c_import_package_create()
 {
     C_Import_Package result;
-    result.symbol_table.symbols = hashtable_create_pointer_empty<String*, C_Import_Symbol>(64);
+    result.symbol_table.symbols = hashtable_create_pointer_empty<DynString*, C_Import_Symbol>(64);
     result.type_system.registered_types = dynamic_array_create<C_Import_Type*>(64);
 
     C_Import_Type* error_prototype = new C_Import_Type;
@@ -127,55 +127,55 @@ struct Header_Parser
     C_Lexer* lexer;
     Dynamic_Array<C_Token> tokens;
     int index;
-    String source_code;
+    DynString source_code;
 
-    String* identifier_typedef;
-    String* identifier_unaligned;
-    String* identifier_inline;
-    String* identifier_inline_alt;
-    String* identifier_ptr32;
-    String* identifier_ptr64;
-    String* identifier_force_inline;
-    String* identifier_static;
-    String* identifier_enum;
-    String* identifier_union;
-    String* identifier_wchar_t;
-    String* identifier_wchar_t_alt;
-    String* identifier_int8;
-    String* identifier_int16;
-    String* identifier_int32;
-    String* identifier_int64;
-    String* identifier_bool;
-    String* identifier_char;
-    String* identifier_short;
-    String* identifier_int;
-    String* identifier_long;
-    String* identifier_float;
-    String* identifier_double;
-    String* identifier_void;
-    String* identifier_signed;
-    String* identifier_unsigned;
-    String* identifier_const;
-    String* identifier_volatile;
-    String* identifier_restrict;
-    String* identifier_atomic;
-    String* identifier_call_conv_cdecl;
-    String* identifier_call_conv_clrcall;
-    String* identifier_call_conv_stdcall;
-    String* identifier_call_conv_fastcall;
-    String* identifier_call_conv_thiscall;
-    String* identifier_call_conv_vectorcall;
+    DynString* identifier_typedef;
+    DynString* identifier_unaligned;
+    DynString* identifier_inline;
+    DynString* identifier_inline_alt;
+    DynString* identifier_ptr32;
+    DynString* identifier_ptr64;
+    DynString* identifier_force_inline;
+    DynString* identifier_static;
+    DynString* identifier_enum;
+    DynString* identifier_union;
+    DynString* identifier_wchar_t;
+    DynString* identifier_wchar_t_alt;
+    DynString* identifier_int8;
+    DynString* identifier_int16;
+    DynString* identifier_int32;
+    DynString* identifier_int64;
+    DynString* identifier_bool;
+    DynString* identifier_char;
+    DynString* identifier_short;
+    DynString* identifier_int;
+    DynString* identifier_long;
+    DynString* identifier_float;
+    DynString* identifier_double;
+    DynString* identifier_void;
+    DynString* identifier_signed;
+    DynString* identifier_unsigned;
+    DynString* identifier_const;
+    DynString* identifier_volatile;
+    DynString* identifier_restrict;
+    DynString* identifier_atomic;
+    DynString* identifier_call_conv_cdecl;
+    DynString* identifier_call_conv_clrcall;
+    DynString* identifier_call_conv_stdcall;
+    DynString* identifier_call_conv_fastcall;
+    DynString* identifier_call_conv_thiscall;
+    DynString* identifier_call_conv_vectorcall;
 };
 
-void print_tokens_till_newline(Dynamic_Array<C_Token> tokens, String source, int token_index);
-Header_Parser header_parser_create(C_Lexer* lexer, String source_code)
+void print_tokens_till_newline(Dynamic_Array<C_Token> tokens, DynString source, int token_index);
+Header_Parser header_parser_create(C_Lexer* lexer, DynString source_code)
 {
     Header_Parser result;
     result.result_package = c_import_package_create();
     result.lexer = lexer;
     result.index = 0;
     result.source_code = source_code;
-    auto add_id = [&](const char* name) -> String* {
+    auto add_id = [&](const char* name) -> DynString* {
         return identifier_pool_add(lexer->id_pool, string_create_static(name));
     };
     result.identifier_typedef = add_id("typedef");
@@ -219,9 +219,9 @@ Header_Parser header_parser_create(C_Lexer* lexer, String source_code)
     // Create new tokens array, where lines starting with # are removed, and __pragma and __declspec compiler stuff is removed
     result.tokens = dynamic_array_create<C_Token>(lexer->tokens.size);
 
-    String* identifier_pragma_underscore = add_id("__pragma");
-    String* identifier_declspec = add_id("__declspec");
-    String* identifier_static_assert = add_id("static_assert");
+    DynString* identifier_pragma_underscore = add_id("__pragma");
+    DynString* identifier_declspec = add_id("__declspec");
+    DynString* identifier_static_assert = add_id("static_assert");
     int last_line_index = -1;
     for (int i = 0; i < lexer->tokens.size; i++)
     {
@@ -349,16 +349,16 @@ bool header_parser_test_next_token_5(Header_Parser* parser, C_Token_Type t1, C_T
         parser->tokens[parser->index + 4].type == t5;
 }
 
-bool header_parser_next_is_identifier(Header_Parser* parser, String* id)
+bool header_parser_next_is_identifier(Header_Parser* parser, DynString* id)
 {
     if (parser->index >= parser->tokens.size) return false;
     return parser->tokens[parser->index].type == C_Token_Type::IDENTIFIER_NAME && parser->tokens[parser->index].attribute.id == id;
 }
 
-void print_tokens_till_newline_token_style(Dynamic_Array<C_Token> tokens, String source, int token_index, C_Lexer* lexer)
+void print_tokens_till_newline_token_style(Dynamic_Array<C_Token> tokens, DynString source, int token_index, C_Lexer* lexer)
 {
     C_Token* start_tok = &tokens[token_index];
-    String str = string_create(256);
+    DynString str = dynstring_create(256);
     SCOPE_EXIT(string_destroy(&str));
     for (int i = token_index; i < tokens.size; i++) 
     {
@@ -369,29 +369,29 @@ void print_tokens_till_newline_token_style(Dynamic_Array<C_Token> tokens, String
         switch (token->type)
         {
         case C_Token_Type::IDENTIFIER_NAME:
-            string_append_formated(&str, token->attribute.id->characters);
+            dynstring_append_formated(&str, token->attribute.id->characters);
             break;
         case C_Token_Type::STRING_LITERAL:
-            string_append_formated(&str, "\"%s\"",  token->attribute.id->characters);
+            dynstring_append_formated(&str, "\"%s\"",  token->attribute.id->characters);
             break;
         case C_Token_Type::BOOLEAN_LITERAL:
-            string_append_formated(&str, "%s", token->attribute.bool_value ? "TRUE": "FALSE");
+            dynstring_append_formated(&str, "%s", token->attribute.bool_value ? "TRUE": "FALSE");
             break;
         case C_Token_Type::FLOAT_LITERAL:
-            string_append_formated(&str, "%3.2f", token->attribute.float_value);
+            dynstring_append_formated(&str, "%3.2f", token->attribute.float_value);
             break;
         case C_Token_Type::INTEGER_LITERAL:
-            string_append_formated(&str, "%d", token->attribute.integer_value);
+            dynstring_append_formated(&str, "%d", token->attribute.integer_value);
             break;
         default:
-            string_append_formated(&str, token_type_to_string(token->type));
+            dynstring_append_formated(&str, token_type_to_string(token->type));
         }
-        string_append_formated(&str, " ");
+        dynstring_append_formated(&str, " ");
     }
     logg(str.characters);
 }
 
-void print_tokens_till_newline(Dynamic_Array<C_Token> tokens, String source, int token_index)
+void print_tokens_till_newline(Dynamic_Array<C_Token> tokens, DynString source, int token_index)
 {
     C_Token* token = &tokens[token_index];
     int end_pos = token->source_code_index;
@@ -401,7 +401,7 @@ void print_tokens_till_newline(Dynamic_Array<C_Token> tokens, String source, int
             break;
         }
     }
-    String t2_content = string_create_substring(&source, token->source_code_index, end_pos + 1);
+    DynString t2_content = string_create_substring(&source, token->source_code_index, end_pos + 1);
     SCOPE_EXIT(string_destroy(&t2_content));
     for (int i = 0; i < t2_content.size; i++) {
         if (t2_content.characters[i] == '\n' || t2_content.characters[i] == '\r') {
@@ -412,13 +412,13 @@ void print_tokens_till_newline(Dynamic_Array<C_Token> tokens, String source, int
     printf("%s", t2_content.characters);
 }
 
-void c_import_type_append_to_string(C_Import_Type* type, String* string, int indentation, bool print_array_members);
+void c_import_type_append_to_string(C_Import_Type* type, DynString* string, int indentation, bool print_array_members);
 
 C_Type_Qualifiers header_parser_parse_type_qualifiers(Header_Parser* parser)
 {
     u8 result = 0;
     while (parser->index < parser->tokens.size && parser->tokens[parser->index].type == C_Token_Type::IDENTIFIER_NAME) {
-        String* id = parser->tokens[parser->index].attribute.id;
+        DynString* id = parser->tokens[parser->index].attribute.id;
         if (id == parser->identifier_atomic) {
             result = result | (u8)C_Type_Qualifiers::ATOMIC;
         }
@@ -453,7 +453,7 @@ Optional<C_Import_Type*> header_parser_parse_primitive_type(Header_Parser* parse
     C_Import_Type prototype;
     prototype.qualifiers = qualifiers;
     prototype.type = C_Import_Type_Type::PRIMITIVE;
-    String* identifier = parser->tokens[parser->index].attribute.id;
+    DynString* identifier = parser->tokens[parser->index].attribute.id;
     if (identifier == parser->identifier_long)
     {
         parser->index++;
@@ -569,7 +569,7 @@ void checkpoint_rewind(Checkpoint point) {
     point.parser->index = point.rewind_token_index;
 }
 
-void c_import_symbol_table_define_symbol(C_Import_Symbol_Table* table, C_Import_Symbol symbol, String* id)
+void c_import_symbol_table_define_symbol(C_Import_Symbol_Table* table, C_Import_Symbol symbol, DynString* id)
 {
     // The only time somy symbol should do shadowing if if its a typdef right after a definition, so the types should match
     C_Import_Symbol* old_sym = hashtable_find_element(&table->symbols, id);
@@ -615,7 +615,7 @@ Optional<C_Import_Type*> header_parser_parse_structure(Header_Parser* parser, C_
     // Check if we need to continue parsing
     C_Import_Type* structure_type = 0;
     {
-        String* id;
+        DynString* id;
         bool has_name = false;
         bool has_definition = false;
         if (header_parser_test_next_token(parser, C_Token_Type::IDENTIFIER_NAME))
@@ -734,7 +734,7 @@ Optional<C_Import_Type*> header_parser_parse_structure(Header_Parser* parser, C_
                 }
                 else if (header_parser_test_next_token(parser, C_Token_Type::IDENTIFIER_NAME))
                 {
-                    String* ref_name = parser->tokens[parser->index].attribute.id;
+                    DynString* ref_name = parser->tokens[parser->index].attribute.id;
                     parser->index++;
                     bool found = false;
                     int found_value = 0;
@@ -869,7 +869,7 @@ Optional<C_Import_Type*> header_parser_parse_type(Header_Parser* parser, bool re
         if (!result.available) {
             if (header_parser_test_next_token(parser, C_Token_Type::IDENTIFIER_NAME))
             {
-                String* id = parser->tokens[parser->index].attribute.id;
+                DynString* id = parser->tokens[parser->index].attribute.id;
                 parser->index++;
                 C_Import_Symbol* symbol = hashtable_find_element(&parser->result_package.symbol_table.symbols, id);
                 if (symbol == 0) {
@@ -1154,7 +1154,7 @@ Optional<C_Variable_Definition> header_parser_parse_variable_definition(Header_P
             success = false;
             return optional_make_failure<C_Variable_Definition>();
         }
-        String* id = parser->tokens[parser->index].attribute.id;
+        DynString* id = parser->tokens[parser->index].attribute.id;
         parser->index += 2;
 
         Optional<Dynamic_Array<C_Import_Parameter>> params = header_parser_parse_parameters(parser);
@@ -1227,35 +1227,35 @@ Optional<C_Variable_Definition> header_parser_parse_variable_definition(Header_P
     return optional_make_failure<C_Variable_Definition>();
 }
 
-void string_indent(String* string, int lvl) {
+void string_indent(DynString* string, int lvl) {
     for (int i = 0; i < lvl; i++) {
-        string_append_formated(string, "    ");
+        dynstring_append_formated(string, "    ");
     }
 }
 
-void c_type_qualifier_append_to_string(String* string, C_Type_Qualifiers qualifiers)
+void c_type_qualifier_append_to_string(DynString* string, C_Type_Qualifiers qualifiers)
 {
     if (((u8)qualifiers & (u8)C_Type_Qualifiers::ATOMIC) != 0) {
-        string_append_formated(string, "atomic ");
+        dynstring_append_formated(string, "atomic ");
     }
     if (((u8)qualifiers & (u8)C_Type_Qualifiers::CONST_QUAL) != 0) {
-        string_append_formated(string, "const ");
+        dynstring_append_formated(string, "const ");
     }
     if (((u8)qualifiers & (u8)C_Type_Qualifiers::RESTRICT) != 0) {
-        string_append_formated(string, "restrict ");
+        dynstring_append_formated(string, "restrict ");
     }
     if (((u8)qualifiers & (u8)C_Type_Qualifiers::SIGNED) != 0) {
-        string_append_formated(string, "signed ");
+        dynstring_append_formated(string, "signed ");
     }
     if (((u8)qualifiers & (u8)C_Type_Qualifiers::UNSIGNED) != 0) {
-        string_append_formated(string, "unsigned ");
+        dynstring_append_formated(string, "unsigned ");
     }
     if (((u8)qualifiers & (u8)C_Type_Qualifiers::VOLATILE) != 0) {
-        string_append_formated(string, "volatile ");
+        dynstring_append_formated(string, "volatile ");
     }
 }
 
-void c_import_type_append_to_string(C_Import_Type* type, String* string, int indentation, bool print_array_members)
+void c_import_type_append_to_string(C_Import_Type* type, DynString* string, int indentation, bool print_array_members)
 {
     string_indent(string, indentation);
     if (type->type != C_Import_Type_Type::POINTER && type->type != C_Import_Type_Type::ARRAY) {
@@ -1267,115 +1267,115 @@ void c_import_type_append_to_string(C_Import_Type* type, String* string, int ind
         switch (type->primitive)
         {
         case C_Import_Primitive::VOID_TYPE:
-            string_append_formated(string, "VOID_TYPE");
+            dynstring_append_formated(string, "VOID_TYPE");
             break;
         case C_Import_Primitive::BOOL:
-            string_append_formated(string, "BOOL");
+            dynstring_append_formated(string, "BOOL");
             break;
         case C_Import_Primitive::CHAR:
-            string_append_formated(string, "CHAR");
+            dynstring_append_formated(string, "CHAR");
             break;
         case C_Import_Primitive::SHORT:
-            string_append_formated(string, "SHORT");
+            dynstring_append_formated(string, "SHORT");
             break;
         case C_Import_Primitive::INT:
-            string_append_formated(string, "INT");
+            dynstring_append_formated(string, "INT");
             break;
         case C_Import_Primitive::LONG:
-            string_append_formated(string, "LONG");
+            dynstring_append_formated(string, "LONG");
             break;
         case C_Import_Primitive::LONG_LONG:
-            string_append_formated(string, "LONG_LONG");
+            dynstring_append_formated(string, "LONG_LONG");
             break;
         case C_Import_Primitive::FLOAT:
-            string_append_formated(string, "FLOAT");
+            dynstring_append_formated(string, "FLOAT");
             break;
         case C_Import_Primitive::DOUBLE:
-            string_append_formated(string, "DOUBLE");
+            dynstring_append_formated(string, "DOUBLE");
             break;
         case C_Import_Primitive::LONG_DOUBLE:
-            string_append_formated(string, "LONG_DOUBLE");
+            dynstring_append_formated(string, "LONG_DOUBLE");
             break;
         default: panic("HEY");
         }
         break;
     }
     case C_Import_Type_Type::UNKNOWN_TYPE: {
-        string_append_formated(string, "ERROR_TYPE");
+        dynstring_append_formated(string, "ERROR_TYPE");
         break;
     }
     case C_Import_Type_Type::ARRAY: {
         c_import_type_append_to_string(type->array.element_type, string, indentation, print_array_members);
-        string_append_formated(string, "[%d]", type->array.array_size);
+        dynstring_append_formated(string, "[%d]", type->array.array_size);
         break;
     }
     case C_Import_Type_Type::POINTER: {
         c_import_type_append_to_string(type->pointer_child_type, string, indentation, print_array_members);
         c_type_qualifier_append_to_string(string, type->qualifiers);
-        string_append_formated(string, "*");
+        dynstring_append_formated(string, "*");
         break;
     }
     case C_Import_Type_Type::STRUCTURE:
     {
         if (type->structure.is_union) {
-            string_append_formated(string, "UNION");
+            dynstring_append_formated(string, "UNION");
         }
         else {
-            string_append_formated(string, "STRUCT");
+            dynstring_append_formated(string, "STRUCT");
         }
         if (!type->structure.is_anonymous) {
-            string_append_formated(string, " %s", type->structure.id->characters);
+            dynstring_append_formated(string, " %s", type->structure.id->characters);
         }
         if (print_array_members)
         {
-            string_append_formated(string, "\n");
+            dynstring_append_formated(string, "\n");
             string_indent(string, indentation);
-            string_append_formated(string, "{\n");
+            dynstring_append_formated(string, "{\n");
             string_indent(string, indentation + 1);
             for (int i = 0; i < type->structure.members.size; i++)
             {
                 C_Import_Structure_Member* member = &type->structure.members[i];
                 c_import_type_append_to_string(member->type, string, indentation + 1, false);
-                string_append_formated(string, "%s\n",  member->id->characters);
+                dynstring_append_formated(string, "%s\n",  member->id->characters);
             }
             string_indent(string, indentation);
-            string_append_formated(string, "}");
+            dynstring_append_formated(string, "}");
         }
         break;
     }
     case C_Import_Type_Type::ENUM: {
-        string_append_formated(string, "ENUM ");
+        dynstring_append_formated(string, "ENUM ");
         if (!type->enumeration.is_anonymous) {
-            string_append_formated(string, " %s", type->enumeration.id->characters);
+            dynstring_append_formated(string, " %s", type->enumeration.id->characters);
         }
-        string_append_formated(string, " {");
+        dynstring_append_formated(string, " {");
         for (int i = 0; i < type->enumeration.members.size; i++) {
             C_Import_Enum_Member* member = &type->enumeration.members[i];
-            string_append_formated(string, "%s = %d, ", member->id->characters, member->value);
+            dynstring_append_formated(string, "%s = %d, ", member->id->characters, member->value);
         }
-        string_append_formated(string, "}");
+        dynstring_append_formated(string, "}");
         break;
     }
     case C_Import_Type_Type::FUNCTION_SIGNATURE: {
-        string_append_formated(string, "Function ");
+        dynstring_append_formated(string, "Function ");
         c_import_type_append_to_string(type->function_signature.return_type, string, 0, false);
-        string_append_formated(string, "(");
+        dynstring_append_formated(string, "(");
         for (int i = 0; i < type->function_signature.parameters.size; i++) {
             C_Import_Parameter* parameter = &type->function_signature.parameters[i];
             c_import_type_append_to_string(parameter->type, string, 0, false);
             if (parameter->has_name) {
-                string_append_formated(string, " %s", parameter->id->characters);
+                dynstring_append_formated(string, " %s", parameter->id->characters);
             }
             if (i != type->function_signature.parameters.size - 1) {
                 string_append(string, ", ");
             }
         }
-        string_append_formated(string, ")");
+        dynstring_append_formated(string, ")");
         break;
     }
     default: panic("HEY");
     }
-    string_append_formated(string, " ");
+    dynstring_append_formated(string, " ");
 }
 
 enum class C_Definition_Modifiers
@@ -1559,8 +1559,8 @@ void header_parser_parse(Header_Parser* parser)
     printf("\n");
     */
 
-    String* identifier_extern_c = identifier_pool_add(parser->lexer->id_pool, string_create_static("C"));
-    String* identifier_extern_cpp = identifier_pool_add(parser->lexer->id_pool, string_create_static("C++"));
+    DynString* identifier_extern_c = identifier_pool_add(parser->lexer->id_pool, string_create_static("C"));
+    DynString* identifier_extern_cpp = identifier_pool_add(parser->lexer->id_pool, string_create_static("C++"));
     while (parser->index + 2 < parser->tokens.size)
     {
         C_Token* t1 = &parser->tokens[parser->index];
@@ -1670,7 +1670,7 @@ Print_Destination print_destination_make(bool is_sizeof, bool is_alignof, bool i
 }
 
 Optional<C_Import_Package> c_importer_parse_header(
-    const char* file_name, Identifier_Pool* id_pool, Dynamic_Array<String> include_dirs, Dynamic_Array<String> defines
+    const char* file_name, Identifier_Pool* id_pool, Dynamic_Array<DynString> include_dirs, Dynamic_Array<DynString> defines
 )
 {
     SCRATCH_ARENA_MAKE_SCOPED(nullptr);
@@ -1678,24 +1678,24 @@ Optional<C_Import_Package> c_importer_parse_header(
     logg("Parsing header file: %s\n---------------------\n", file_name);
     // Run preprocessor on file_name
     {
-        String command = string_create("cl /P /EP");
-        string_append_formated(&command, " backend/c_importer/empty.cpp /Fibackend/c_importer/preprocessed.txt");
+        DynString command = dynstring_create("cl /P /EP");
+        dynstring_append_formated(&command, " backend/c_importer/empty.cpp /Fibackend/c_importer/preprocessed.txt");
         SCOPE_EXIT(string_destroy(&command));
         for (int i = 0; i < include_dirs.size; i++) {
-            String str = include_dirs[i];
+            DynString str = include_dirs[i];
             if (str.size > 0 && str.characters[0] == '\"') {
-                string_append_formated(&command, " /I%s", str.characters);
+                dynstring_append_formated(&command, " /I%s", str.characters);
             }
             else {
-                string_append_formated(&command, " /I\"%s\"", str.characters);
+                dynstring_append_formated(&command, " /I\"%s\"", str.characters);
             }
         }
         for (int i = 0; i < defines.size; i++) {
-            String str = defines[i];
-            string_append_formated(&command, " /D%s", str.characters);
+            DynString str = defines[i];
+            dynstring_append_formated(&command, " /D%s", str.characters);
         }
         string_append(&command, " /FI");
-        string_append_formated(&command, file_name);
+        dynstring_append_formated(&command, file_name);
         logg("Compiling with %s\n", command.characters);
 
         Optional<Process_Result> result = process_start(command);
@@ -1710,11 +1710,11 @@ Optional<C_Import_Package> c_importer_parse_header(
     }
 
     // Load preprocessed file
-    Optional<String> text_file_opt = file_io_load_text_file(string_create_static("backend/c_importer/preprocessed.txt"), scratch_arena);
+    Optional<DynString> text_file_opt = file_io_load_text_file(string_create_static("backend/c_importer/preprocessed.txt"), scratch_arena);
     if (!text_file_opt.available) {
         return optional_make_failure<C_Import_Package>();
     }
-    String source_code = text_file_opt.value;
+    DynString source_code = text_file_opt.value;
 
     // Run lexer over file
     C_Lexer lexer = c_lexer_create();
@@ -1735,12 +1735,12 @@ Optional<C_Import_Package> c_importer_parse_header(
 
     // Get alignment and size of each file
     {
-        String found_symbols = string_create(4096);
-        String output_program = string_create(4096);
+        DynString found_symbols = dynstring_create(4096);
+        DynString output_program = dynstring_create(4096);
         SCOPE_EXIT(string_destroy(&found_symbols));
         SCOPE_EXIT(string_destroy(&output_program));
 
-        string_append_formated(&output_program, "#include <cstdio>\n#include <%s>\n#define myoffsetof(s,m) ((size_t)&(((s*)0)->m))\n\nint main(int argc, char** argv) {\n", file_name);
+        dynstring_append_formated(&output_program, "#include <cstdio>\n#include <%s>\n#define myoffsetof(s,m) ((size_t)&(((s*)0)->m))\n\nint main(int argc, char** argv) {\n", file_name);
         auto iter = hashtable_iterator_create(&package.symbol_table.symbols);
         int count = 0;
         double last_time = timer_current_time_in_seconds();
@@ -1755,11 +1755,11 @@ Optional<C_Import_Package> c_importer_parse_header(
                 last_time = now;
             }
             C_Import_Symbol* symbol = iter.value;
-            String* symbol_name = *iter.key;
+            DynString* symbol_name = *iter.key;
             if (symbol->type == C_Import_Symbol_Type::TYPE) {
                 if (symbol->data_type->type == C_Import_Type_Type::ENUM || symbol->data_type->type == C_Import_Type_Type::STRUCTURE) {
                     if (symbol->data_type->byte_size != 0 || symbol->data_type->alignment != 0) {
-                        string_append_formated(
+                        dynstring_append_formated(
                             &output_program,
                             "    printf(\"%%zd\\n%%zd\\n\", sizeof(%s), alignof(%s));\n",
                             symbol_name->characters, symbol_name->characters
@@ -1772,7 +1772,7 @@ Optional<C_Import_Package> c_importer_parse_header(
                         for (int i = 0; i < symbol->data_type->structure.members.size; i++)
                         {
                             C_Import_Structure_Member* member = &symbol->data_type->structure.members[i];
-                            string_append_formated(
+                            dynstring_append_formated(
                                 &output_program,
                                 "    printf(\"%%zd\\n\", myoffsetof(%s, %s));\n",
                                 symbol_name->characters,
@@ -1786,35 +1786,35 @@ Optional<C_Import_Package> c_importer_parse_header(
             else
             {
                 if (symbol->type == C_Import_Symbol_Type::FUNCTION) {
-                    string_append_formated(&found_symbols, "Function: ");
+                    dynstring_append_formated(&found_symbols, "Function: ");
                 }
                 else {
-                    string_append_formated(&found_symbols, "Global: ");
+                    dynstring_append_formated(&found_symbols, "Global: ");
                 }
-                string_append_formated(&found_symbols, " %s\n", (*iter.key)->characters);
+                dynstring_append_formated(&found_symbols, " %s\n", (*iter.key)->characters);
             }
             hashtable_iterator_next(&iter);
         }
-        string_append_formated(&output_program, "\n    return 0;\n}\n");
+        dynstring_append_formated(&output_program, "\n    return 0;\n}\n");
 
         file_io_write_text_file(string_create_static("backend/c_importer/sizeof_program.cpp"), output_program);
         file_io_write_text_file(string_create_static("backend/c_importer/found_symbols.txt"), found_symbols);
         
-        String command = string_create("cl");
+        DynString command = dynstring_create("cl");
         SCOPE_EXIT(string_destroy(&command));
         string_append(&command, " backend/c_importer/sizeof_program.cpp");
         for (int i = 0; i < include_dirs.size; i++) {
-            String str = include_dirs[i];
+            DynString str = include_dirs[i];
             if (str.size > 0 && str.characters[0] == '\"') {
-                string_append_formated(&command, " /I %s", str.characters);
+                dynstring_append_formated(&command, " /I %s", str.characters);
             }
             else {
-                string_append_formated(&command, " /I \"%s\"", str.characters);
+                dynstring_append_formated(&command, " /I \"%s\"", str.characters);
             }
         }
         for (int i = 0; i < defines.size; i++) {
-            String str = defines[i];
-            string_append_formated(&command, " /D%s", str.characters);
+            DynString str = defines[i];
+            dynstring_append_formated(&command, " /D%s", str.characters);
         }
         string_append(&command, " /link /OUT:backend/c_importer/sizeof_program.exe");
         logg("Size-of Programm Command: %s\n", command.characters);
@@ -1884,8 +1884,8 @@ Optional<C_Import_Package> c_importer_parse_header(
 }
 
 Optional<C_Import_Package> c_importer_import_header(
-    C_Importer* importer, String header_name,
-    Dynamic_Array<String> include_directories, Dynamic_Array<String> defines
+    C_Importer* importer, DynString header_name,
+    Dynamic_Array<DynString> include_directories, Dynamic_Array<DynString> defines
 )
 {
     // Look in cache for file (Not supported anymore because the include-gui doesn't need it)
@@ -1898,7 +1898,7 @@ Optional<C_Import_Package> c_importer_import_header(
     Optional<C_Import_Package> parsed_package = c_importer_parse_header(header_name.characters, &importer->identifier_pool, include_directories, defines);
     if (parsed_package.available)
     {
-        String cache_file_name = string_create(header_name.characters);
+        DynString cache_file_name = dynstring_create(header_name.characters);
         hashtable_insert_element(&importer->cache, cache_file_name, parsed_package.value);
         return optional_make_success(parsed_package.value);
     }
@@ -1910,7 +1910,7 @@ Optional<C_Import_Package> c_importer_import_header(
 C_Importer* c_importer_create()
 {
     C_Importer* importer = new C_Importer;
-    importer->cache = hashtable_create_empty<String, C_Import_Package>(64, hash_string, string_equals);
+    importer->cache = hashtable_create_empty<DynString, C_Import_Package>(64, hash_string, string_equals);
     importer->identifier_pool = identifier_pool_create();
     return importer;
 
@@ -1930,7 +1930,7 @@ C_Importer* c_importer_create()
 
 }
 
-void c_package_cache_destroy(String* key, C_Import_Package* package)
+void c_package_cache_destroy(DynString* key, C_Import_Package* package)
 {
     c_import_package_destroy(package);
 }

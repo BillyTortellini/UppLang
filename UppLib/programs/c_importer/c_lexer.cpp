@@ -162,7 +162,7 @@ C_Token token_make_with_slice(C_Token_Type type, Token_Attribute attribute, Text
     return result;
 }
 
-bool code_parse_comments(C_Lexer* lexer, String* code, int* index, int* character_pos, int* line_number)
+bool code_parse_comments(C_Lexer* lexer, DynString* code, int* index, int* character_pos, int* line_number)
 {
     if (*index + 1 >= code->size) return false;
     // Single line_index comments
@@ -242,7 +242,7 @@ bool code_parse_comments(C_Lexer* lexer, String* code, int* index, int* characte
     return false;
 }
 
-bool code_parse_newline(C_Lexer* lexer, String* code, int* index, int* character_pos, int* line_number)
+bool code_parse_newline(C_Lexer* lexer, DynString* code, int* index, int* character_pos, int* line_number)
 {
     int i = *index;
     if (i < code->size && code->characters[i] == '\n') 
@@ -261,7 +261,7 @@ bool code_parse_newline(C_Lexer* lexer, String* code, int* index, int* character
     return false;
 }
 
-bool code_parse_whitespace(C_Lexer* lexer, String* code, int* index, int* character_pos, int* line_number)
+bool code_parse_whitespace(C_Lexer* lexer, DynString* code, int* index, int* character_pos, int* line_number)
 {
     int start = *index;
     int char_start = *character_pos;
@@ -281,7 +281,7 @@ bool code_parse_whitespace(C_Lexer* lexer, String* code, int* index, int* charac
     return false;
 }
 
-void code_skip_whitespace_and_comments(C_Lexer* lexer, String* code, int* index, int* character_pos, int* line_number)
+void code_skip_whitespace_and_comments(C_Lexer* lexer, DynString* code, int* index, int* character_pos, int* line_number)
 {
     while (true)
     {
@@ -307,7 +307,7 @@ C_Lexer c_lexer_create()
     lexer.tokens = dynamic_array_create<C_Token>(1024);
     lexer.tokens_with_decoration = dynamic_array_create<C_Token>(1024);
 
-    lexer.keywords = hashtable_create_empty<String, C_Token_Type>(64, &hash_string, &string_equals);
+    lexer.keywords = hashtable_create_empty<DynString, C_Token_Type>(64, &hash_string, &string_equals);
     hashtable_insert_element(&lexer.keywords, string_create_static("if"), C_Token_Type::IF);
     hashtable_insert_element(&lexer.keywords, string_create_static("else"), C_Token_Type::ELSE);
     hashtable_insert_element(&lexer.keywords, string_create_static("for"), C_Token_Type::FOR);
@@ -382,10 +382,10 @@ bool number_base_is_valid_character(Number_Base base, int character)
     return false;
 }
 
-void c_lexer_lex(C_Lexer* lexer, String* code, Identifier_Pool* id_pool)
+void c_lexer_lex(C_Lexer* lexer, DynString* code, Identifier_Pool* id_pool)
 {
     lexer->id_pool = id_pool;
-    String identifier_string = string_create(256);
+    DynString identifier_string = dynstring_create(256);
     SCOPE_EXIT(string_destroy(&identifier_string));
 
     dynamic_array_reset(&lexer->tokens);
@@ -624,7 +624,7 @@ void c_lexer_lex(C_Lexer* lexer, String* code, Identifier_Pool* id_pool)
 
             bool invalid_escape_found = false;
             bool terminated_successfull = false;
-            string_reset(&identifier_string);
+            dynstring_reset(&identifier_string);
             while (index < code->size)
             {
                 if (last_was_escape)
@@ -858,7 +858,7 @@ void c_lexer_lex(C_Lexer* lexer, String* code, Identifier_Pool* id_pool)
             identifier_end_index--;
 
             int identifier_string_length = identifier_end_index - index + 1;
-            string_reserve(&identifier_string, identifier_string_length);
+            dynstring_reserve(&identifier_string, identifier_string_length);
             memory_copy(identifier_string.characters, code->characters + index, identifier_string_length + 1);
             identifier_string.size = identifier_string_length;
             identifier_string.characters[identifier_string.size] = 0;
@@ -912,22 +912,22 @@ void c_lexer_destroy(C_Lexer* lexer)
 
 void c_lexer_print(C_Lexer* lexer)
 {
-    String msg = string_create(256);
+    DynString msg = dynstring_create(256);
     SCOPE_EXIT(string_destroy(&msg));
-    string_append_formated(&msg, "Tokens: \n");
+    dynstring_append_formated(&msg, "Tokens: \n");
     for (int i = 0; i < lexer->tokens_with_decoration.size; i++)
     {
         C_Token token = lexer->tokens_with_decoration[i];
-        string_append_formated(&msg, "\t %s (Line %d, Pos %d, size: %d)",
+        dynstring_append_formated(&msg, "\t %s (Line %d, Pos %d, size: %d)",
             token_type_to_string(token.type), token.position.start.line_index, token.position.start.character,
             math_maximum(token.position.end.character - token.position.start.character, 0));
         if (token.type == C_Token_Type::IDENTIFIER_NAME) {
-            string_append_formated(&msg, " = %s", token.attribute.id->characters);
+            dynstring_append_formated(&msg, " = %s", token.attribute.id->characters);
         }
         else if (token.type == C_Token_Type::INTEGER_LITERAL) {
-            string_append_formated(&msg, " = %d", token.attribute.integer_value);
+            dynstring_append_formated(&msg, " = %d", token.attribute.integer_value);
         }
-        string_append_formated(&msg, "\n");
+        dynstring_append_formated(&msg, "\n");
     }
     logg("\n%s\n", msg.characters);
 }

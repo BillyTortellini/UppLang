@@ -20,7 +20,7 @@ struct Framebuffer;
 struct Uniform_Info
 {
     Shader_Datatype type;
-    String uniform_name;
+    DynString uniform_name;
     int array_size; 
     int location;
 };
@@ -29,7 +29,7 @@ struct Vertex_Attribute_Base;
 struct Shader_Input_Info
 {
     Vertex_Attribute_Base* attribute; 
-    String variable_name;
+    DynString variable_name;
     int location;
 };
 
@@ -48,13 +48,13 @@ struct Shader
     bool compiled;
     Dynamic_Array<Shader_Input_Info> input_layout;
     Dynamic_Array<Uniform_Info> uniform_infos;
-    Dynamic_Array<String> allocated_strings;
+    Dynamic_Array<DynString> allocated_strings;
 };
 
 Shader* shader_create_empty();
 void shader_destroy(Shader* shader);
 void shader_reset(Shader* shader);
-void shader_add_shader_stage(Shader* shader, Shader_Stage stage, String source_code);
+void shader_add_shader_stage(Shader* shader, Shader_Stage stage, DynString source_code);
 bool shader_compile(Shader* shader);
 
 struct Hotreload_Shader
@@ -70,7 +70,7 @@ struct Hotreload_Shader
 struct Vertex_Attribute_Base
 {
     Shader_Datatype type;
-    String name; // Static string
+    DynString name; // Static string
     u32 binding_location;
 };
 
@@ -331,10 +331,10 @@ struct Rendering_Core
 
     Dynamic_Array<Vertex_Attribute_Base*> vertex_attributes;
     Dynamic_Array<Vertex_Description*> vertex_descriptions;
-    Hashtable<String, Mesh*> meshes;
-    Hashtable<String, Hotreload_Shader> shaders;
-    Hashtable<String, Render_Pass*> render_passes;
-    Hashtable<String, Framebuffer*> framebuffers;
+    Hashtable<DynString, Mesh*> meshes;
+    Hashtable<DynString, Hotreload_Shader> shaders;
+    Hashtable<DynString, Render_Pass*> render_passes;
+    Hashtable<DynString, Framebuffer*> framebuffers;
 
     Predefined_Objects predefined;
 };

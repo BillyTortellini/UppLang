@@ -62,12 +62,12 @@ String_View string_view_from_cstring(const char* str)
 	return string_view_make((char*)str, strlen(str));
 }
 
-String_View string_view_from_string(String string)
+String_View string_view_from_string(DynString string)
 {
 	return string_view_make(string.characters, (u32)string.size);
 }
 
-String string_view_to_string(String_View view)
+DynString string_view_to_string(String_View view)
 {
 	return string_create_static_with_size(view.characters, (int)view.size);
 }
@@ -257,7 +257,7 @@ void word_pool_handle_words_from_code(Word_Pool* pool, Source_Code* code, Arena*
 // Structures/Enums
 struct Error_Display
 {
-    String message;
+    DynString message;
     Text_Range range;
 
     Compilation_Unit* unit;
@@ -532,14 +532,14 @@ struct Particle
 
 struct Watch_Value
 {
-    String name;
-    String value_as_text;
+    DynString name;
+    DynString value_as_text;
 	bool show_multiline;
 };
 
 struct Pass_Filter
 {
-	String required_substring;
+	DynString required_substring;
 	bool is_active;
 	bool connected_to_next;
 };
@@ -608,7 +608,7 @@ struct Syntax_Editor
     bool show_semantic_infos;
 
 	// Copy-Paste/Yank and put
-    String yank_string;
+    DynString yank_string;
     bool yank_was_line;
 
     // Visual block
@@ -618,23 +618,23 @@ struct Syntax_Editor
     Normal_Mode_Command last_normal_command;
     Dynamic_Array<Insert_Command> last_insert_commands;
     bool record_insert_commands;
-    String last_recorded_code_completion;
+    DynString last_recorded_code_completion;
 
     // Movement
-    String command_buffer;
+    DynString command_buffer;
     char last_search_char;
     char last_search_char2;
     bool last_search_was_forward;
     bool last_search_was_to;
 
     // Search and Fuzzy-Find
-    String fuzzy_search_text;
+    DynString fuzzy_search_text;
     Line_Editor search_text_edit;
     int last_code_completion_tab;
 	bool last_code_completion_was_with_words;
     Dynamic_Array<Editor_Suggestion> suggestions; // Used both for fuzzy-find and code-completion
 
-    String search_text;
+    DynString search_text;
     Text_Index search_start_pos;
     int search_start_cam_start;
     bool search_reverse;
@@ -707,7 +707,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code);
 void normal_command_execute(Normal_Mode_Command& command);
 void syntax_editor_save_text_file();
 Text_Range motion_evaluate(const Motion& motion, Text_Index pos);
-Error_Display error_display_make(String msg, Text_Range range, Compilation_Unit* unit, bool is_token_range_duplicate, int semantic_error_index);
+Error_Display error_display_make(DynString msg, Text_Range range, Compilation_Unit* unit, bool is_token_range_duplicate, int semantic_error_index);
 void syntax_editor_sanitize_cursor();
 Text_Index code_query_text_index_at_last_synchronize(Text_Index text_index, int tab_index, bool move_forwards_in_time);
 unsigned long compiler_thread_entry_fn(void* userdata);
@@ -719,7 +719,7 @@ int line_count_leading_spaces(int line_index);
 void recent_screen_handle_line_insert(Editor_Tab* tab, int line_index);
 void recent_screen_handle_line_delete(Editor_Tab* tab, int line_index);
 
-String line_index_get_text(int line_index, Editor_Tab* tab = nullptr)
+DynString line_index_get_text(int line_index, Editor_Tab* tab = nullptr)
 {
 	if (tab == nullptr) {
 		tab = &syntax_editor.open_tab();
@@ -1166,7 +1166,7 @@ int line_index_move_while_empty(int line_index, int dir, bool move_on_empty, boo
 
 	auto line_meets_condition = [&](int line_index) -> bool
 	{
-		String text = line_index_get_text(line_index);
+		DynString text = line_index_get_text(line_index);
 		bool whitespace_only = true;
 		for (int i = 0; i < text.size; i++) {
 			if (text[i] != ' ') {
@@ -1211,7 +1211,7 @@ namespace Motions
     }
 
     char get_char(Text_Index& pos, int offset = 0, char invalid_char = '\0') {
-        String text = line_index_get_text(pos.line);
+        DynString text = line_index_get_text(pos.line);
         int p = pos.character + offset;
         if (p < 0 || p >= text.size) return invalid_char;
         return text.characters[p];
@@ -1219,7 +1219,7 @@ namespace Motions
 
     void move_while_in_set(Text_Index& pos, Char_Group group, bool forward = true, bool move_out_of = false)
     {
-		String text = line_index_get_text(pos.line);
+		DynString text = line_index_get_text(pos.line);
 		if (!group.contains(text.at(pos.character))) return;
 
         int dir = forward ? 1 : -1;
@@ -1270,7 +1270,7 @@ namespace Motions
 
 	Text_Range text_range_get_string_literal(Text_Index pos)
 	{
-		String text = line_index_get_text(pos.line);
+		DynString text = line_index_get_text(pos.line);
         int index = 0;
         bool inside_string = false;
         int string_start = -1;
@@ -1950,7 +1950,7 @@ namespace Text_Editing
 {
 	// Lines are added before the line-index
 	void add_lines(int line_index, int line_count);
-	void insert_text_in_line(Text_Index index, String str, bool with_particles);
+	void insert_text_in_line(Text_Index index, DynString str, bool with_particles);
 
 	Text_Index add_padding_to_index(Text_Index index, bool is_cursor, bool handle_spaces_as_well = true)
 	{
@@ -1973,7 +1973,7 @@ namespace Text_Editing
 			Text_Editing::add_lines(code->line_count, line_count);
 		}
 
-		String text = line_index_get_text(index.line);
+		DynString text = line_index_get_text(index.line);
 		int insert_space_count = index.character - text.size;
 		if (syntax_editor.mode != Editor_Mode::INSERT && index.character > 0 && is_cursor) {
 			insert_space_count += 1;
@@ -1982,7 +1982,7 @@ namespace Text_Editing
 		{
 			auto checkpoint = syntax_editor.arena.make_checkpoint();
 			SCOPE_EXIT(checkpoint.rewind());
-			String str = string_create(&syntax_editor.arena);
+			DynString str = dynstring_create(&syntax_editor.arena);
 			for (int i = 0; i < insert_space_count; i++) {
 				str.append(' ');
 			}
@@ -2016,7 +2016,7 @@ namespace Text_Editing
         for (int display_line_index = display_start; display_line_index < display_lines.size; display_line_index++)
         {
 			Display_Line& display_line = display_lines[display_line_index];
-			String line_text = line_index_get_text(display_line.line_index);
+			DynString line_text = line_index_get_text(display_line.line_index);
 			if (display_line.line_index < range.start.line) continue;
 			if (display_line.line_index > range.end.line) return;
     
@@ -2063,7 +2063,7 @@ namespace Text_Editing
         }
     }
 
-    void insert_text_in_line(Text_Index index, String str, bool with_particles)
+    void insert_text_in_line(Text_Index index, DynString str, bool with_particles)
     {
 		Editor_Tab& tab = syntax_editor.open_tab();
 		history_start_complex_command(&tab.history);
@@ -2089,7 +2089,7 @@ namespace Text_Editing
 
 		// Check that range is inside code
 		if (index.line < 0 || index.line >= tab.code->line_count) return;
-		String text = line_index_get_text(index.line);
+		DynString text = line_index_get_text(index.line);
 		index.character = math_clamp(index.character, 0, text.size);
 		char_end = math_clamp(char_end, 0, text.size);
 		if (char_end <= index.character) return;
@@ -2190,7 +2190,7 @@ namespace Text_Editing
 			else if (range.start.line >= code->line_count) {
 				return;
 			}
-			String text = line_index_get_text(range.start.line);
+			DynString text = line_index_get_text(range.start.line);
 			range.start.character = math_clamp(range.start.character, 0, text.size);
 
 			// Range end
@@ -2217,8 +2217,8 @@ namespace Text_Editing
         delete_text_in_line(range.start, line_index_get_text(range.start.line).size, false);
     
         // Append remaining text of last-line into first line
-		String end_line_text = line_index_get_text(range.end.line);
-        String remainder = string_create_substring_static(&end_line_text, range.end.character, end_line_text.size);
+		DynString end_line_text = line_index_get_text(range.end.line);
+        DynString remainder = string_create_substring_static(&end_line_text, range.end.character, end_line_text.size);
         insert_text_in_line(range.start, remainder, false);
     
         // Delete all lines inbetween
@@ -2618,7 +2618,7 @@ namespace Auto_Format
 		Char_Group space_critical = Char_Group(Char_Group_Type::SPACE_CRITICAL);
 
 		// 1. Create trimmed string where non-essential spaces are removed
-		String trimmed_text = string_create(tmp_arena, text.size);
+		DynString trimmed_text = dynstring_create(tmp_arena, text.size);
 		int cursor_in_trimmed = cursor;
 		{
 			for (int i = 0; i < indentation; i++) {
@@ -2646,7 +2646,7 @@ namespace Auto_Format
 						}
 						i += 1;
 					}
-					String substring = string_create_substring_static(&text, start, i + 1); // Without closing "
+					DynString substring = string_create_substring_static(&text, start, i + 1); // Without closing "
 					trimmed_text.append(substring);
 					continue;
 				}
@@ -2703,7 +2703,7 @@ namespace Auto_Format
 		tokenizer_tokenize_single_line(trimmed_text, &tokens, line_index, false);
 
 		// 3. Re-create line-text from tokens with formating spaces
-		String formated_string = string_create(tmp_arena);
+		DynString formated_string = dynstring_create(tmp_arena);
 		for (int i = 0; i < indentation; i++) {
 			formated_string.append("    ");
 		}
@@ -2814,7 +2814,7 @@ namespace Auto_Format
 
 
 // LINE INFOS
-bool line_is_empty(String text, bool count_comment_as_empty)
+bool line_is_empty(DynString text, bool count_comment_as_empty)
 {
 	for (int i = 0; i < text.size; i++) {
 		char c = text[i];
@@ -2837,7 +2837,7 @@ int line_is_empty(int line_index, bool count_comment_as_empty)  {
 	return line_is_empty(line_index_get_text(line_index), count_comment_as_empty);
 }
 
-int line_count_leading_spaces(String text)
+int line_count_leading_spaces(DynString text)
 {
 	int index = 0;
 	while (index < text.size && text[index] == ' ') {
@@ -2949,7 +2949,7 @@ Editor_Suggestion suggestion_make_string_view(String_View view, Syntax_Color col
 	return result;
 }
 
-Editor_Suggestion suggestion_make_id(String* id, Syntax_Color color = Syntax_Color::TEXT) {
+Editor_Suggestion suggestion_make_id(DynString* id, Syntax_Color color = Syntax_Color::TEXT) {
 	Editor_Suggestion result;
 	result.type = Suggestion_Type::ID;
 	result.text = string_view_from_string(*id);
@@ -2965,7 +2965,7 @@ Editor_Suggestion suggestion_make_file(int file_index) {
 	return result;
 }
 
-Editor_Suggestion suggestion_make_struct_member(Datatype_Struct* struct_type, Datatype* member_type, String* id) {
+Editor_Suggestion suggestion_make_struct_member(Datatype_Struct* struct_type, Datatype* member_type, DynString* id) {
 	Editor_Suggestion result;
 	result.type = Suggestion_Type::STRUCT_MEMBER;
 	result.options.struct_member.structure = struct_type;
@@ -2974,7 +2974,7 @@ Editor_Suggestion suggestion_make_struct_member(Datatype_Struct* struct_type, Da
 	return result;
 }
 
-Editor_Suggestion suggestion_make_enum_member(Datatype_Enum* enum_type, String* id) {
+Editor_Suggestion suggestion_make_enum_member(Datatype_Enum* enum_type, DynString* id) {
 	Editor_Suggestion result;
 	result.type = Suggestion_Type::ENUM_MEMBER;
 	result.options.enum_member.enumeration = enum_type;
@@ -3015,11 +3015,11 @@ Compilation_Unit* tab_to_compilation_unit(int tab_index) {
 }
 
 // Returns new tab index (Or current tab if file cannot be loaded)
-int syntax_editor_add_tab(String file_path)
+int syntax_editor_add_tab(DynString file_path)
 {
 	auto& editor = syntax_editor;
 
-	String new_filepath = string_copy(file_path);
+	DynString new_filepath = dynstring_copy(file_path);
 	SCOPE_EXIT(string_destroy(&new_filepath)); // Note: on success capacity is set to 0, so it wont be destroyed
     filepath_relative_to_absolute_path(&new_filepath);
 
@@ -3197,13 +3197,13 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 	syntax_editor.display_lines = DynArray<Display_Line>::create(&syntax_editor.arena);
 
 	syntax_editor.visible_line_count = (int)(rendering_core.render_information.backbuffer_height / syntax_editor.font_main->char_size.y) + 1;
-	syntax_editor.command_buffer = string_create();
+	syntax_editor.command_buffer = dynstring_create();
 
-	syntax_editor.fuzzy_search_text = string_create();
+	syntax_editor.fuzzy_search_text = dynstring_create();
 	syntax_editor.suggestions = dynamic_array_create<Editor_Suggestion>();
-	syntax_editor.search_text = string_create();
+	syntax_editor.search_text = dynstring_create();
 
-	syntax_editor.yank_string = string_create();
+	syntax_editor.yank_string = dynstring_create();
 	syntax_editor.yank_was_line = false;
 
 	syntax_editor.last_normal_command.type = Normal_Command_Type::MOVEMENT;
@@ -3211,7 +3211,7 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 	syntax_editor.last_normal_command.options.movement.repeat_count = 0;
 	syntax_editor.last_insert_commands = dynamic_array_create<Insert_Command>();
 	syntax_editor.record_insert_commands = true;
-	syntax_editor.last_recorded_code_completion = string_create();
+	syntax_editor.last_recorded_code_completion = dynstring_create();
 
 	syntax_editor.text_renderer = text_renderer;
 	syntax_editor.renderer_2D = renderer_2D;
@@ -3249,7 +3249,7 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 	compiler_thread_data.compiler_thread = thread_create(compiler_thread_entry_fn, &syntax_editor.compiler_thread_data);
 
 	// Open initial tab
-	String default_filename = string_create_static("upp_code/editor_text.upp");
+	DynString default_filename = string_create_static("upp_code/editor_text.upp");
 	int tab_index = syntax_editor_add_tab(default_filename);
 	syntax_editor_switch_tab(tab_index);
 	assert(tab_index != -1, "");
@@ -3422,7 +3422,7 @@ void syntax_editor_save_text_file()
 	for (int i = 0; i < editor.tabs.size; i++)
 	{
 		Editor_Tab* tab = editor.tabs[i];
-		String whole_text = string_create(256);
+		DynString whole_text = dynstring_create(256);
 		SCOPE_EXIT(string_destroy(&whole_text));
 		source_code_append_to_string(tab->code, &whole_text);
 		auto path = tab->filepath;
@@ -3759,46 +3759,46 @@ bool syntax_editor_toggle_line_breakpoint(int tab_index, int line_index)
 	return false;
 }
 
-void syntax_editor_save_state(String file_path)
+void syntax_editor_save_state(DynString file_path)
 {
 	auto& editor = syntax_editor;
 
 	syntax_editor_save_text_file();
 
-	String output = string_create();
+	DynString output = dynstring_create();
 	SCOPE_EXIT(string_destroy(&output));
-	string_append_formated(&output, "open_tab=%d\n", editor.open_tab_index);
-	string_append_formated(&output, "main_tab=%d\n", editor.main_tab_index);
+	dynstring_append_formated(&output, "open_tab=%d\n", editor.open_tab_index);
+	dynstring_append_formated(&output, "main_tab=%d\n", editor.main_tab_index);
 
 	for (int i = 0; i < editor.tabs.size; i++)
 	{
 		auto& tab = *editor.tabs[i];
-		string_append_formated(&output, "tab=%s\n", tab.filepath.characters);
-		string_append_formated(&output, "cursor_line=%d\n", tab.cursor.line);
-		string_append_formated(&output, "cursor_char=%d\n", tab.cursor.character);
-		string_append_formated(&output, "cam_start=%d\n", tab.cam_start);
+		dynstring_append_formated(&output, "tab=%s\n", tab.filepath.characters);
+		dynstring_append_formated(&output, "cursor_line=%d\n", tab.cursor.line);
+		dynstring_append_formated(&output, "cursor_char=%d\n", tab.cursor.character);
+		dynstring_append_formated(&output, "cam_start=%d\n", tab.cam_start);
 		for (int j = 0; j < tab.folds.size; j++) {
 			auto& fold = tab.folds[j];
-			string_append_formated(&output, "fold=%d;%d\n", fold.interval.min, fold.interval.max);
+			dynstring_append_formated(&output, "fold=%d;%d\n", fold.interval.min, fold.interval.max);
 		}
 		for (int j = 0; j < tab.breakpoints.size; j++) {
 			auto& bp = tab.breakpoints[j];
-			string_append_formated(&output, "breakpoint=%d\n", bp.line_number);
+			dynstring_append_formated(&output, "breakpoint=%d\n", bp.line_number);
 		}
 	}
 	for (int i = 0; i < editor.watch_values.size; i++) {
-		string_append_formated(&output, "watch_value=%s\n", editor.watch_values[i].name.characters);
+		dynstring_append_formated(&output, "watch_value=%s\n", editor.watch_values[i].name.characters);
 	}
 	for (int i = 0; i < (int)Toggle_Option::MAX_ENUM_VALUE; i++)
 	{
 		Toggle_Option option = (Toggle_Option) i;
-		string_append_formated(&output, "%s=%s\n", toggle_option_as_string(option), (syntax_editor.get_option_value(option) ? "true" : "false"));
+		dynstring_append_formated(&output, "%s=%s\n", toggle_option_as_string(option), (syntax_editor.get_option_value(option) ? "true" : "false"));
 	}
 
 	file_io_write_text_file(file_path, output);
 }
 
-void syntax_editor_load_state(String file_path)
+void syntax_editor_load_state(DynString file_path)
 {
 	auto& editor = syntax_editor;
 	editor.mode = Editor_Mode::NORMAL;
@@ -3824,8 +3824,8 @@ void syntax_editor_load_state(String file_path)
 		dynamic_array_reset(&editor.watch_values);
 	}
 
-	String session = file_opt.value;
-	Array<String> lines = string_split(session, '\n');
+	DynString session = file_opt.value;
+	Array<DynString> lines = string_split(session, '\n');
 	SCOPE_EXIT(string_split_destroy(lines));
 
 	bool last_tab_valid = false;
@@ -3833,20 +3833,20 @@ void syntax_editor_load_state(String file_path)
 	bool first_tab = true;
 	int open_tab_index = -5;
 	int main_tab_index = -5;
-	String setting = string_create(16);
+	DynString setting = dynstring_create(16);
 	SCOPE_EXIT(string_destroy(&setting));
-	String value = string_create(16);
+	DynString value = dynstring_create(16);
 	SCOPE_EXIT(string_destroy(&value));
 	for (int i = 0; i < lines.size; i++)
 	{
-		String line = lines[i];
+		DynString line = lines[i];
 		auto seperator = string_find_character_index(&line, '=', 0);
 		if (!seperator.available) {
 			continue;
 		}
-		string_reset(&setting);
+		dynstring_reset(&setting);
 		string_append_string(&setting, &string_create_substring_static(&line, 0, seperator.value));
-		string_reset(&value);
+		dynstring_reset(&value);
 		string_append_string(&value, &string_create_substring_static(&line, seperator.value + 1, line.size));
 		if (setting.size == 0 || value.size == 0) continue;
 
@@ -3932,8 +3932,8 @@ void syntax_editor_load_state(String file_path)
 		}
 		else if (string_equals_cstring(&setting, "watch_value")) {
 			Watch_Value watch_value;
-			watch_value.name = string_copy(value);
-			watch_value.value_as_text = string_create();
+			watch_value.name = dynstring_copy(value);
+			watch_value.value_as_text = dynstring_create();
 			watch_value.show_multiline = false;
 			dynamic_array_push_back(&editor.watch_values, watch_value);
 		}
@@ -3989,7 +3989,7 @@ void syntax_editor_load_state(String file_path)
 
 
 // Helpers
-Error_Display error_display_make(String msg, Text_Range range, Compilation_Unit* unit, bool is_token_range_duplicate, int semantic_error_index)
+Error_Display error_display_make(DynString msg, Text_Range range, Compilation_Unit* unit, bool is_token_range_duplicate, int semantic_error_index)
 {
 	Error_Display result;
 	result.message = msg;
@@ -4010,7 +4010,7 @@ char get_cursor_char(char dummy_char)
 	if (editor.mode == Editor_Mode::INSERT) {
 		index -= 1;
 	}
-	String text = line_index_get_text(c.line);
+	DynString text = line_index_get_text(c.line);
 	if (index >= text.size || index < 0) return dummy_char;
 	return text.characters[index];
 }
@@ -4331,7 +4331,7 @@ Text_Index code_query_text_index_at_last_synchronize(Text_Index text_index, int 
 	return text_index;
 }
 
-void analysis_pass_append_polymorphic_infos(Analysis_Pass* pass, String* string, bool& out_is_poly, bool& out_is_base)
+void analysis_pass_append_polymorphic_infos(Analysis_Pass* pass, DynString* string, bool& out_is_poly, bool& out_is_base)
 {
 	out_is_poly = false;
 	out_is_base = false;
@@ -4418,7 +4418,7 @@ void analysis_pass_append_polymorphic_infos(Analysis_Pass* pass, String* string,
 				state.type = Pattern_Variable_State_Type::UNSET;
 			}
 
-			String* name = variable.symbol_node->name;
+			DynString* name = variable.symbol_node->name;
 			for (int i = 0; i < indentation; i++) {
 				string_append(string, "  ");
 			}
@@ -4474,7 +4474,7 @@ bool analysis_pass_passes_filters(Analysis_Pass* pass)
 	}
 
 	// Generate pass-string (Contains Template-Values as text)
-	String pass_string = string_create(32);
+	DynString pass_string = dynstring_create(32);
 	SCOPE_EXIT(string_destroy(&pass_string));
 	bool is_poly, is_base;
 	analysis_pass_append_polymorphic_infos(pass, &pass_string, is_poly, is_base);
@@ -4717,12 +4717,12 @@ Symbol_Table* code_query_find_symbol_table_at_position(Text_Index index)
 
 
 // Code Completion
-void suggestions_fill_with_file_directory(String search_path)
+void suggestions_fill_with_file_directory(DynString search_path)
 {
 	auto& editor = syntax_editor;
 	Editor_Tab& tab = syntax_editor.open_tab();
 
-	Array<String> path_parts = string_split(search_path, '/');
+	Array<DynString> path_parts = string_split(search_path, '/');
 	SCOPE_EXIT(string_split_destroy(path_parts));
 
 	Directory_Crawler* crawler = editor.directory_crawler;
@@ -4731,7 +4731,7 @@ void suggestions_fill_with_file_directory(String search_path)
 	bool success = true;
 	for (int i = 0; i < path_parts.size - 1 && success; i++)
 	{
-		String part = path_parts[i];
+		DynString part = path_parts[i];
 		auto files = directory_crawler_get_content(crawler);
 		bool found = false;
 		for (int j = 0; j < files.size; j++) {
@@ -4773,7 +4773,7 @@ void suggestions_fill_with_file_directory(String search_path)
 
 bool text_index_inside_comment_or_string_literal(Text_Index index, bool& out_inside_literal)
 {
-	String text = line_index_get_text(index.line);
+	DynString text = line_index_get_text(index.line);
 	out_inside_literal = false;
 
 	bool in_literal = false;
@@ -4812,10 +4812,10 @@ bool text_index_inside_comment_or_string_literal(Text_Index index, bool& out_ins
 struct String_Path_Lookup_Info
 {
 	DynArray<Symbol*> symbols;
-	String last_part;
+	DynString last_part;
 };
 
-String_Path_Lookup_Info string_path_lookup_resolve(String path_lookup_text, Symbol_Table* symbol_table, Import_Type import_type, Arena* arena)
+String_Path_Lookup_Info string_path_lookup_resolve(DynString path_lookup_text, Symbol_Table* symbol_table, Import_Type import_type, Arena* arena)
 {
 	String_Path_Lookup_Info result;
 	result.symbols = DynArray<Symbol*>::create(arena);
@@ -4827,9 +4827,9 @@ String_Path_Lookup_Info string_path_lookup_resolve(String path_lookup_text, Symb
 	}
 	assert(symbol_table != nullptr, "Note: Previously there was some text that this may be null on the very first compile");
 
-	Array<String> path_parts = string_split(path_lookup_text, '~');
+	Array<DynString> path_parts = string_split(path_lookup_text, '~');
 	SCOPE_EXIT(string_split_destroy(path_parts));
-	String last_part = path_parts[path_parts.size - 1];
+	DynString last_part = path_parts[path_parts.size - 1];
 	result.last_part = last_part;
 
 	Symbol_Query_Info query_info = symbol_query_info_make(Symbol_Access_Level::INTERNAL, import_type, true);
@@ -4849,9 +4849,9 @@ String_Path_Lookup_Info string_path_lookup_resolve(String path_lookup_text, Symb
 	// Follow path
 	for (int i = start_index; i < path_parts.size - 1; i++)
 	{
-		String part = path_parts[i];
+		DynString part = path_parts[i];
 
-		String* id = identifier_pool_add(&syntax_editor.editor_compilation_data->identifier_pool, part);
+		DynString* id = identifier_pool_add(&syntax_editor.editor_compilation_data->identifier_pool, part);
 		DynArray<Symbol*> symbols = symbol_table_query_id(symbol_table, id, query_info, arena);
 
 		// After first lookup the query-type changes
@@ -4901,11 +4901,11 @@ void code_completion_find_suggestions()
 
 	if (complete_with_words)
 	{
-		auto helper_string_get_char = [](String str, int index) -> char {
+		auto helper_string_get_char = [](DynString str, int index) -> char {
 			if (index >= 0 && index < str.size) return str.characters[index];
 			return '\0';
 		};
-		String line_text = line_index_get_text(cursor.line);
+		DynString line_text = line_index_get_text(cursor.line);
 		int character_pos = cursor.character;
 
 		// Find word end (There could be spaces etc. after last word
@@ -4952,7 +4952,7 @@ void code_completion_find_suggestions()
 	// Tokenize code
 	Arena tmp_arena = Arena::create();
 	SCOPE_EXIT(tmp_arena.destroy());
-	String line_text = line_index_get_text(tab.cursor.line);
+	DynString line_text = line_index_get_text(tab.cursor.line);
 	int cursor_token_index = 0;
 	DynArray<Token> tokens = tokenize_partial_code(tab.code, cursor, &tmp_arena, cursor_token_index, true, false);
 	// Tokenize partial code prefers later tokens if the text-index is inbetween two tokens, but for completion we want the first token
@@ -4964,7 +4964,7 @@ void code_completion_find_suggestions()
 	}
 
 	auto helper_test_char = [&](int index, char c) -> bool {
-		String& str = line_text;
+		DynString& str = line_text;
 		if (index < 0 || index >= str.size) return false;
 		return str.characters[index] == c;
 	};
@@ -4995,14 +4995,14 @@ void code_completion_find_suggestions()
 		if (helper_test_token(cursor_token_index - 1, Token_Type::IMPORT) &&
 			cursor.line == cursor_token.line && cursor.character > cursor_token.start && cursor.character < cursor_token.end)
 		{
-			String file_path = string_create_substring_static(&line_text, cursor_token.start + 1, cursor.character);
+			DynString file_path = string_create_substring_static(&line_text, cursor_token.start + 1, cursor.character);
 			suggestions_fill_with_file_directory(file_path);
 		}
 		return; // Don't show suggestions inside string
 	}
 
 	// Start search with partially typed word
-	String fuzzy_search_string = string_create_static("");
+	DynString fuzzy_search_string = string_create_static("");
 	if (cursor_token.type == Token_Type::IDENTIFIER || token_type_is_keyword(cursor_token.type)) {
 		fuzzy_search_string = string_create_substring_static(&line_text, cursor_token.start, cursor_token.end);
 	}
@@ -5015,7 +5015,7 @@ void code_completion_find_suggestions()
 	// Hashtag completion
 	if (helper_test_char(cursor.character - 1, '#'))
 	{
-		auto helper_add_id = [&](String* id) {
+		auto helper_add_id = [&](DynString* id) {
 			fuzzy_search_add_item(*id, unranked_suggestions.size);
 			dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(id));
 		};
@@ -5051,7 +5051,7 @@ void code_completion_find_suggestions()
 		// First resolve path
 		Import_Type import_type = Import_Type::SYMBOLS;
 		Token path_start_token = helper_get_token(path_start_index);
-		String path_string = string_create_substring_static(&line_text, path_start_token.start, cursor.character);
+		DynString path_string = string_create_substring_static(&line_text, path_start_token.start, cursor.character);
 		DynArray<Symbol*> symbols = string_path_lookup_resolve(path_string, symbol_table, import_type, &tmp_arena).symbols;
 
 		// Add symbols to results 
@@ -5171,7 +5171,7 @@ void code_completion_find_suggestions()
 			});
 
 			// Handle aliases
-			String* original_id = symbol->id;
+			DynString* original_id = symbol->id;
 			while (symbol->type == Symbol_Type::ALIAS) {
 				symbol = symbol->options.alias_for;
 			}
@@ -5347,7 +5347,7 @@ void code_completion_find_suggestions()
 		if (token_index == 0) // import operators should not count as operators keyword
 		{
 			for (int i = 0; i < (int)Custom_Operator_Type::INVALID; i++) {
-				String* id = ids.custom_operator_function_names[i];
+				DynString* id = ids.custom_operator_function_names[i];
 				fuzzy_search_add_item(*id, unranked_suggestions.size);
 				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(id));
 			}
@@ -5410,11 +5410,11 @@ void code_completion_insert_suggestion()
 	auto& editor = syntax_editor;
 	Editor_Tab& tab = syntax_editor.open_tab();
 
-	String replace_string;
+	DynString replace_string;
 	if (editor.record_insert_commands)
 	{
 		auto& suggestions = editor.suggestions;
-		string_reset(&editor.last_recorded_code_completion);
+		dynstring_reset(&editor.last_recorded_code_completion);
 		if (suggestions.size == 0) return;
 		replace_string = string_view_to_string(suggestions[0].text);
 		string_append_string(&editor.last_recorded_code_completion, &replace_string);
@@ -5481,9 +5481,9 @@ void editor_split_line_at_cursor(int indentation_offset)
 	auto& mode = editor.mode;
 	auto& cursor = tab.cursor;
 
-	String text = line_index_get_text(cursor.line);
+	DynString text = line_index_get_text(cursor.line);
 	int line_size = text.size; // Text may be invalid after applying history changes
-	String cutout = string_create_substring_static(&text, cursor.character, text.size);
+	DynString cutout = string_create_substring_static(&text, cursor.character, text.size);
 
 	history_start_complex_command(&tab.history);
 	SCOPE_EXIT(history_stop_complex_command(&tab.history));
@@ -5510,7 +5510,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 	auto checkpoint = arena->make_checkpoint();
 	SCOPE_EXIT(checkpoint.rewind());
 
-	String line_text = line_index_get_text(pos.line);
+	DynString line_text = line_index_get_text(pos.line);
 
 	auto do_char_search = [&](bool forward, bool search_towards, bool sneak_search) 
 	{
@@ -6002,7 +6002,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 			for (int offset = 0; offset < tab.code->line_count; offset += 1)
 			{
 				int line_index = math_modulo(index.line + offset * (search_reverse ? -1 : 1), tab.code->line_count);
-				String line_text = line_index_get_text(line_index);
+				DynString line_text = line_index_get_text(line_index);
 
 				if (search_reverse)
 				{
@@ -6059,7 +6059,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 
 		pos = sanitize_index(pos);
 		center_camera_on_cursor_if_cursor_not_visible();
-		String line_text = line_index_get_text(pos.line);
+		DynString line_text = line_index_get_text(pos.line);
 		if (is_cursor_movement && !is_pure_vertical_movement) {
 			tab.move_cursor_horizontal_on_vertical_movement = false;
 		}
@@ -6335,7 +6335,7 @@ bool motion_is_line_motion(const Motion & motion) {
 				motion.movement.type == Movement_Type::MOVE_DOWN));
 }
 
-void text_range_append_to_string(Text_Range range, String* str)
+void text_range_append_to_string(Text_Range range, DynString* str)
 {
 	auto& editor = syntax_editor;
 	Editor_Tab& tab = syntax_editor.open_tab();
@@ -6343,26 +6343,26 @@ void text_range_append_to_string(Text_Range range, String* str)
 
 	// Handle single line case first
 	if (range.start.line == range.end.line) {
-		String line_text = line_index_get_text(range.start.line);
-		String substring = string_create_substring_static(&line_text, range.start.character, range.end.character);
+		DynString line_text = line_index_get_text(range.start.line);
+		DynString substring = string_create_substring_static(&line_text, range.start.character, range.end.character);
 		string_append_string(str, &substring);
 		return;
 	}
 
 	// Append first line
-	String start_line_text = line_index_get_text(range.start.line);
-	String substring = string_create_substring_static(&start_line_text, range.start.character, start_line_text.size);
+	DynString start_line_text = line_index_get_text(range.start.line);
+	DynString substring = string_create_substring_static(&start_line_text, range.start.character, start_line_text.size);
 	string_append_string(str, &substring);
 
 	// Append lines until end
 	for (int i = range.start.line + 1; i <= range.end.line && i < code->line_count; i++)
 	{
-		String line_text = line_index_get_text(i);
+		DynString line_text = line_index_get_text(i);
 		string_append_character(str, '\n');
 
 		// Append line content
 		if (i == range.end.line) {
-			String substring = string_create_substring_static(&line_text, 0, range.end.character);
+			DynString substring = string_create_substring_static(&line_text, 0, range.end.character);
 			string_append_string(str, &substring);
 		}
 		else {
@@ -6373,7 +6373,7 @@ void text_range_append_to_string(Text_Range range, String* str)
 
 struct Yank_Line
 {
-	String text;
+	DynString text;
 	int indentation;
 };
 
@@ -6468,9 +6468,9 @@ void syntax_editor_insert_yank(bool before_cursor)
 			}
 
 			// Append first line cutoff to last line, e.g. asdf|what and then put needs to add what to the end
-			String line_text = line_index_get_text(pos.line);
+			DynString line_text = line_index_get_text(pos.line);
 			int cutoff_start = pos.character + first_line.text.size;
-			String substring = string_create_substring_static(&line_text, cutoff_start, line_text.size);
+			DynString substring = string_create_substring_static(&line_text, cutoff_start, line_text.size);
 			Text_Editing::insert_text_in_line(text_index_make_line_end(code, pos.line + yank_lines.size - 1), substring, false);
 			Text_Editing::delete_text_in_line(text_index_make(pos.line, cutoff_start), line_text.size, false);
 		}
@@ -6509,7 +6509,7 @@ void normal_command_execute(Normal_Mode_Command & command)
 	auto history = &tab.history;
 	const bool inline_folds = syntax_editor.get_option_value(Toggle_Option::SHOW_FOLDS_INLINE);
 
-	String line_text = line_index_get_text(cursor.line);
+	DynString line_text = line_index_get_text(cursor.line);
 
 	// Filter commands during debug mode
 	bool debugger_running = debugger_get_state(editor.debugger).process_state != Debug_Process_State::NO_ACTIVE_PROCESS;
@@ -6658,7 +6658,7 @@ void normal_command_execute(Normal_Mode_Command & command)
 			int start_line = range.start.line;
 			int end_line = range.end.line;
 
-			string_reset(&editor.yank_string);
+			dynstring_reset(&editor.yank_string);
 			for (int i = start_line; i <= end_line; i += 1) {
 				auto line_text = line_index_get_text(i);
 				string_append_string(&editor.yank_string, &line_text);
@@ -6674,7 +6674,7 @@ void normal_command_execute(Normal_Mode_Command & command)
 			if (command.type == Normal_Command_Type::YANK_MOTION) {
 				Text_Editing::particles_add_in_range(range, vec3(0.2f, 0.2f, 0.8f));
 			}
-			string_reset(&editor.yank_string);
+			dynstring_reset(&editor.yank_string);
 			text_range_append_to_string(range, &editor.yank_string);
 		}
 		// printf("Yanked: was_line = %s ----\n%s\n----\n", (editor.yank_was_line ? "true" : "false"), editor.yank_string.characters);
@@ -6872,7 +6872,7 @@ void normal_command_execute(Normal_Mode_Command & command)
 	case Normal_Command_Type::ENTER_FUZZY_FIND_DEFINITION: 
 	{
 		syntax_editor_wait_for_newest_compiler_info(false);
-		string_reset(&editor.fuzzy_search_text);
+		dynstring_reset(&editor.fuzzy_search_text);
 		editor.search_text_edit = line_editor_make();
 		dynamic_array_reset(&editor.suggestions);
 		editor.mode = Editor_Mode::FUZZY_FIND_DEFINITION;
@@ -6916,9 +6916,9 @@ void normal_command_execute(Normal_Mode_Command & command)
 		if (text_index_equal(range.start, range.end)) break;
 
 		assert(range.start.line == range.end.line && range.start.line == cursor.line, "");
-		String substr = string_create_substring_static(&line_text, range.start.character, range.end.character);
+		DynString substr = string_create_substring_static(&line_text, range.start.character, range.end.character);
 		editor.search_reverse = false;
-		string_reset(&editor.search_text);
+		dynstring_reset(&editor.search_text);
 		string_append_string(&editor.search_text, &substr);
 
 		cursor = movement_evaluate(Parsing::movement_make(Movement_Type::REPEAT_TEXT_SEARCH, 1), cursor, true);
@@ -6932,7 +6932,7 @@ void normal_command_execute(Normal_Mode_Command & command)
 		Text_Editing::add_padding_to_cursor();
 		auto checkpoint = editor.arena.make_checkpoint();
 		SCOPE_EXIT(checkpoint.rewind());
-		String indent_str = string_create(&editor.arena);
+		DynString indent_str = dynstring_create(&editor.arena);
 		for (int i = 0; i < command.repeat_count; i++) {
 			indent_str.append("    ");
 		}
@@ -7191,7 +7191,7 @@ void insert_command_execute(Insert_Command input)
 	auto& cursor = tab.cursor;
 	auto& pos = cursor.character;
 
-	String text = line_index_get_text(cursor.line);
+	DynString text = line_index_get_text(cursor.line);
 
 	Arena* tmp_arena = &editor.arena;
 	auto checkpoint = tmp_arena->make_checkpoint();
@@ -7270,7 +7270,7 @@ void insert_command_execute(Insert_Command input)
 
 		Text_Editing::add_padding_to_cursor();
 		int space_count = 4 - (pos % 4);
-		String space_str = string_create(tmp_arena);
+		DynString space_str = dynstring_create(tmp_arena);
 		for (int i = 0; i < space_count; i++) {
 			space_str.append(' ');
 		}
@@ -7654,7 +7654,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 
 		// Check that character is valid
 		if (msg.character < ' ' || msg.character > 128) {
-			string_reset(&editor.command_buffer);
+			dynstring_reset(&editor.command_buffer);
 			return;
 		}
 
@@ -7680,11 +7680,11 @@ void syntax_editor_process_key_message(Key_Message & msg)
 					cursor.line = range.start.line;
 					editor.visual_block_start_line = range.end.line;
 				}
-				string_reset(&cmd_buffer);
+				dynstring_reset(&cmd_buffer);
 			}
 			else if (motion_result.type == Parse_Result_Type::FAILURE) 
 			{
-				string_reset(&cmd_buffer);
+				dynstring_reset(&cmd_buffer);
 			}
 			break;
 		}
@@ -7692,10 +7692,10 @@ void syntax_editor_process_key_message(Key_Message & msg)
 		Parse_Result<Movement> result = Parsing::parse_movement(index);
 		if (result.type == Parse_Result_Type::SUCCESS) {
 			cursor = movement_evaluate(result.result, cursor, true);
-			string_reset(&cmd_buffer);
+			dynstring_reset(&cmd_buffer);
 		}
 		else if (result.type == Parse_Result_Type::FAILURE) {
-			string_reset(&cmd_buffer);
+			dynstring_reset(&cmd_buffer);
 		}
 
 		break;
@@ -7707,7 +7707,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 		// Filter out special/unnecessary messages
 		{
 			if (msg.key_code == Key_Code::L && msg.ctrl_down && msg.key_down) {
-				string_reset(&editor.command_buffer);
+				dynstring_reset(&editor.command_buffer);
 				logg("Command canceled: \"%s\"!\n", editor.command_buffer.characters);
 				return;
 			}
@@ -7742,14 +7742,14 @@ void syntax_editor_process_key_message(Key_Message & msg)
 				int repeat_count = parse_repeat_count(index, 1);
 				Normal_Mode_Command cmd = Parsing::normal_mode_command_make(command_type, repeat_count);
 				normal_command_execute(cmd);
-				string_reset(&editor.command_buffer);
+				dynstring_reset(&editor.command_buffer);
 				return;
 			}
 		}
 
 		// Check that character is valid
 		if (msg.character != '\t' && (msg.character < ' ' || msg.character > 128)) {
-			string_reset(&editor.command_buffer);
+			dynstring_reset(&editor.command_buffer);
 			return;
 		}
 
@@ -7760,11 +7760,11 @@ void syntax_editor_process_key_message(Key_Message & msg)
 		Parse_Result<Normal_Mode_Command> result = parse_normal_command(index);
 		if (result.type == Parse_Result_Type::SUCCESS) {
 			normal_command_execute(result.result);
-			string_reset(&cmd_buffer);
+			dynstring_reset(&cmd_buffer);
 		}
 		else if (result.type == Parse_Result_Type::FAILURE) {
 			logg("Command parsing failed: \"%s\"!\n", editor.command_buffer.characters);
-			string_reset(&cmd_buffer);
+			dynstring_reset(&cmd_buffer);
 		}
 
 		break;
@@ -7830,7 +7830,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 				if (file_info.is_directory) {
 					return;
 				}
-				String full_path = string_copy(directory_crawler_get_path(editor.directory_crawler));
+				DynString full_path = dynstring_copy(directory_crawler_get_path(editor.directory_crawler));
 				SCOPE_EXIT(string_destroy(&full_path));
 				string_append(&full_path, "/");
 				string_append_string(&full_path, &file_info.filename);
@@ -7858,7 +7858,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 				if (result.available) {
 					reset_pos = result.value + 1;
 				}
-				string_remove_substring(&search, reset_pos, search.size);
+				dynstring_remove_substring(&search, reset_pos, search.size);
 				string_append_string(&search, symbol->id);
 				if (symbol->type == Symbol_Type::MODULE) {
 					string_append_character(&search, '~');
@@ -7875,7 +7875,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 				if (result.available) {
 					reset_pos = result.value + 1;
 				}
-				string_remove_substring(&search, reset_pos, search.size);
+				dynstring_remove_substring(&search, reset_pos, search.size);
 				string_append_string(&search, &file_info.filename);
 				if (file_info.is_directory) {
 					string_append_character(&search, '/');
@@ -7900,7 +7900,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 			auto& tab = syntax_editor.open_tab();
 
 			// Special code path for file search
-			String search_text = editor.fuzzy_search_text;
+			DynString search_text = editor.fuzzy_search_text;
 			if (search_text.size >= 2 && search_text.characters[0] == '.' && search_text.characters[1] == '/') {
 				search_text = string_create_substring_static(&editor.fuzzy_search_text, 2, editor.fuzzy_search_text.size);
 				suggestions_fill_with_file_directory(search_text);
@@ -8010,7 +8010,7 @@ int ir_block_find_first_instruction_hitting_statement_rec(IR_Code_Block * block,
 struct Watch_Value_Post_Op
 {
 	bool is_member_access;
-	String member_name;
+	DynString member_name;
 	int array_access;
 };
 
@@ -8030,11 +8030,11 @@ void watch_values_update()
 	for (int i = 0; i < editor.watch_values.size; i++)
 	{
 		auto& watch_value = editor.watch_values[i];
-		string_reset(&watch_value.value_as_text);
+		dynstring_reset(&watch_value.value_as_text);
 
 		// Parse post-ops
 		bool success = true;
-		String value_name = string_create_substring_static(&watch_value.name, 0, watch_value.name.size);
+		DynString value_name = string_create_substring_static(&watch_value.name, 0, watch_value.name.size);
 		dynamic_array_reset(&post_ops);
 		{
 			int index = 0;
@@ -8120,14 +8120,14 @@ void watch_values_update()
 		}
 
 		if (!success) {
-			string_append_formated(&watch_value.value_as_text, "Parsing Watch-Value failed");
+			dynstring_append_formated(&watch_value.value_as_text, "Parsing Watch-Value failed");
 			continue;
 		}
 
 		// Read value
 		Debugger_Value_Read result = debugger_read_variable_value(debugger, value_name, &byte_buffer, editor.selected_stack_frame, 3);
 		if (!result.success) {
-			string_append_formated(&watch_value.value_as_text, result.error_msg);
+			dynstring_append_formated(&watch_value.value_as_text, result.error_msg);
 			continue;
 		}
 
@@ -8307,7 +8307,7 @@ void syntax_editor_update(bool& animations_running)
 	animations_running = false;
 
 	UI_Input_Info input_info = ui_system_start_frame(input);
-	String tmp_str = string_create();
+	DynString tmp_str = dynstring_create();
 	SCOPE_EXIT(string_destroy(&tmp_str));
 
 	// Update particles
@@ -8356,7 +8356,7 @@ void syntax_editor_update(bool& animations_running)
 	{
 		editor_leave_insert_mode();
 		editor.mode = Editor_Mode::NORMAL;
-		String filename = string_create();
+		DynString filename = dynstring_create();
 		SCOPE_EXIT(string_destroy(&filename));
 		bool worked = file_io_open_file_selection_dialog(&filename);
 		if (worked) {
@@ -8448,7 +8448,7 @@ void syntax_editor_update(bool& animations_running)
 
 			auto update = ui_system_push_text_input(filter.required_substring);
 			if (update.text_was_changed) {
-				string_reset(&filter.required_substring);
+				dynstring_reset(&filter.required_substring);
 				string_append_string(&filter.required_substring, &update.new_text);
 				filters_updated = true;
 			}
@@ -8469,7 +8469,7 @@ void syntax_editor_update(bool& animations_running)
 			Pass_Filter filter;
 			filter.connected_to_next = false;
 			filter.is_active = true;
-			filter.required_substring = string_create("");
+			filter.required_substring = dynstring_create("");
 			dynamic_array_push_back(&editor.poly_pass_filters, filter);
 			filters_updated = true;
 		}
@@ -8516,14 +8516,14 @@ void syntax_editor_update(bool& animations_running)
 				auto pass = passes[i];
 				bool passes_filter = analysis_pass_passes_filters(pass);
 
-				string_reset(&tmp_str);
+				dynstring_reset(&tmp_str);
 				bool is_poly, is_base;
 				analysis_pass_append_polymorphic_infos(pass, &tmp_str, is_poly, is_base);
 				string_style_remove_codes(&tmp_str);
 
-				String tmp_header = string_create();
+				DynString tmp_header = dynstring_create();
 				SCOPE_EXIT(string_destroy(&tmp_header));
-				string_append_formated(&tmp_header, "pass: %p ", pass);
+				dynstring_append_formated(&tmp_header, "pass: %p ", pass);
 				if (is_base) {
 					string_append(&tmp_header, "Base ");
 				}
@@ -8546,10 +8546,10 @@ void syntax_editor_update(bool& animations_running)
 				auto container = ui_system_push_indented_container(2, false, vec3(0.0f));
 				ui_system_push_active_container(container, false);
 
-				Array<String> lines = string_split(tmp_str, '\n');
+				Array<DynString> lines = string_split(tmp_str, '\n');
 				SCOPE_EXIT(string_split_destroy(lines));
 				for (int i = 0; i < lines.size; i++) {
-					String& line = lines[i];
+					DynString& line = lines[i];
 					if (line.size == 0) continue;
 					ui_system_push_label(line, false);
 				}
@@ -8593,7 +8593,7 @@ void syntax_editor_update(bool& animations_running)
 			if (debugger_running)
 			{
 				Array<Stack_Frame> stack_frames = debugger_get_stack_frames(editor.debugger);
-				Dynamic_Array<String> strings = dynamic_array_create<String>(stack_frames.size);
+				Dynamic_Array<DynString> strings = dynamic_array_create<DynString>(stack_frames.size);
 				SCOPE_EXIT(
 					for (int i = 0; i < strings.size; i++) {
 						string_destroy(&strings[i]);
@@ -8604,7 +8604,7 @@ void syntax_editor_update(bool& animations_running)
 				for (int i = 0; i < stack_frames.size; i++)
 				{
 					Stack_Frame& frame = stack_frames[i];
-					String str = string_create();
+					DynString str = dynstring_create();
 					str.append_formated("%2d ", i);
 
 					bool found_info = false;
@@ -8616,7 +8616,7 @@ void syntax_editor_update(bool& animations_running)
 
 					if (!found_info) {
 						Closest_Symbol_Info symbol_info = debugger_find_closest_symbol_name(editor.debugger, frame.instruction_pointer);
-						string_append_formated(&str, "[0x%08llX] ", frame.stack_frame_start_address);
+						dynstring_append_formated(&str, "[0x%08llX] ", frame.stack_frame_start_address);
 						closest_symbol_info_append_to_string(editor.debugger, symbol_info, &str);
 					}
 
@@ -8673,9 +8673,9 @@ void syntax_editor_update(bool& animations_running)
 						continue;
 					}
 
-					string_reset(&tmp_str);
-					String src_text = line_index_get_text(breakpoint.line_number, &tab);
-					string_append_formated(&tmp_str, "#%05d, \"%s\"", breakpoint.line_number, src_text.characters);
+					dynstring_reset(&tmp_str);
+					DynString src_text = line_index_get_text(breakpoint.line_number, &tab);
+					dynstring_append_formated(&tmp_str, "#%05d, \"%s\"", breakpoint.line_number, src_text.characters);
 					ui_system_push_label(tmp_str.characters, false);
 				}
 				};
@@ -8686,7 +8686,7 @@ void syntax_editor_update(bool& animations_running)
 				auto& tab = *editor.tabs[i];
 				if (i == editor.open_tab_index) continue;
 				if (tab.breakpoints.size == 0) continue;
-				String name = filepath_get_parts(tab.filepath).filename;
+				DynString name = filepath_get_parts(tab.filepath).filename;
 				ui_system_push_label(name, false);
 				push_tab_breakpoints(i);
 			}
@@ -8708,9 +8708,9 @@ void syntax_editor_update(bool& animations_running)
 
 				Text_Input_State state = ui_system_push_text_input(watch_value.name);
 				if (state.text_was_changed) {
-					string_reset(&watch_value.name);
+					dynstring_reset(&watch_value.name);
 					string_append_string(&watch_value.name, &state.new_text);
-					string_reset(&watch_value.value_as_text);
+					dynstring_reset(&watch_value.value_as_text);
 					update_watch_values = true;
 					animations_running = true;
 				}
@@ -8736,7 +8736,7 @@ void syntax_editor_update(bool& animations_running)
 					continue;
 				}
 
-				Array<String> lines = string_split(watch_value.value_as_text, '\n');
+				Array<DynString> lines = string_split(watch_value.value_as_text, '\n');
 				SCOPE_EXIT(string_split_destroy(lines));
 				for (int i = 0; i < lines.size; i++) {
 					ui_system_push_label(lines[i], false);
@@ -8758,8 +8758,8 @@ void syntax_editor_update(bool& animations_running)
 
 				if (is_valid) {
 					Watch_Value new_value;
-					new_value.name = string_copy(input.new_text);
-					new_value.value_as_text = string_create();
+					new_value.name = dynstring_copy(input.new_text);
+					new_value.value_as_text = dynstring_create();
 					new_value.show_multiline = false;
 					dynamic_array_push_back(&editor.watch_values, new_value);
 					watch_values_update();
@@ -8822,7 +8822,7 @@ void syntax_editor_update(bool& animations_running)
 			for (int i = 0; i < editor.tabs.size; i++)
 			{
 				auto& tab = *editor.tabs[i];
-				String name = tab.filepath;
+				DynString name = tab.filepath;
 				int start = 0;
 				int end = name.size;
 
@@ -9035,7 +9035,7 @@ void syntax_editor_update(bool& animations_running)
 	if (errors.size == 0)
 	{
 		auto exit_code = compiler_execute(editor.editor_compilation_data);
-		String output = string_create(256);
+		DynString output = dynstring_create(256);
 		SCOPE_EXIT(string_destroy(&output));
 		exit_code_append_to_string(&output, exit_code);
 		logg("\nProgram Exit with Code: %s\n", output.characters);
@@ -9044,14 +9044,14 @@ void syntax_editor_update(bool& animations_running)
 	{
 		// Print errors
 		logg("Could not run program, there were errors:\n");
-		String tmp = string_create();
+		DynString tmp = dynstring_create();
 		SCOPE_EXIT(string_destroy(&tmp));
 
 		// Append Parser errors
 		for (int i = 0; i < errors.size; i++)
 		{
 			const auto& error = errors[i];
-			string_append_formated(&tmp, "\t%s\n", error.msg);
+			dynstring_append_formated(&tmp, "\t%s\n", error.msg);
 		}
 
 		// Append semantic errors
@@ -9617,7 +9617,7 @@ void syntax_editor_render()
 			for (int i = 0; i < display_lines.size; i++)
 			{
 				Display_Line& display_line = display_lines[i];
-				String text = line_index_get_text(display_line.line_index);
+				DynString text = line_index_get_text(display_line.line_index);
 
 				// Check what needs to be drawn (text and/or folds)
 				bool draw_fold = false;
@@ -9686,10 +9686,10 @@ void syntax_editor_render()
 			}
 
 			// Figure out which identifier/keyword the cursor is on
-			String cursor_token_text = string_create_static("");
+			DynString cursor_token_text = string_create_static("");
 			{
 				int token_index = 0;
-				String line_text = line_index_get_text(cursor.line);
+				DynString line_text = line_index_get_text(cursor.line);
 
 				auto checkpoint = arena.make_checkpoint();
 				SCOPE_EXIT(checkpoint.rewind());
@@ -9728,7 +9728,7 @@ void syntax_editor_render()
 
 					// Highlight tokens with same text as token under cursor
 					if (highlight_symbol != nullptr) continue;
-					String token_text = string_create_substring_static(&line->text, token.start, token.end);
+					DynString token_text = string_create_substring_static(&line->text, token.start, token.end);
 					if (string_equals(token_text, cursor_token_text)) {
 						main_area.mark(ivec2(token.start, i), token.end - token.start, Mark_Type::BACKGROUND_COLOR, Syntax_Color::BG_HIGHLIGHT);
 					}
@@ -9738,7 +9738,7 @@ void syntax_editor_render()
 				if (editor.mode == Editor_Mode::TEXT_SEARCH && editor.search_text.size != 0)
 				{
 					auto& search_text = editor.search_text;
-					String str = line->text;
+					DynString str = line->text;
 					int substring_start = string_contains_substring(str, 0, search_text);
 					while (substring_start != -1) {
 						main_area.mark(
@@ -9841,7 +9841,7 @@ void syntax_editor_render()
 			Display_Line& display_line = display_lines[i];
 			if (display_line.fold_info.inside_fold) continue;
 
-			String text = line_index_get_text(display_line.line_index);
+			DynString text = line_index_get_text(display_line.line_index);
 			int leading_whitespaces = 0;
 			while (leading_whitespaces < text.size && text.characters[leading_whitespaces] == ' '){
 				leading_whitespaces += 1;
@@ -9879,7 +9879,7 @@ void syntax_editor_render()
 		// Draw Cursor
 		if (cursor_display_line != -1)
 		{
-			String cursor_line_text = line_index_get_text(cursor.line);
+			DynString cursor_line_text = line_index_get_text(cursor.line);
 			Display_Line& display_line = display_lines[cursor_display_line];
 
 			Text_Index pos = cursor;
@@ -10026,7 +10026,7 @@ void syntax_editor_render()
 
 
 	// Draw context
-	auto helper_append_error_to_rich_text = [&](Code_Error error, String* text, bool with_info) 
+	auto helper_append_error_to_rich_text = [&](Code_Error error, DynString* text, bool with_info) 
 		{
 			string_style_push(text, Mark_Type::TEXT_COLOR, Syntax_Color::ERROR_DISPLAY_TEXT);
 			string_style_push(text, Mark_Type::UNDERLINE, Syntax_Color::ERROR_DISPLAY_TEXT);
@@ -10045,7 +10045,7 @@ void syntax_editor_render()
 			}
 			text->append('\n');
 		};
-	auto helper_append_suggestions_to_rich_text = [](String* text)
+	auto helper_append_suggestions_to_rich_text = [](DynString* text)
 	{
 		auto type_system = syntax_editor.editor_compilation_data->type_system;
 		auto suggestions = syntax_editor.suggestions;
@@ -10070,7 +10070,7 @@ void syntax_editor_render()
 			}
 			SCOPE_EXIT(if (i == 0) { string_style_pop(text); string_style_pop(text); });
 
-			String sugg_text = string_create_static("");
+			DynString sugg_text = string_create_static("");
 			Syntax_Color text_color = Syntax_Color::TEXT;
 			Datatype* sugg_type = nullptr;
 			Symbol_Type symbol_type = (Symbol_Type)-1;
@@ -10145,7 +10145,7 @@ void syntax_editor_render()
 		auto checkpoint = arena.make_checkpoint();
 		SCOPE_EXIT(checkpoint.rewind());
 
-		auto helper_start_section = [](String* text, int& last_section_start) {
+		auto helper_start_section = [](DynString* text, int& last_section_start) {
 			if (text->size == 0) return;
 			if (text->size != last_section_start) {
 				text->append("----\n");
@@ -10161,15 +10161,15 @@ void syntax_editor_render()
 			cursor_display_line != -1 &&
 			!cursor_is_on_fold;
 
-		String context_text   = string_create(0);
+		DynString context_text   = dynstring_create(0);
 		SCOPE_EXIT(string_destroy(&context_text));
-		String call_info_text = string_create(0);
+		DynString call_info_text = dynstring_create(0);
 		SCOPE_EXIT(string_destroy(&call_info_text));
 
 		auto type_system = syntax_editor.editor_compilation_data->type_system;
 		if (show_context)
 		{
-			String* text = &context_text;
+			DynString* text = &context_text;
 			bool show_normal_mode_context = true;
 			int last_section_start = 0;
 
@@ -10279,7 +10279,7 @@ void syntax_editor_render()
 			// Call-info
 			if (hover_info.call_info != nullptr)
 			{
-				String* text = &call_info_text;
+				DynString* text = &call_info_text;
 
 				auto call_info = hover_info.call_info->callable_call;
 				int arg_index = hover_info.call_argument_index;
@@ -10296,7 +10296,7 @@ void syntax_editor_render()
 					}
 				}
 
-				String* name = nullptr;
+				DynString* name = nullptr;
 				Syntax_Color color = Syntax_Color::TEXT;
 				bool is_struct_init = false;
 				switch (call_info->origin.type)
@@ -10503,7 +10503,7 @@ void syntax_editor_render()
 		int& cam_start = editor.navigate_error_cam_start;
 
 		// Create rich text
-		String rich_text = string_create();
+		DynString rich_text = dynstring_create();
 		SCOPE_EXIT(string_destroy(&rich_text));
 		int highlight_line_offset = 0;
 		auto& errors = editor.editor_compilation_data->code_errors;
@@ -10576,7 +10576,7 @@ void syntax_editor_render()
 		auto checkpoint = arena.make_checkpoint();
 		SCOPE_EXIT(checkpoint.rewind());
 
-		String rich_text = string_create(0);
+		DynString rich_text = dynstring_create(0);
 		SCOPE_EXIT(string_destroy(&rich_text));
 		rich_text.append(editor.mode == Editor_Mode::FUZZY_FIND_DEFINITION ? editor.fuzzy_search_text : editor.search_text);
 		if (editor.mode == Editor_Mode::FUZZY_FIND_DEFINITION && editor.suggestions.size > 0) {

@@ -22,7 +22,7 @@ const bool DEBUG_OUTPUT_ENABLED = false;
 
 
 // Prototypes
-u64 debugger_find_address_of_function(Debugger* debugger, String name);
+u64 debugger_find_address_of_function(Debugger* debugger, DynString name);
 
 const char* x64_integer_register_to_name(X64_Integer_Register reg)
 {
@@ -107,7 +107,7 @@ namespace PDB_Analysis
 
     struct PDB_Variable_Info
     {
-        String name;
+        DynString name;
         PDB_Location location;
     };
 
@@ -141,7 +141,7 @@ namespace PDB_Analysis
 
     struct PDB_Function
     {
-        String name;
+        DynString name;
         PDB_Location_Static location;
         u64 length; // Size in bytes
         int source_info_index; // -1 if not available, which should be for most functions in imported libraries
@@ -153,7 +153,7 @@ namespace PDB_Analysis
         Dynamic_Array<PDB_Code_Block_Info> block_infos;
         Dynamic_Array<PDB_Variable_Info> global_infos;
         Dynamic_Array<PDB_Function> functions;
-        Hashtable<i32, String> source_file_paths;
+        Hashtable<i32, DynString> source_file_paths;
     };
 
     PDB_Information* pdb_information_create()
@@ -163,7 +163,7 @@ namespace PDB_Analysis
         information->block_infos = dynamic_array_create<PDB_Code_Block_Info>();
         information->global_infos = dynamic_array_create<PDB_Variable_Info>();
         information->functions = dynamic_array_create<PDB_Function>();
-        information->source_file_paths = hashtable_create_empty<i32, String>(3, hash_i32, equals_i32);
+        information->source_file_paths = hashtable_create_empty<i32, DynString>(3, hash_i32, equals_i32);
         return information;
     }
 
@@ -537,9 +537,9 @@ namespace PDB_Analysis
         return location;
     }
 
-    void pdb_symbol_get_name(IDiaSymbol* symbol, String* append_to)
+    void pdb_symbol_get_name(IDiaSymbol* symbol, DynString* append_to)
     {
-        string_reset(append_to);
+        dynstring_reset(append_to);
         BSTR name = nullptr;
         if (symbol->get_name(&name) == S_OK) {
             wide_string_to_utf8(name, append_to);
@@ -547,9 +547,9 @@ namespace PDB_Analysis
         }
     }
 
-    void pdb_symbol_get_undecorated_name(IDiaSymbol* symbol, String* append_to)
+    void pdb_symbol_get_undecorated_name(IDiaSymbol* symbol, DynString* append_to)
     {
-        string_reset(append_to);
+        dynstring_reset(append_to);
         BSTR name = nullptr;
         if (symbol->get_undecoratedName(&name) == S_OK) {
             wide_string_to_utf8(name, append_to);
@@ -616,7 +616,7 @@ namespace PDB_Analysis
             BSTR wide_compiland_string;
             if (symbol->get_name(&wide_compiland_string) == S_OK)
             {
-                String tmp = string_create();
+                DynString tmp = dynstring_create();
                 SCOPE_EXIT(string_destroy(&tmp));
                 wide_string_to_utf8(wide_compiland_string, &tmp);
                 SysFreeString(wide_compiland_string);
@@ -665,7 +665,7 @@ namespace PDB_Analysis
                 PDB_Function fn;
                 fn.length = length;
                 fn.location = location.options.static_loc;
-                fn.name = string_create();
+                fn.name = dynstring_create();
                 fn.source_info_index = inside_main_compiland ? info->source_infos.size : -1;
                 pdb_symbol_get_name(symbol, &fn.name);
                 function_index = info->functions.size;
@@ -741,14 +741,14 @@ namespace PDB_Analysis
                         if (last_src_id != src_id)
                         {
                             int int_id = src_id;
-                            String* str = hashtable_find_element(&info->source_file_paths, int_id);
+                            DynString* str = hashtable_find_element(&info->source_file_paths, int_id);
                             if (str == 0)
                             {
                                 CComPtr<IDiaSourceFile> source_file;
                                 if (line_number->get_sourceFile(&source_file) == S_OK) {
                                     BSTR filename = NULL;
                                     if (source_file->get_fileName(&filename) == S_OK) {
-                                        String source_filename = string_create();
+                                        DynString source_filename = dynstring_create();
                                         wide_string_to_utf8(filename, &source_filename);
                                         hashtable_insert_element(&info->source_file_paths, int_id, source_filename);
                                         SysFreeString(filename);
@@ -840,7 +840,7 @@ namespace PDB_Analysis
                 if (block_index == -1 || !inside_main_compiland) {
                     break;
                 }
-                variable_info.name = string_create();
+                variable_info.name = dynstring_create();
                 pdb_symbol_get_name(symbol, &variable_info.name);
                 auto& block = info->block_infos[block_index];
                 dynamic_array_push_back(&block.variables, variable_info);
@@ -851,7 +851,7 @@ namespace PDB_Analysis
                 if (source_info_index == -1 || !inside_main_compiland) {
                     break;
                 }
-                variable_info.name = string_create();
+                variable_info.name = dynstring_create();
                 pdb_symbol_get_name(symbol, &variable_info.name);
                 auto& source_info = info->source_infos[source_info_index];
                 dynamic_array_push_back(&source_info.parameter_infos, variable_info);
@@ -862,7 +862,7 @@ namespace PDB_Analysis
             case DataIsFileStatic: // File scoped global
             case DataIsGlobal: 
             {
-                variable_info.name = string_create();
+                variable_info.name = dynstring_create();
                 pdb_symbol_get_name(symbol, &variable_info.name);
                 dynamic_array_push_back(&info->global_infos, variable_info);
                 break;
@@ -963,116 +963,116 @@ namespace PDB_Analysis
         }
     }
 
-    void symbol_tree_append_to_string_recursive(String* string, IDiaSymbol* symbol, int indentation, IDiaSession* session, Hashset<u64>* already_visited)
+    void symbol_tree_append_to_string_recursive(DynString* string, IDiaSymbol* symbol, int indentation, IDiaSession* session, Hashset<u64>* already_visited)
     {
         for (int i = 0; i < indentation; i++) {
-            string_append_formated(string, "    ");
+            dynstring_append_formated(string, "    ");
         }
 
         DWORD tag = 0;
         if (symbol->get_symTag(&tag) != S_OK) {
-            string_append_formated(string, "GetSymTag failed!\n");
+            dynstring_append_formated(string, "GetSymTag failed!\n");
             return;
         }
 
         bool append_name = false;
         switch (tag)
         {
-        case SymTagFunction: string_append_formated(string, "Function"); append_name = true; break;
-        case SymTagBlock: string_append_formated(string, "Block"); break;
+        case SymTagFunction: dynstring_append_formated(string, "Function"); append_name = true; break;
+        case SymTagBlock: dynstring_append_formated(string, "Block"); break;
         case SymTagData: // Variables, parameters, globals
         {
-            string_append_formated(string, "SymTagData ");
+            dynstring_append_formated(string, "SymTagData ");
             DWORD data_kind;
             if (symbol->get_dataKind(&data_kind) != S_OK) {
-                string_append_formated(string, "Error with retrieving datakind");
+                dynstring_append_formated(string, "Error with retrieving datakind");
                 break;
             }
 
             switch (data_kind)
             {
-            case DataIsLocal:        string_append_formated(string, "Local-Variable"); append_name = true; break;
-            case DataIsParam:        string_append_formated(string, "Parameter"); append_name = true; break;
-            case DataIsStaticLocal:  string_append_formated(string, "Static_Local"); append_name = true; break;
-            case DataIsFileStatic:   string_append_formated(string, "File_Static"); append_name = true; break;
-            case DataIsGlobal:       string_append_formated(string, "Global"); append_name = true; break;
-            case DataIsConstant:     string_append_formated(string, "Constant"); append_name = true; break;
-            case DataIsMember:       string_append_formated(string, "Member"); append_name = true; break;
-            case DataIsStaticMember: string_append_formated(string, "StaticMember"); append_name = true; break;
-            case DataIsUnknown:      string_append_formated(string, "Unknown"); break;
-            case DataIsObjectPtr:    string_append_formated(string, "ObjectPtr(this)"); break;
+            case DataIsLocal:        dynstring_append_formated(string, "Local-Variable"); append_name = true; break;
+            case DataIsParam:        dynstring_append_formated(string, "Parameter"); append_name = true; break;
+            case DataIsStaticLocal:  dynstring_append_formated(string, "Static_Local"); append_name = true; break;
+            case DataIsFileStatic:   dynstring_append_formated(string, "File_Static"); append_name = true; break;
+            case DataIsGlobal:       dynstring_append_formated(string, "Global"); append_name = true; break;
+            case DataIsConstant:     dynstring_append_formated(string, "Constant"); append_name = true; break;
+            case DataIsMember:       dynstring_append_formated(string, "Member"); append_name = true; break;
+            case DataIsStaticMember: dynstring_append_formated(string, "StaticMember"); append_name = true; break;
+            case DataIsUnknown:      dynstring_append_formated(string, "Unknown"); break;
+            case DataIsObjectPtr:    dynstring_append_formated(string, "ObjectPtr(this)"); break;
             default: break;
             }
             break;
         }
 
         // Maybe compilands (obj files) can be hierarchical
-        case SymTagCompiland:      string_append_formated(string, "Compiland"); append_name = true; break;
-        case SymTagPublicSymbol: string_append_formated(string, "SymTagPublicSymbol"); append_name = true; break;
-        case SymTagLabel: string_append_formated(string, "SymTagLabel"); append_name = true; break;
-        case SymTagExe: string_append_formated(string, "SymTagExe"); append_name = true; break;
-        case SymTagFuncDebugStart: string_append_formated(string, "FunctionDebugStart"); break;
-        case SymTagFuncDebugEnd: string_append_formated(string, "SymTagFuncDebugEnd"); break;
-        case SymTagCompilandDetails: string_append_formated(string, "SymTagCompilandDetails"); break;
-        case SymTagCompilandEnv: string_append_formated(string, "SymTagCompilandEnv"); break;
-        case SymTagUDT: string_append_formated(string, "UDT"); append_name = true; break;
-        case SymTagEnum: string_append_formated(string, "SymTagEnum"); append_name = true; break;
-        case SymTagTypedef: string_append_formated(string, "SymTagTypedef"); break;
-        case SymTagBaseClass: string_append_formated(string, "SymTagBaseClass"); break;
-        case SymTagFunctionArgType: string_append_formated(string, "SymTagFunctionArgType"); break;
-        case SymTagFunctionType: string_append_formated(string, "SymTagFunctionType"); break;
-        case SymTagPointerType: string_append_formated(string, "SymTagPointerType"); break;
-        case SymTagArrayType: string_append_formated(string, "SymTagArrayType"); break;
-        case SymTagBaseType: string_append_formated(string, "SymTagBaseType"); break;
-        case SymTagFriend: string_append_formated(string, "SymTagFriend"); break;
-        case SymTagCustomType: string_append_formated(string, "SymTagCustomType"); break;
-        case SymTagManagedType: string_append_formated(string, "SymTagManagedType"); break;
-        case SymTagVectorType: string_append_formated(string, "SymTagVectorType"); break;
-        case SymTagMatrixType: string_append_formated(string, "SymTagMatrixType"); break;
-        case SymTagNull: string_append_formated(string, "SymTagNull"); break;
-        case SymTagCallSite: string_append_formated(string, "SymTagCallSite"); break;
-        case SymTagInlineSite: string_append_formated(string, "SymTagInlineSite"); break;
-        case SymTagAnnotation: string_append_formated(string, "SymTagAnnotation"); append_name = true; break;
-        case SymTagUsingNamespace: string_append_formated(string, "SymTagUsingNamespace"); break;
-        case SymTagVTableShape: string_append_formated(string, "SymTagVTableShape"); break;
-        case SymTagVTable: string_append_formated(string, "SymTagVTable"); break;
-        case SymTagCustom: string_append_formated(string, "SymTagCustom"); break;
-        case SymTagThunk: string_append_formated(string, "SymTagThunk"); break;
-        case SymTagDimension: string_append_formated(string, "SymTagDimension"); break;
-        case SymTagBaseInterface: string_append_formated(string, "SymTagBaseInterface"); break;
-        case SymTagHLSLType: string_append_formated(string, "SymTagHLSLType"); break;
-        case SymTagCaller: string_append_formated(string, "SymTagCaller"); break;
-        case SymTagCallee: string_append_formated(string, "SymTagCallee"); break;
-        case SymTagExport: string_append_formated(string, "SymTagExport"); break;
-        case SymTagHeapAllocationSite: string_append_formated(string, "SymTagHeapAllocationSite"); break;
-        case SymTagCoffGroup: string_append_formated(string, "SymTagCoffGroup"); break;
-        case SymTagInlinee: string_append_formated(string, "SymTagInlinee"); break;
+        case SymTagCompiland:      dynstring_append_formated(string, "Compiland"); append_name = true; break;
+        case SymTagPublicSymbol: dynstring_append_formated(string, "SymTagPublicSymbol"); append_name = true; break;
+        case SymTagLabel: dynstring_append_formated(string, "SymTagLabel"); append_name = true; break;
+        case SymTagExe: dynstring_append_formated(string, "SymTagExe"); append_name = true; break;
+        case SymTagFuncDebugStart: dynstring_append_formated(string, "FunctionDebugStart"); break;
+        case SymTagFuncDebugEnd: dynstring_append_formated(string, "SymTagFuncDebugEnd"); break;
+        case SymTagCompilandDetails: dynstring_append_formated(string, "SymTagCompilandDetails"); break;
+        case SymTagCompilandEnv: dynstring_append_formated(string, "SymTagCompilandEnv"); break;
+        case SymTagUDT: dynstring_append_formated(string, "UDT"); append_name = true; break;
+        case SymTagEnum: dynstring_append_formated(string, "SymTagEnum"); append_name = true; break;
+        case SymTagTypedef: dynstring_append_formated(string, "SymTagTypedef"); break;
+        case SymTagBaseClass: dynstring_append_formated(string, "SymTagBaseClass"); break;
+        case SymTagFunctionArgType: dynstring_append_formated(string, "SymTagFunctionArgType"); break;
+        case SymTagFunctionType: dynstring_append_formated(string, "SymTagFunctionType"); break;
+        case SymTagPointerType: dynstring_append_formated(string, "SymTagPointerType"); break;
+        case SymTagArrayType: dynstring_append_formated(string, "SymTagArrayType"); break;
+        case SymTagBaseType: dynstring_append_formated(string, "SymTagBaseType"); break;
+        case SymTagFriend: dynstring_append_formated(string, "SymTagFriend"); break;
+        case SymTagCustomType: dynstring_append_formated(string, "SymTagCustomType"); break;
+        case SymTagManagedType: dynstring_append_formated(string, "SymTagManagedType"); break;
+        case SymTagVectorType: dynstring_append_formated(string, "SymTagVectorType"); break;
+        case SymTagMatrixType: dynstring_append_formated(string, "SymTagMatrixType"); break;
+        case SymTagNull: dynstring_append_formated(string, "SymTagNull"); break;
+        case SymTagCallSite: dynstring_append_formated(string, "SymTagCallSite"); break;
+        case SymTagInlineSite: dynstring_append_formated(string, "SymTagInlineSite"); break;
+        case SymTagAnnotation: dynstring_append_formated(string, "SymTagAnnotation"); append_name = true; break;
+        case SymTagUsingNamespace: dynstring_append_formated(string, "SymTagUsingNamespace"); break;
+        case SymTagVTableShape: dynstring_append_formated(string, "SymTagVTableShape"); break;
+        case SymTagVTable: dynstring_append_formated(string, "SymTagVTable"); break;
+        case SymTagCustom: dynstring_append_formated(string, "SymTagCustom"); break;
+        case SymTagThunk: dynstring_append_formated(string, "SymTagThunk"); break;
+        case SymTagDimension: dynstring_append_formated(string, "SymTagDimension"); break;
+        case SymTagBaseInterface: dynstring_append_formated(string, "SymTagBaseInterface"); break;
+        case SymTagHLSLType: dynstring_append_formated(string, "SymTagHLSLType"); break;
+        case SymTagCaller: dynstring_append_formated(string, "SymTagCaller"); break;
+        case SymTagCallee: dynstring_append_formated(string, "SymTagCallee"); break;
+        case SymTagExport: dynstring_append_formated(string, "SymTagExport"); break;
+        case SymTagHeapAllocationSite: dynstring_append_formated(string, "SymTagHeapAllocationSite"); break;
+        case SymTagCoffGroup: dynstring_append_formated(string, "SymTagCoffGroup"); break;
+        case SymTagInlinee: dynstring_append_formated(string, "SymTagInlinee"); break;
         default: break;
         }
 
         if (append_name)
         {
-            String tmp = string_create();
+            DynString tmp = dynstring_create();
             SCOPE_EXIT(string_destroy(&tmp));
             pdb_symbol_get_name(symbol, &tmp);
-            string_append_formated(string, " \"%s\"", tmp.characters);
+            dynstring_append_formated(string, " \"%s\"", tmp.characters);
         }
 
         // Check if already visited
         DWORD indexID = 0;
         if (symbol->get_symIndexId(&indexID) != S_OK) {
-            string_append_formated(string, "GetSymIndexID failed\n");
+            dynstring_append_formated(string, "GetSymIndexID failed\n");
             return;
         }
         else
         {
             u64 id = (u64)indexID;
             if (!hashset_insert_element(already_visited, id)) {
-                string_append_formated(string, " [Visited]\n");
+                dynstring_append_formated(string, " [Visited]\n");
                 return;
             }
         }
-        string_append_formated(string, "\n");
+        dynstring_append_formated(string, "\n");
 
         // Loop over all compilands
         IDiaEnumSymbols* child_iter = NULL;
@@ -1097,7 +1097,7 @@ namespace PDB_Analysis
     {
         Dynamic_Array<wchar_t> wide_string_buffer = dynamic_array_create<wchar_t>(64);
         SCOPE_EXIT(dynamic_array_destroy(&wide_string_buffer));
-        String string_buffer = string_create(128);
+        DynString string_buffer = dynstring_create(128);
         SCOPE_EXIT(string_destroy(&string_buffer));
 
         // Initialize COM
@@ -1149,7 +1149,7 @@ namespace PDB_Analysis
         {
             Hashset<u64> visited = hashset_create_empty<u64>(512, hash_u64, equals_u64);
             SCOPE_EXIT(hashset_destroy(&visited));
-            String tmp = string_create(2048);
+            DynString tmp = dynstring_create(2048);
             SCOPE_EXIT(string_destroy(&tmp));
             symbol_tree_append_to_string_recursive(&tmp, global_scope, 0, session, &visited);
             file_io_write_text_file(string_create_static("backend/build/pdb_info_tree.txt"), tmp);
@@ -1176,15 +1176,15 @@ namespace PE_Analysis
     struct Export_Symbol_Info
     {
         u32 rva; // Relative Virtual Address...
-        Optional<String> name; // Symbols may not have a name if they are referenced by ordinal
-        Optional<String> forwarder_name; // If the symbol is a forward to another dll
+        Optional<DynString> name; // Symbols may not have a name if they are referenced by ordinal
+        Optional<DynString> forwarder_name; // If the symbol is a forward to another dll
         int associated_unwind_info_index; // Index of unwind-info with the same address (same rva), otherwise -1 
     };
 
     // Section Infos
     struct Section_Info
     {
-        String name;
+        DynString name;
         int section_index;
         u64 rva;
         u64 size;
@@ -1244,8 +1244,8 @@ namespace PE_Analysis
     struct PE_Info
     {
         u64 base_address; // VirtualAddress where PE image is loaded
-        String name; // Name of executable or dll
-        String pdb_name;
+        DynString name; // Name of executable or dll
+        DynString pdb_name;
         Dynamic_Array<Export_Symbol_Info> exported_symbols;
         Dynamic_Array<Section_Info> sections;
         Dynamic_Array<Function_Unwind_Info> function_unwind_infos;
@@ -1256,8 +1256,8 @@ namespace PE_Analysis
     {
         PE_Info info;
         info.base_address = 0;
-        info.name = string_create();
-        info.pdb_name = string_create();
+        info.name = dynstring_create();
+        info.pdb_name = dynstring_create();
         info.exported_symbols = dynamic_array_create<Export_Symbol_Info>();
         info.sections = dynamic_array_create<Section_Info>();
         info.function_unwind_infos = dynamic_array_create<Function_Unwind_Info>();
@@ -1619,7 +1619,7 @@ namespace PE_Analysis
                 memory_copy(section_name_buffer, section.Name, 8); // Section name is not null-terminated if size = 8
 
                 Section_Info info;
-                info.name = string_create(section_name_buffer);
+                info.name = dynstring_create(section_name_buffer);
                 info.section_index = i;
                 info.size = section.Misc.VirtualSize;
                 info.rva = section.VirtualAddress;
@@ -1666,8 +1666,8 @@ namespace PE_Analysis
                     u32 rva = function_locations[i];
                     Export_Symbol_Info symbol_info;
                     symbol_info.rva = rva;
-                    symbol_info.name = optional_make_failure<String>();
-                    symbol_info.forwarder_name = optional_make_failure<String>();
+                    symbol_info.name = optional_make_failure<DynString>();
+                    symbol_info.forwarder_name = optional_make_failure<DynString>();
                     symbol_info.associated_unwind_info_index = -1;
 
                     bool is_forwarder =
@@ -1675,7 +1675,7 @@ namespace PE_Analysis
                         rva < location_export_table.VirtualAddress + location_export_table.Size;
                     if (is_forwarder)
                     {
-                        String forwarder_name = string_create();
+                        DynString forwarder_name = dynstring_create();
                         memory_source.read_null_terminated_string((void*)(base_virtual_address + rva), &forwarder_name, 260, false, &byte_buffer);
                         // Note: normally forwarder name should have a specific format, but we don't care for now...
                         symbol_info.forwarder_name = optional_make_success(forwarder_name);
@@ -1721,7 +1721,7 @@ namespace PE_Analysis
                         continue;
                     }
 
-                    String name = string_create();
+                    DynString name = dynstring_create();
                     bool name_read_success = memory_source.read_null_terminated_string(
                         (void*)(base_virtual_address + name_rva), &name, MAX_STRING_LENGTH, false, &byte_buffer
                     );
@@ -1940,7 +1940,7 @@ struct C_Function_Mapping
     Dynamic_Array<C_Line_Mapping*> c_lines; // All C-Lines for which machine instructions exist?
     u64 virtual_address_start;
     u64 virtual_address_end;
-    String name;
+    DynString name;
 };
 
 
@@ -2014,10 +2014,10 @@ struct Debugger
     Dynamic_Array<C_Function_Mapping> ir_function_mapping;
 
     Hashtable<IR_Code_Block*, int> ir_block_to_ir_instruction_mapping_start_index;
-    Hashtable<String, PDB_Analysis::PDB_Location> c_name_to_location_map; // Stores local-variables, parameters and globals
+    Hashtable<DynString, PDB_Analysis::PDB_Location> c_name_to_location_map; // Stores local-variables, parameters and globals
 
     // Helpers
-    String string_buffer;
+    DynString string_buffer;
     Dynamic_Array<u8> byte_buffer;
     Dynamic_Array<INSTRUX> disassembly_buffer;
     Hardware_Breakpoint hardware_breakpoints[HARDWARE_BREAKPOINT_COUNT];
@@ -2056,10 +2056,10 @@ Debugger* debugger_create()
     result->c_line_mapping = dynamic_array_create<C_Line_Mapping>();
     result->ir_function_mapping = dynamic_array_create<C_Function_Mapping>();
     result->ir_block_to_ir_instruction_mapping_start_index = hashtable_create_pointer_empty<IR_Code_Block*, int>(64);
-    result->c_name_to_location_map = hashtable_create_empty<String, PDB_Analysis::PDB_Location>(64, hash_string, string_equals);
+    result->c_name_to_location_map = hashtable_create_empty<DynString, PDB_Analysis::PDB_Location>(64, hash_string, string_equals);
     hashtable_reset(&result->c_name_to_location_map);
 
-    result->string_buffer = string_create();
+    result->string_buffer = dynstring_create();
     result->byte_buffer = dynamic_array_create<u8>();
     result->disassembly_buffer = dynamic_array_create<INSTRUX>();
 
@@ -2129,7 +2129,7 @@ void debugger_reset(Debugger* debugger)
     dynamic_array_reset(&debugger->address_breakpoints);
     dynamic_array_reset(&debugger->byte_buffer);
     dynamic_array_reset(&debugger->disassembly_buffer);
-    string_reset(&debugger->string_buffer);
+    dynstring_reset(&debugger->string_buffer);
     hashtable_reset(&debugger->ir_block_to_ir_instruction_mapping_start_index);
     hashtable_reset(&debugger->c_name_to_location_map);
 
@@ -2234,7 +2234,7 @@ PE_Analysis::PE_Info* debugger_find_module_of_address(Debugger* debugger, u64 ad
     return nullptr;
 }
 
-u64 debugger_find_address_of_function(Debugger* debugger, String name)
+u64 debugger_find_address_of_function(Debugger* debugger, DynString name)
 {
     if (debugger->pdb_info == nullptr || debugger->exe_pe_info_index == -1) return 0;
     // Search in pdb for function with this name...
@@ -2340,7 +2340,7 @@ Closest_Symbol_Info debugger_find_closest_symbol_name(Debugger* debugger, u64 ad
     }
 
     // Otherwise find closest address from export-table of loaded Dll/PEs
-    String closest_name = string_create_static("");
+    DynString closest_name = string_create_static("");
     u64 closest_distance = (u64)(i64)-1;
 
     // Find symbol that is closest to address
@@ -2370,7 +2370,7 @@ Closest_Symbol_Info debugger_find_closest_symbol_name(Debugger* debugger, u64 ad
     return info;
 }
 
-void closest_symbol_info_append_to_string(Debugger* debugger, Closest_Symbol_Info symbol_info, String* string)
+void closest_symbol_info_append_to_string(Debugger* debugger, Closest_Symbol_Info symbol_info, DynString* string)
 {
     if (symbol_info.pe_index == -1) {
         string_append(string, "ADDRESS_OUTSIDE_LOADED_SECTIONS");
@@ -2395,26 +2395,26 @@ void closest_symbol_info_append_to_string(Debugger* debugger, Closest_Symbol_Inf
     }
     else {
         if (symbol_info.pe_name.size == 0) {
-            string_append_formated(string, "[?(PE #%d) ", symbol_info.pe_index);
+            dynstring_append_formated(string, "[?(PE #%d) ", symbol_info.pe_index);
         }
         else {
-            string_append_formated(string, "[%s ", symbol_info.pe_name.characters);
+            dynstring_append_formated(string, "[%s ", symbol_info.pe_name.characters);
         }
     }
     if (symbol_info.section_name.size == 0) {
-        string_append_formated(string, "?(Section #%d) ", symbol_info.section_index);
+        dynstring_append_formated(string, "?(Section #%d) ", symbol_info.section_index);
     }
     else {
         string_append(string, symbol_info.section_name.characters);
         string_append(string, " ");
     }
 
-    string_append_formated(string, "+0x%04llX]", symbol_info.distance);
+    dynstring_append_formated(string, "+0x%04llX]", symbol_info.distance);
 }
 
 void print_closest_symbol_name(Debugger* debugger, Closest_Symbol_Info symbol_info)
 {
-    String tmp = string_create();
+    DynString tmp = dynstring_create();
     SCOPE_EXIT(string_destroy(&tmp));
     closest_symbol_info_append_to_string(debugger, symbol_info, &tmp);
     printf("%s\n", tmp.characters);
@@ -2478,7 +2478,7 @@ bool debugger_disassemble_bytes(Debugger* debugger, u64 virtual_address, u32 rea
 
 void debugger_print_last_disassembly(Debugger* debugger, u64 address, int indentation_spaces, bool print_addresses = true, bool print_raw_bytes = true)
 {
-    String str = string_create(256);
+    DynString str = dynstring_create(256);
     SCOPE_EXIT(string_destroy(&str));
 
     auto& instructions = debugger->disassembly_buffer;
@@ -3240,7 +3240,7 @@ void debugger_handle_last_debug_event(Debugger* debugger)
             if (exit_code_value >= 0 && exit_code_value < (int)Exit_Code_Type::MAX_ENUM_VALUE) {
                 exit_code = exit_code_make((Exit_Code_Type)exit_code_value);
             }
-            String tmp = string_create();
+            DynString tmp = dynstring_create();
             SCOPE_EXIT(string_destroy(&tmp));
             exit_code_append_to_string(&tmp, exit_code);
             printf("Debug Process exited with code: %s\n", tmp.characters);
@@ -3414,7 +3414,7 @@ void debugger_handle_last_debug_event(Debugger* debugger)
 	{
 		auto& debug_str = debug_event.u.DebugString;
 		auto& str = debugger->string_buffer;
-		string_reset(&str);
+		dynstring_reset(&str);
 		bool success = debugger->memory_source.read_null_terminated_string(
 			(void*)(debug_str.lpDebugStringData),
 			&str, debug_str.nDebugStringLength + 1, debug_str.fUnicode, &debugger->byte_buffer
@@ -3966,8 +3966,8 @@ bool debugger_start_process(
 			mapping.function = function;
 			dynamic_array_push_back(&debugger->ir_function_mapping, mapping);
 		}
-		Hashtable<String, C_Function_Mapping*> c_function_name_to_ir_function_map =
-			hashtable_create_empty<String, C_Function_Mapping*>(debugger->ir_function_mapping.size, hash_string, string_equals);
+		Hashtable<DynString, C_Function_Mapping*> c_function_name_to_ir_function_map =
+			hashtable_create_empty<DynString, C_Function_Mapping*>(debugger->ir_function_mapping.size, hash_string, string_equals);
 		SCOPE_EXIT(hashtable_destroy(&c_function_name_to_ir_function_map));
 		for (int i = 0; i < debugger->ir_function_mapping.size; i++)
 		{
@@ -3975,7 +3975,7 @@ bool debugger_start_process(
 			C_Translation translation;
 			translation.type = C_Translation_Type::FUNCTION;
 			translation.options.function = function_mapping->function;
-			String* c_function_name_opt = hashtable_find_element(&c_translation->name_mapping, translation);
+			DynString* c_function_name_opt = hashtable_find_element(&c_translation->name_mapping, translation);
 			if (c_function_name_opt != nullptr) {
 				bool success = hashtable_insert_element(&c_function_name_to_ir_function_map, *c_function_name_opt, function_mapping);
 				assert(success, "Functions names should be guaranteed to be unique");
@@ -4165,7 +4165,7 @@ void debugger_step_over_statement(Debugger* debugger, bool step_into)
 
 // Queries Local-Variables, Parameters or Globals by name
 Optional<PDB_Analysis::PDB_Location> debugger_query_named_upp_value(
-	Debugger* debugger, Assembly_Source_Information source_info, u64 instruction_pointer, String variable_name, Datatype** out_datatype)
+	Debugger* debugger, Assembly_Source_Information source_info, u64 instruction_pointer, DynString variable_name, Datatype** out_datatype)
 {
 	C_Translation translation;
 	translation.type = (C_Translation_Type)-1;
@@ -4244,7 +4244,7 @@ Optional<PDB_Analysis::PDB_Location> debugger_query_named_upp_value(
 		return optional_make_failure<PDB_Analysis::PDB_Location>();
 	}
 
-	String* c_name_opt = hashtable_find_element(&c_generator_get_translation(debugger->compilation_data->c_generator)->name_mapping, translation);
+	DynString* c_name_opt = hashtable_find_element(&c_generator_get_translation(debugger->compilation_data->c_generator)->name_mapping, translation);
 	if (c_name_opt == nullptr) {
 		return optional_make_failure<PDB_Analysis::PDB_Location>();
 	}
@@ -4256,7 +4256,7 @@ Optional<PDB_Analysis::PDB_Location> debugger_query_named_upp_value(
 }
 
 Debugger_Value_Read debugger_read_variable_value(
-	Debugger* debugger, String variable_name, Dynamic_Array<u8>* value_buffer, int stack_frame_start, int max_frame_depth)
+	Debugger* debugger, DynString variable_name, Dynamic_Array<u8>* value_buffer, int stack_frame_start, int max_frame_depth)
 {
 	Debugger_Value_Read result;
 	result.success = false;
@@ -4399,7 +4399,7 @@ void debugger_wait_for_console_command(Debugger* debugger)
 		}
 
 		// Print current state
-		String input_line = string_create();
+		DynString input_line = dynstring_create();
 		SCOPE_EXIT(string_destroy(&input_line));
 		{
 			printf("rip=[0x%08llX] ", thread_context.Rip);
@@ -4414,10 +4414,10 @@ void debugger_wait_for_console_command(Debugger* debugger)
 		}
 
 		// Handle commands
-		Array<String> parts = string_split(input_line, ' ');
+		Array<DynString> parts = string_split(input_line, ' ');
 		SCOPE_EXIT(string_split_destroy(parts));
 		if (parts.size == 0) continue;
-		String command = parts[0];
+		DynString command = parts[0];
 
 		if (string_equals_cstring(&command, "?")) {
 			printf("Commands:\n");
@@ -4466,7 +4466,7 @@ void debugger_wait_for_console_command(Debugger* debugger)
 			u64 byte_length = 32;
 			if (parts.size == 2 && debugger->pdb_info != nullptr)
 			{
-				String symbol_name = parts[1];
+				DynString symbol_name = parts[1];
 				auto pdb_info = debugger->pdb_info;
 
 				// Search in pdb for function with this name...
@@ -4607,13 +4607,13 @@ void debugger_wait_for_console_command(Debugger* debugger)
 				continue;
 			}
 
-			String& variable_name = parts[1];
+			DynString& variable_name = parts[1];
 			auto& byte_buffer = debugger->byte_buffer;
 			dynamic_array_reset(&byte_buffer);
 			Debugger_Value_Read value_read = debugger_read_variable_value(debugger, variable_name, &byte_buffer, 0, 3);
 			if (value_read.success)
 			{
-				String str = string_create();
+				DynString str = dynstring_create();
 				SCOPE_EXIT(string_destroy(&str));
 				// TODO: This needs to be able to read memory for e.g. arrays, or simple integer data
                 datatype_append_value_to_string(
@@ -4718,7 +4718,7 @@ void debugger_print_line_translation(Debugger* debugger, Compilation_Unit* compi
 	auto c_line_array = string_split(c_source, '\n');
 	SCOPE_EXIT(string_split_destroy(c_line_array));
 
-	String tmp = string_create(128);
+	DynString tmp = dynstring_create(128);
 	SCOPE_EXIT(string_destroy(&tmp));
 
 	Dynamic_Array<byte> byte_buffer = dynamic_array_create<byte>(256);
@@ -4732,7 +4732,7 @@ void debugger_print_line_translation(Debugger* debugger, Compilation_Unit* compi
 		auto stat_map = line_map.statements[i];
 		AST::base_append_to_string(upcast(stat_map->statement), &tmp);
 		printf("Statement #%d: %s\n", i, tmp.characters);
-		string_reset(&tmp);
+		dynstring_reset(&tmp);
 
 		for (int j = 0; j < stat_map->ir_instructions.size; j++)
 		{
@@ -4740,7 +4740,7 @@ void debugger_print_line_translation(Debugger* debugger, Compilation_Unit* compi
 			ir_instruction_append_to_string(
 				&ir_instr_map->code_block->instructions[ir_instr_map->instruction_index], &tmp, 0, ir_instr_map->code_block, compilation_data);
 			printf("  IR-Instr: #%d: %s\n", j, tmp.characters);
-			string_reset(&tmp);
+			dynstring_reset(&tmp);
 
 			for (int k = 0; k < ir_instr_map->c_lines.size; k++)
 			{
@@ -4752,7 +4752,7 @@ void debugger_print_line_translation(Debugger* debugger, Compilation_Unit* compi
 				}
 				string_append_string(&tmp, &c_line_array[c_index]);
 				printf("    C-Line: #%d: %s\n", c_index, tmp.characters);
-				string_reset(&tmp);
+				dynstring_reset(&tmp);
 
 				// Print disassembly
 				if (c_line->range.start_virtual_address != 0 && c_line->range.start_virtual_address < c_line->range.end_virtual_address) {

@@ -70,7 +70,7 @@ float text_renderer_get_char_width_to_height_ratio(Text_Renderer* renderer) {
     return atlas.cursor_advance / (float)(atlas.ascender - atlas.descender);
 }
 
-void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position, Anchor anchor, vec2 char_size, vec3 color, Optional<box2> clip_box)
+void text_renderer_add_text(Text_Renderer* renderer, DynString text, vec2 position, Anchor anchor, vec2 char_size, vec3 color, Optional<box2> clip_box)
 {
     if (text.size == 0) {
         return;
@@ -216,7 +216,7 @@ void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position,
     renderer->current_batch_end += text.size;
 }
 
-void text_renderer_add_text_int(Text_Renderer* renderer, String text, ivec2 top_left, ivec2 char_size, vec3 color)
+void text_renderer_add_text_int(Text_Renderer* renderer, DynString text, ivec2 top_left, ivec2 char_size, vec3 color)
 {
     if (text.size == 0) {
         return;

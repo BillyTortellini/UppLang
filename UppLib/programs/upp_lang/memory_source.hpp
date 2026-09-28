@@ -3,7 +3,7 @@
 #include "../../utility/datatypes.hpp"
 #include "../../datastructures/dynamic_array.hpp"
 
-struct String;
+struct DynString;
 
 struct Page_Info
 {
@@ -29,7 +29,7 @@ struct Memory_Source
 	void read_as_much_as_possible(void* virtual_address, Dynamic_Array<u8>* out_bytes, uint read_size);
 
 	// Reads null-terminated string from other process, also converts wide_strings to normal strings...
-	bool read_null_terminated_string(void* virtual_address, String* out_string, uint max_char_count, bool is_wide_char, Dynamic_Array<u8>* byte_buffer);
+	bool read_null_terminated_string(void* virtual_address, DynString* out_string, uint max_char_count, bool is_wide_char, Dynamic_Array<u8>* byte_buffer);
 
     // Templated functions
     template<typename T>
@@ -51,4 +51,4 @@ struct Memory_Source
 
 // Wide-String conversions
 void wide_string_from_utf8(Dynamic_Array<wchar_t>* character_buffer, const char* string);
-void wide_string_to_utf8(const wchar_t* wide_string, String* string);
+void wide_string_to_utf8(const wchar_t* wide_string, DynString* string);

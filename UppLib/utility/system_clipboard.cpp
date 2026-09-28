@@ -2,7 +2,7 @@
 
 #include <Windows.h>
 
-bool clipboard_store_text(String string)
+bool clipboard_store_text(DynString string)
 {
     // Copy data into clippboard using Win32
     if (!OpenClipboard(NULL)) {
@@ -29,7 +29,7 @@ bool clipboard_store_text(String string)
     return true;
 }
 
-bool clipboard_load_text(String* string)
+bool clipboard_load_text(DynString* string)
 {
     if (!IsClipboardFormatAvailable(CF_TEXT)) {
         return false;
@@ -46,7 +46,7 @@ bool clipboard_load_text(String* string)
     if (data == nullptr) return false;
     SCOPE_EXIT(GlobalUnlock(global_handle));
 
-    string_reset(string);
+    dynstring_reset(string);
     string_append(string, (const char*)data);
     return true;
 }

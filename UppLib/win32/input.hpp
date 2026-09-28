@@ -111,8 +111,8 @@ struct Key_Message
     byte character;
 };
 Key_Message key_message_make(Key_Code key_code, bool key_down, char c, bool shift_down, bool alt_down, bool ctrl_down);
-struct String;
-void key_message_append_to_string(Key_Message* msg, String* string);
+struct DynString;
+void key_message_append_to_string(Key_Message* msg, DynString* string);
 
 #define KEYBOARD_KEY_COUNT 256
 #define MOUSE_KEY_COUNT 3

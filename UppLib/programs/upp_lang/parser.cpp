@@ -78,7 +78,7 @@ Line_Indent_Info source_line_get_indent_info(Source_Line* line)
 	result.indentation = 0;
 	result.is_empty = true;
 
-	String& text = line->text;
+	DynString& text = line->text;
 	int index = 0;
 	while (index < text.size) 
 	{
@@ -163,7 +163,7 @@ DynArray<Token> tokenize_source_code_and_build_hierarchy(Source_Code* code, Aren
 				{
 					auto checkpoint = arena->make_checkpoint();
 					SCOPE_EXIT(checkpoint.rewind());
-					String string_buffer = string_create(arena, 256);
+					DynString string_buffer = dynstring_create(arena, 256);
 					auto substring = string_create_substring_static(&line->text, token.start, token.end);
 					tokenizer_parse_string_literal(substring, &string_buffer);
 					token.options.string_value = identifier_pool_add(id_pool, string_buffer);
@@ -947,7 +947,7 @@ namespace Parser
 
 
 	// Prototypes
-	Optional<String*> parse_block_label_or_use_related_node_id(AST::Node* related_node);
+	Optional<DynString*> parse_block_label_or_use_related_node_id(AST::Node* related_node);
 	Code_Block* parse_code_block(Node* parent, AST::Node* related_node);
 	Path_Lookup* parse_path_lookup(Node* parent);
 	Expression* parse_expression(Node* parent);
@@ -1453,7 +1453,7 @@ namespace Parser
 				{
 					if (test_token(Token_Type::IDENTIFIER))
 					{
-						String* import_option_id = get_token()->options.string_value;
+						DynString* import_option_id = get_token()->options.string_value;
 						if (import_option_id == ids.transitive) {
 							import_node.is_transitive = true;
 						}
@@ -1511,7 +1511,7 @@ namespace Parser
 
 			if (test_token(Token_Type::IDENTIFIER))
 			{
-				String* id = get_token()->options.string_value;
+				DynString* id = get_token()->options.string_value;
 				if (id == ids.global) {
 					extern_node.type = Extern_Type::GLOBAL;
 				}
@@ -1597,7 +1597,7 @@ namespace Parser
 
 			if (test_token(Token_Type::IDENTIFIER)) 
 			{
-				String* id = get_token()->options.string_value;
+				DynString* id = get_token()->options.string_value;
 				custom_op.type = Custom_Operator_Type::INVALID;
 
 				for (int i = 0; i < (int)Custom_Operator_Type::INVALID; i++)
@@ -1838,7 +1838,7 @@ namespace Parser
 
 				auto implicit_else_block = allocate_base<AST::Code_Block>(&last_if_stat->base, Node_Type::CODE_BLOCK);
 				implicit_else_block->statements = parser.permanent_arena->allocate_array<Statement*>(1);
-				implicit_else_block->block_id = optional_make_failure<String*>();
+				implicit_else_block->block_id = optional_make_failure<DynString*>();
 
 				auto new_if_stat = allocate_base<AST::Statement>(&last_if_stat->base, Node_Type::STATEMENT);
 				advance_token();
@@ -2017,7 +2017,7 @@ namespace Parser
 			// Generate new code block, set parent/child correctly, set ranges correctly
 			Code_Block* code_block = allocate_base<Code_Block>(upcast(result), Node_Type::CODE_BLOCK);
 			code_block->statements = parser.permanent_arena->allocate_array<Statement*>(1);
-			code_block->block_id = optional_make_failure<String*>();
+			code_block->block_id = optional_make_failure<DynString*>();
 
 			code_block->statements[0] = statement;
 			statement->base.parent = upcast(code_block);
@@ -2090,7 +2090,7 @@ namespace Parser
 		case Token_Type::CONTINUE: {
 			advance_token();
 			result->type = Statement_Type::CONTINUE_STATEMENT;
-			result->options.continue_name = optional_make_failure<String*>();
+			result->options.continue_name = optional_make_failure<DynString*>();
 			if (test_token(Token_Type::IDENTIFIER)) {
 				result->options.continue_name = optional_make_success(get_token(0)->options.string_value);
 				advance_token();
@@ -2100,7 +2100,7 @@ namespace Parser
 		case Token_Type::BREAK: {
 			advance_token();
 			result->type = Statement_Type::BREAK_STATEMENT;
-			result->options.break_name = optional_make_failure<String*>();
+			result->options.break_name = optional_make_failure<DynString*>();
 			if (test_token(Token_Type::IDENTIFIER)) {
 				result->options.break_name = optional_make_success(get_token(0)->options.string_value);
 				advance_token();
@@ -2146,9 +2146,9 @@ namespace Parser
 	}
 
 	// Used by code-block and switch statement
-	Optional<String*> parse_block_label_or_use_related_node_id(AST::Node* related_node)
+	Optional<DynString*> parse_block_label_or_use_related_node_id(AST::Node* related_node)
 	{
-		Optional<String*> result = optional_make_failure<String*>();
+		Optional<DynString*> result = optional_make_failure<DynString*>();
 		if (test_token(Token_Type::SCOPE, Token_Type::IDENTIFIER)) {
 			result = optional_make_success(get_token(1)->options.string_value);
 		}
@@ -2157,11 +2157,11 @@ namespace Parser
 			if (related_node->type == AST::Node_Type::EXPRESSION) {
 				auto expr = downcast<AST::Expression>(related_node);
 				if (expr->type == AST::Expression_Type::PATH_LOOKUP && expr->options.path_lookup->parts.size > 0) {
-					result = optional_make_success<String*>(expr->options.path_lookup->parts[expr->options.path_lookup->parts.size - 1]->name);
+					result = optional_make_success<DynString*>(expr->options.path_lookup->parts[expr->options.path_lookup->parts.size - 1]->name);
 				}
 			}
 			else if (related_node->type == AST::Node_Type::SYMBOL_NODE) {
-				result = optional_make_success<String*>(downcast<AST::Symbol_Node>(related_node)->name);
+				result = optional_make_success<DynString*>(downcast<AST::Symbol_Node>(related_node)->name);
 			}
 		}
 		return result;
@@ -2486,7 +2486,7 @@ namespace Parser
 				result->options.literal_read.type = Literal_Type::CODE_POINT;
 				result->options.literal_read.options.codepoint = 0;
 
-				String* string = get_token()->options.string_value;
+				DynString* string = get_token()->options.string_value;
 				if (string->size <= 0) {
 					log_error_range_offset("Character literal requires a non-empty string after dot", 1);
 				}
@@ -2657,7 +2657,7 @@ namespace Parser
 			call.expr = call_expr;
 
 			AST::Argument* argument = allocate_base<Argument>(nullptr, AST::Node_Type::ARGUMENT);
-			argument->name = optional_make_failure<String*>();
+			argument->name = optional_make_failure<DynString*>();
 			argument->value = child;
 			argument->base.range = child->base.range;
 			argument->base.bounding_range = child->base.bounding_range;

@@ -440,7 +440,7 @@ Upp_Constant Constant_Pool::add_upp_string_assume_valid(Upp_String string)
     return result.options.constant;
 }
 
-Upp_Constant Constant_Pool::add_string_assume_valid(String id)
+Upp_Constant Constant_Pool::add_string_assume_valid(DynString id)
 {
     Upp_String string;
     string.data = id.characters;

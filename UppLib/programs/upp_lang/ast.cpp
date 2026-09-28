@@ -425,7 +425,7 @@ namespace AST
 #undef FILL_ARRAY
 	}
 
-	void expression_append_to_string(AST::Expression* expr, String* str)
+	void expression_append_to_string(AST::Expression* expr, DynString* str)
 	{
 		switch (expr->type)
 		{
@@ -470,59 +470,59 @@ namespace AST
 			break;
 		}
 		case Expression_Type::PATTERN_VARIABLE: string_append(str, "Pattern_Variable"); break;
-		case Expression_Type::FUNCTION_CALL: string_append_formated(str, "Function Call"); break;
-		case Expression_Type::BAKE: string_append_formated(str, "Bake Expr"); break;
-		case Expression_Type::INSTANCIATE: string_append_formated(str, "#instanciate"); break;
-		case Expression_Type::GET_OVERLOAD: string_append_formated(str, "#get_overload"); break;
-		case Expression_Type::PATH_LOOKUP: string_append_formated(str, "Lookup "); break;
-		case Expression_Type::IF_THEN_ELSE: string_append_formated(str, "if then/else "); break;
+		case Expression_Type::FUNCTION_CALL: dynstring_append_formated(str, "Function Call"); break;
+		case Expression_Type::BAKE: dynstring_append_formated(str, "Bake Expr"); break;
+		case Expression_Type::INSTANCIATE: dynstring_append_formated(str, "#instanciate"); break;
+		case Expression_Type::GET_OVERLOAD: dynstring_append_formated(str, "#get_overload"); break;
+		case Expression_Type::PATH_LOOKUP: dynstring_append_formated(str, "Lookup "); break;
+		case Expression_Type::IF_THEN_ELSE: dynstring_append_formated(str, "if then/else "); break;
 		case Expression_Type::LITERAL_READ: {
-			string_append_formated(str, "Literal \"");
+			dynstring_append_formated(str, "Literal \"");
 			auto& read = expr->options.literal_read;
 			switch (read.type) {
-			case Literal_Type::BOOLEAN: string_append_formated(str, read.options.boolean ? "true" : "false"); break;
-			case Literal_Type::INTEGER: string_append_formated(str, "%d", read.options.int_val); break;
-			case Literal_Type::FLOAT_VAL: string_append_formated(str, "%f", read.options.float_val); break;
-			case Literal_Type::NULL_VAL: string_append_formated(str, "null"); break;
-			case Literal_Type::STRING: string_append_formated(str, "%s", read.options.string->characters); break;
-			case Literal_Type::CODE_POINT: string_append_formated(str, "'#%d'", read.options.codepoint); break;
+			case Literal_Type::BOOLEAN: dynstring_append_formated(str, read.options.boolean ? "true" : "false"); break;
+			case Literal_Type::INTEGER: dynstring_append_formated(str, "%d", read.options.int_val); break;
+			case Literal_Type::FLOAT_VAL: dynstring_append_formated(str, "%f", read.options.float_val); break;
+			case Literal_Type::NULL_VAL: dynstring_append_formated(str, "null"); break;
+			case Literal_Type::STRING: dynstring_append_formated(str, "%s", read.options.string->characters); break;
+			case Literal_Type::CODE_POINT: dynstring_append_formated(str, "'#%d'", read.options.codepoint); break;
 			default: panic("");
 			}
-			string_append_formated(str, "\"");
+			dynstring_append_formated(str, "\"");
 			break;
 		}
-		case Expression_Type::ARRAY_ACCESS: string_append_formated(str, "Array_Access"); break;
-		case Expression_Type::MEMBER_ACCESS: string_append_formated(str, "Member_Access"); break;
-		case Expression_Type::SUBTYPE_ACCESS: string_append_formated(str, "Subtype_Access"); break;
-		case Expression_Type::BASETYPE_ACCESS: string_append_formated(str, "Basetype_Access"); break;
-		case Expression_Type::INFERRED_FUNCTION: string_append_formated(str, "Inferred_Function"); break;
-		case Expression_Type::FUNCTION_POINTER_TYPE: string_append_formated(str, "Function_Signature"); break;
-		case Expression_Type::ARRAY_TYPE: string_append_formated(str, "Array Type"); break;
-		case Expression_Type::SLICE_TYPE: string_append_formated(str, "Slice Type"); break;
-		case Expression_Type::POINTER_TYPE: string_append_formated(str, "Pointer Type"); break;
-		case Expression_Type::ERROR_EXPR: string_append_formated(str, "Error"); break;
-		case Expression_Type::STRUCT_INITIALIZER: string_append_formated(str, "Struct Initializer"); break;
-		case Expression_Type::ARRAY_INITIALIZER: string_append_formated(str, "Array Initializer"); break;
-		case Expression_Type::AUTO_ENUM: string_append_formated(str, "Auto-Enum"); break;
+		case Expression_Type::ARRAY_ACCESS: dynstring_append_formated(str, "Array_Access"); break;
+		case Expression_Type::MEMBER_ACCESS: dynstring_append_formated(str, "Member_Access"); break;
+		case Expression_Type::SUBTYPE_ACCESS: dynstring_append_formated(str, "Subtype_Access"); break;
+		case Expression_Type::BASETYPE_ACCESS: dynstring_append_formated(str, "Basetype_Access"); break;
+		case Expression_Type::INFERRED_FUNCTION: dynstring_append_formated(str, "Inferred_Function"); break;
+		case Expression_Type::FUNCTION_POINTER_TYPE: dynstring_append_formated(str, "Function_Signature"); break;
+		case Expression_Type::ARRAY_TYPE: dynstring_append_formated(str, "Array Type"); break;
+		case Expression_Type::SLICE_TYPE: dynstring_append_formated(str, "Slice Type"); break;
+		case Expression_Type::POINTER_TYPE: dynstring_append_formated(str, "Pointer Type"); break;
+		case Expression_Type::ERROR_EXPR: dynstring_append_formated(str, "Error"); break;
+		case Expression_Type::STRUCT_INITIALIZER: dynstring_append_formated(str, "Struct Initializer"); break;
+		case Expression_Type::ARRAY_INITIALIZER: dynstring_append_formated(str, "Array Initializer"); break;
+		case Expression_Type::AUTO_ENUM: dynstring_append_formated(str, "Auto-Enum"); break;
 		default: panic("");
 		}
 	}
 
-	void base_append_to_string(Node* base, String* str)
+	void base_append_to_string(Node* base, DynString* str)
 	{
 		switch (base->type)
 		{
 		case Node_Type::SYMBOL_NODE: {
-			string_append_formated(str, "SYMBOL_NODE %s", ((Symbol_Node*)base)->name->characters);
+			dynstring_append_formated(str, "SYMBOL_NODE %s", ((Symbol_Node*)base)->name->characters);
 			break;
 		}
 		case Node_Type::ROOT: {
-			string_append_formated(str, "ROOT");
+			dynstring_append_formated(str, "ROOT");
 			break;
 		}
 		case Node_Type::DEFINITION: 
 		{
-			string_append_formated(str, "DEFINITION ");
+			dynstring_append_formated(str, "DEFINITION ");
 			auto def = (Definition*)base;
 			switch (def->type)
 			{
@@ -542,7 +542,7 @@ namespace AST
 			case Definition_Type::IMPORT:
 			{
 				auto& import = def->options.import;
-				string_append_formated(str, "IMPORT");
+				dynstring_append_formated(str, "IMPORT");
 				if (import.is_transitive) {
 					string_append(str, " transitive");
 				}
@@ -587,7 +587,7 @@ namespace AST
 			break;
 		}
 		case Node_Type::CALL_NODE: {
-			string_append_formated(str, "CALL_NODE");
+			dynstring_append_formated(str, "CALL_NODE");
 			break;
 		}
 		case Node_Type::SUBTYPE_INITIALIZER: {
@@ -600,41 +600,41 @@ namespace AST
 			break;
 		}
 		case Node_Type::PATH_LOOKUP:
-			string_append_formated(str, "PATH_LOOKUP ");
+			dynstring_append_formated(str, "PATH_LOOKUP ");
 			break;
 		case Node_Type::GET_OVERLOAD_ARGUMENT:
-			string_append_formated(str, "GET_OVERLOAD_ARG ");
+			dynstring_append_formated(str, "GET_OVERLOAD_ARG ");
 			break;
-		case Node_Type::MATCH_CASE: string_append_formated(str, "MATCH_CASE"); break;
-		case Node_Type::CODE_BLOCK: string_append_formated(str, "CODE_BLOCK"); break;
+		case Node_Type::MATCH_CASE: dynstring_append_formated(str, "MATCH_CASE"); break;
+		case Node_Type::CODE_BLOCK: dynstring_append_formated(str, "CODE_BLOCK"); break;
 		case Node_Type::ARGUMENT: {
-			string_append_formated(str, "ARGUMENT");
+			dynstring_append_formated(str, "ARGUMENT");
 			auto arg = (Argument*)base;
 			if (arg->name.available) {
-				string_append_formated(str, " ");
+				dynstring_append_formated(str, " ");
 				string_append_string(str, arg->name.value);
 			}
 			break;
 		}
 		case Node_Type::ENUM_MEMBER: {
 			auto mem = (Enum_Member_Node*)base;
-			string_append_formated(str, "ENUM_MEMBER ");
+			dynstring_append_formated(str, "ENUM_MEMBER ");
 			string_append_string(str, mem->name);
 			break;
 		}
 		case Node_Type::STRUCT_MEMBER: {
 			auto mem = (Structure_Member_Node*)base;
-			string_append_formated(str, "STRUCT_MEMBER ");
+			dynstring_append_formated(str, "STRUCT_MEMBER ");
 			string_append_string(str, mem->name);
 			break;
 		}
 		case Node_Type::PARAMETER: {
 			auto param = (Parameter*)base;
-			string_append_formated(str, "PARAMETER ");
+			dynstring_append_formated(str, "PARAMETER ");
 			break;
 		}
 		case Node_Type::SIGNATURE: {
-			string_append_formated(str, "SIGNATURE ");
+			dynstring_append_formated(str, "SIGNATURE ");
 			break;
 		}
 		case Node_Type::EXPRESSION:
@@ -642,46 +642,46 @@ namespace AST
 			auto expr = (Expression*)base;
 			switch (expr->type)
 			{
-			case Expression_Type::BINARY_OPERATION: string_append_formated(str, "BINARY_OPERATION"); break;
-			case Expression_Type::UNARY_OPERATION: string_append_formated(str, "UNARY_OPERATION"); break;
-			case Expression_Type::PATTERN_VARIABLE: string_append_formated(str, "PATTERN_VARIABLE"); break;
-			case Expression_Type::FUNCTION_CALL: string_append_formated(str, "FUNCTION_CALL"); break;
-			case Expression_Type::BAKE: string_append_formated(str, "BAKE"); break;
-			case Expression_Type::INSTANCIATE: string_append_formated(str, "INSTANCIATE"); break;
-			case Expression_Type::GET_OVERLOAD: string_append_formated(str, "GET_OVERLOAD"); break;
-			case Expression_Type::PATH_LOOKUP: string_append_formated(str, "EXPR_LOOKUP "); break;
-			case Expression_Type::IF_THEN_ELSE: string_append_formated(str, "IF_THEN_ELSE"); break;
+			case Expression_Type::BINARY_OPERATION: dynstring_append_formated(str, "BINARY_OPERATION"); break;
+			case Expression_Type::UNARY_OPERATION: dynstring_append_formated(str, "UNARY_OPERATION"); break;
+			case Expression_Type::PATTERN_VARIABLE: dynstring_append_formated(str, "PATTERN_VARIABLE"); break;
+			case Expression_Type::FUNCTION_CALL: dynstring_append_formated(str, "FUNCTION_CALL"); break;
+			case Expression_Type::BAKE: dynstring_append_formated(str, "BAKE"); break;
+			case Expression_Type::INSTANCIATE: dynstring_append_formated(str, "INSTANCIATE"); break;
+			case Expression_Type::GET_OVERLOAD: dynstring_append_formated(str, "GET_OVERLOAD"); break;
+			case Expression_Type::PATH_LOOKUP: dynstring_append_formated(str, "EXPR_LOOKUP "); break;
+			case Expression_Type::IF_THEN_ELSE: dynstring_append_formated(str, "IF_THEN_ELSE"); break;
 			case Expression_Type::LITERAL_READ: {
-				string_append_formated(str, "LITERAL_READ ");
+				dynstring_append_formated(str, "LITERAL_READ ");
 				auto& read = expr->options.literal_read;
 				switch (read.type) {
-				case Literal_Type::BOOLEAN: string_append_formated(str, read.options.boolean ? "true" : "false"); break;
-				case Literal_Type::INTEGER: string_append_formated(str, "%d", read.options.int_val); break;
-				case Literal_Type::FLOAT_VAL: string_append_formated(str, "%f", read.options.float_val); break;
-				case Literal_Type::NULL_VAL: string_append_formated(str, "null"); break;
-				case Literal_Type::STRING: string_append_formated(str, "%s", read.options.string->characters); break;
-				case Literal_Type::CODE_POINT: string_append_formated(str, "'#%d'", read.options.codepoint); break;
+				case Literal_Type::BOOLEAN: dynstring_append_formated(str, read.options.boolean ? "true" : "false"); break;
+				case Literal_Type::INTEGER: dynstring_append_formated(str, "%d", read.options.int_val); break;
+				case Literal_Type::FLOAT_VAL: dynstring_append_formated(str, "%f", read.options.float_val); break;
+				case Literal_Type::NULL_VAL: dynstring_append_formated(str, "null"); break;
+				case Literal_Type::STRING: dynstring_append_formated(str, "%s", read.options.string->characters); break;
+				case Literal_Type::CODE_POINT: dynstring_append_formated(str, "'#%d'", read.options.codepoint); break;
 				default: panic("");
 				}
 				break;
 			}
-			case Expression_Type::ARRAY_ACCESS: string_append_formated(str, "ARRAY_ACCESS"); break;
-			case Expression_Type::MEMBER_ACCESS: string_append_formated(str, "MEMBER_ACCESS"); break;
+			case Expression_Type::ARRAY_ACCESS: dynstring_append_formated(str, "ARRAY_ACCESS"); break;
+			case Expression_Type::MEMBER_ACCESS: dynstring_append_formated(str, "MEMBER_ACCESS"); break;
 			case Expression_Type::SUBTYPE_ACCESS: {
-				string_append_formated(str, "SUBTYPE_ACCESS"); 
+				dynstring_append_formated(str, "SUBTYPE_ACCESS"); 
 				string_append_string(str, expr->options.subtype_access.name);
 				break;
 			}
-			case Expression_Type::BASETYPE_ACCESS: string_append_formated(str, "BASETYPE_ACCESS"); break;
-			case Expression_Type::INFERRED_FUNCTION: string_append_formated(str, "INFERRED_FUNCTION"); break;
-			case Expression_Type::FUNCTION_POINTER_TYPE: string_append_formated(str, "FUNCTION_POINTER_TYPE"); break;
-			case Expression_Type::ARRAY_TYPE: string_append_formated(str, "ARRAY_TYPE"); break;
-			case Expression_Type::SLICE_TYPE: string_append_formated(str, "SLICE_TYPE"); break;
-			case Expression_Type::POINTER_TYPE: string_append_formated(str, "PTIONAL_POINTER_TYPE"); break;
-			case Expression_Type::ERROR_EXPR: string_append_formated(str, "ERROR_EXPR"); break;
-			case Expression_Type::STRUCT_INITIALIZER: string_append_formated(str, "STRUCT_INITIALIZER"); break;
-			case Expression_Type::ARRAY_INITIALIZER: string_append_formated(str, "ARRAY_INITIZALIZER"); break;
-			case Expression_Type::AUTO_ENUM: string_append_formated(str, "AUTO_ENUM"); break;
+			case Expression_Type::BASETYPE_ACCESS: dynstring_append_formated(str, "BASETYPE_ACCESS"); break;
+			case Expression_Type::INFERRED_FUNCTION: dynstring_append_formated(str, "INFERRED_FUNCTION"); break;
+			case Expression_Type::FUNCTION_POINTER_TYPE: dynstring_append_formated(str, "FUNCTION_POINTER_TYPE"); break;
+			case Expression_Type::ARRAY_TYPE: dynstring_append_formated(str, "ARRAY_TYPE"); break;
+			case Expression_Type::SLICE_TYPE: dynstring_append_formated(str, "SLICE_TYPE"); break;
+			case Expression_Type::POINTER_TYPE: dynstring_append_formated(str, "PTIONAL_POINTER_TYPE"); break;
+			case Expression_Type::ERROR_EXPR: dynstring_append_formated(str, "ERROR_EXPR"); break;
+			case Expression_Type::STRUCT_INITIALIZER: dynstring_append_formated(str, "STRUCT_INITIALIZER"); break;
+			case Expression_Type::ARRAY_INITIALIZER: dynstring_append_formated(str, "ARRAY_INITIZALIZER"); break;
+			case Expression_Type::AUTO_ENUM: dynstring_append_formated(str, "AUTO_ENUM"); break;
 			default: panic("");
 			}
 			break;
@@ -691,24 +691,24 @@ namespace AST
 			auto stat = (Statement*)base;
 			switch (stat->type)
 			{
-			case Statement_Type::DEFINITION: string_append_formated(str, "STAT_DEF"); break;
-			case Statement_Type::BLOCK: string_append_formated(str, "STAT_BLOCK"); break;
+			case Statement_Type::DEFINITION: dynstring_append_formated(str, "STAT_DEF"); break;
+			case Statement_Type::BLOCK: dynstring_append_formated(str, "STAT_BLOCK"); break;
 			case Statement_Type::ASSIGNMENT: {
-				string_append_formated(str, "ASSIGNMENT");
+				dynstring_append_formated(str, "ASSIGNMENT");
 				break;
 			}
-			case Statement_Type::BINOP_ASSIGNMENT: string_append_formated(str, "BINOP_ASSIGNMENT"); break;
-			case Statement_Type::EXPRESSION_STATEMENT: string_append_formated(str, "EXPRESSION_STATEMENT"); break;
-			case Statement_Type::DEFER: string_append_formated(str, "DEFER"); break;
-			case Statement_Type::DEFER_RESTORE: string_append_formated(str, "DEFER_RESTORE"); break;
-			case Statement_Type::IF_STATEMENT: string_append_formated(str, "IF_STATEMENT"); break;
-			case Statement_Type::WHILE_STATEMENT: string_append_formated(str, "WHILE_STATEMENT"); break;
-			case Statement_Type::FOR_LOOP: string_append_formated(str, "FOR_LOOP"); break;
-			case Statement_Type::FOREACH_LOOP: string_append_formated(str, "FOREACH_LOOP"); break;
-			case Statement_Type::MATCH_STATEMENT: string_append_formated(str, "MATCH_STATEMENT"); break;
-			case Statement_Type::BREAK_STATEMENT: string_append_formated(str, "BREAK_STATEMENT"); break;
-			case Statement_Type::CONTINUE_STATEMENT: string_append_formated(str, "CONTINUE_STATEMENT"); break;
-			case Statement_Type::RETURN_STATEMENT: string_append_formated(str, "RETURN_STATEMENT"); break;
+			case Statement_Type::BINOP_ASSIGNMENT: dynstring_append_formated(str, "BINOP_ASSIGNMENT"); break;
+			case Statement_Type::EXPRESSION_STATEMENT: dynstring_append_formated(str, "EXPRESSION_STATEMENT"); break;
+			case Statement_Type::DEFER: dynstring_append_formated(str, "DEFER"); break;
+			case Statement_Type::DEFER_RESTORE: dynstring_append_formated(str, "DEFER_RESTORE"); break;
+			case Statement_Type::IF_STATEMENT: dynstring_append_formated(str, "IF_STATEMENT"); break;
+			case Statement_Type::WHILE_STATEMENT: dynstring_append_formated(str, "WHILE_STATEMENT"); break;
+			case Statement_Type::FOR_LOOP: dynstring_append_formated(str, "FOR_LOOP"); break;
+			case Statement_Type::FOREACH_LOOP: dynstring_append_formated(str, "FOREACH_LOOP"); break;
+			case Statement_Type::MATCH_STATEMENT: dynstring_append_formated(str, "MATCH_STATEMENT"); break;
+			case Statement_Type::BREAK_STATEMENT: dynstring_append_formated(str, "BREAK_STATEMENT"); break;
+			case Statement_Type::CONTINUE_STATEMENT: dynstring_append_formated(str, "CONTINUE_STATEMENT"); break;
+			case Statement_Type::RETURN_STATEMENT: dynstring_append_formated(str, "RETURN_STATEMENT"); break;
 			default:panic("");
 			}
 			break;
@@ -717,7 +717,7 @@ namespace AST
 		}
 	}
 
-	void base_append_to_string_recursive(Node* base, String* str, int indentation)
+	void base_append_to_string_recursive(Node* base, DynString* str, int indentation)
 	{
 		base_append_to_string(base, str);
 		
@@ -727,12 +727,12 @@ namespace AST
 		}
 
 		if (child_count == 1) {
-			string_append_formated(str, ": ");
+			dynstring_append_formated(str, ": ");
 			base_append_to_string_recursive(base_get_child(base, 0), str, indentation + 1);
 		}
 		else 
 		{
-			string_append_formated(str, "\n");
+			dynstring_append_formated(str, "\n");
 			int child_index = 0;
 			while (true)
 			{
@@ -741,7 +741,7 @@ namespace AST
 				child_index += 1;
 
 				for (int i = 0; i < indentation + 1; i++) {
-					string_append_formated(str, "  ");
+					dynstring_append_formated(str, "  ");
 				}
 				base_append_to_string_recursive(child, str, indentation + 1);
 			}
@@ -750,7 +750,7 @@ namespace AST
 
 	void base_print(Node* node)
 	{
-		String text = string_create(1024);
+		DynString text = dynstring_create(1024);
 		SCOPE_EXIT(string_destroy(&text));
 		base_append_to_string_recursive(node, &text, 0);
 		logg("AST:\n------------------------\n%s\n", text.characters);
@@ -781,10 +781,10 @@ namespace AST
 		return 0;
 	}
 
-	void path_lookup_append_to_string(Path_Lookup* path, String* string)
+	void path_lookup_append_to_string(Path_Lookup* path, DynString* string)
 	{
 		for (int i = 0; i < path->parts.size; i++) {
-			string_append_formated(string, "%s", path->parts[i]->name->characters);
+			dynstring_append_formated(string, "%s", path->parts[i]->name->characters);
 			if (i != path->parts.size - 1) {
 				string_append_character(string, '~');
 			}

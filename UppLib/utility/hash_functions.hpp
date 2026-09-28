@@ -5,7 +5,7 @@
 #include "../datastructures/array.hpp"
 
 u64 hash_memory(Array<byte> memory);
-u64 hash_string(String* string);
+u64 hash_string(DynString* string);
 u64 hash_i32(i32* i);
 u64 hash_u32(u32* i);
 u64 hash_i64(i64* i);

@@ -13,413 +13,67 @@
 
 
 
-void string_destroy(String* string) {
-    if (string->capacity != 0) {
-        delete[] string->characters;
-    }
-}
-
-
-
-// CREATE FUNCTIONS
-String string_create(int capacity, Arena* arena)
+// String
+String string_make(const char* c_string) 
 {
     String result;
-    result.size = 0;
-    result.capacity = 0;
-    result.arena = arena;
-    if (capacity <= 0) {
-        result.characters = 0;
-        result.capacity = 0;
-        result.characters = "";
-    }
-    else {
-        string_reserve(&result, capacity);
-    }
-    return result;
+    result.characters = c_string;
+    result.size = strlen(c_string);
+    return;
 }
 
-String string_create(Arena* arena, int capacity) {
-    return string_create(capacity, arena);
-}
-
-String string_create(const char* content, Arena* arena) {
-    int size = strlen(content);
-    String result = string_create(size + 1, arena);
-    strcpy_s(result.characters, size+1, content);
+String string_make(const char* characters, int size) 
+{
+    String result;
+    result.characters = characters;
     result.size = size;
-    return result;
+    return;
 }
 
-String string_copy(String other, Arena* arena) {
-    if (other.size == 0) {
-        return string_create(arena);
-    }
-    String result = string_create(other.size + 1, arena);
-    memory_copy(result.characters, other.characters, other.size);
-    result.size = other.size;
-    result.characters[result.size] = '\0';
-    return result;
-}
-
-String string_create_substring(String* string, int start_index, int end_index)
+String string_make_substring(String other, int start, int end_exclusive)
 {
-    if (start_index > end_index) {
-        return string_create();
+    if (start < 0) {
+        start = 0;
     }
-    start_index = math_clamp(start_index, 0, string->size-1);
-    end_index = math_clamp(end_index, 0, string->size);
+    if (end_exclusive > other.size) {
+        end_exclusive = other.size;
+    }
 
-    String result = string_create(end_index - start_index + 1);
-    result.size = end_index - start_index;
-    memory_copy(result.characters, &string->characters[start_index], result.size);
-    result.characters[result.size] = 0;
-    return result;
+    return string_make(&other.characters[start], end_exclusive - start);
 }
 
-String string_create_from_string_with_extra_capacity(String* other, int extra_capacity) {
-    String result = string_create(other->size + 1 + extra_capacity);
-    strcpy_s(result.characters, result.capacity, other->characters);
-    result.size = other->size;
-    return result;
-}
-
-void string_create_from_filepath_to_path_and_filename(String* path, String* filename, const char* filepath)
+bool string_equals(String a, String b)
 {
-    // 1. Search last / or \
-    // Create new strings before and after that
-    String buffer = string_create(filepath); // Make editable buffer from const char
-    int last_slash = -1;
-    for (int i = 0; i < buffer.size; i++) {
-        // Replace all \ with /
-        if (buffer.characters[i] == '\\') {
-            buffer.characters[i] = '/';
-            last_slash = i;
-        }
-    }
-
-    if (last_slash == -1) {
-        // No path exists in filepath
-        *filename = buffer;
-        *path = string_create("./");
-    }
-    else {
-        // Filepath contains a path and a filename, needs to be split
-        *path = buffer;
-        path->size = last_slash+1;
-        *filename = string_create(path->characters + path->size);
-        path->characters[path->size] = 0; // Add 0 terminator to path
-    }
+    if (a.size != b.size) { return false; }
+    if (a.characters == b.characters) return true;
+    return memcmp(a.characters, b.characters, a.size) == 0;
 }
 
-
-
-// STATIC CREATORS
-String string_create_static(const char* content)
+bool string_in_order(String a, String b)
 {
-    String result;
-    result.characters = const_cast<char*>(content);
-    result.size = (int)strlen(content);
-    result.capacity = 0;
-    result.arena = nullptr;
-    return result;
-}
-
-String string_create_static_with_size(const char* content, int length)
-{
-    String result;
-    result.size = length;
-    result.characters = const_cast<char*>(content);
-    result.capacity = 0;
-    result.arena = nullptr;
-    return result;
-}
-
-String string_create_substring_static(String* string, int start_pos, int end_pos) {
-    if (start_pos >= end_pos) {
-        return string_create_static("");
-    }
-    start_pos = math_clamp(start_pos, 0, string->size);
-    end_pos = math_clamp(end_pos, 0, string->size);
-
-    String result;
-    result.characters = string->characters + start_pos;
-    result.size = end_pos - start_pos;
-    result.capacity = 0;
-    result.arena = nullptr;
-    return result;
-}
-
-
-
-// OTHER FUNCTIONS
-void string_reserve(String* string, int new_capacity) 
-{
-    if (string->capacity >= new_capacity) {
-        return;
-    }
-    else {
-        int cap = math_maximum(1, string->capacity);
-        while (cap < new_capacity) {
-            cap = (cap * 3 / 2) + 1;
-        }
-        new_capacity = cap;
-    }
-
-    char* buffer = nullptr;
-    if (string->arena != nullptr) {
-        if (string->capacity != 0 && string->arena->resize(string->characters, string->capacity, new_capacity)) {
-            return;
-        }
-        buffer = (char*) string->arena->allocate_raw(new_capacity, 1);
-    }
-    else {
-        buffer = new char[new_capacity];
-    }
-
-    if (string->capacity == 0) {
-        string->capacity = new_capacity;
-        string->characters = buffer;
-        string->characters[0] = '\0';
-    }
-    else
-    {
-        memory_copy(buffer, string->characters, string->size);
-        if (string->size < string->capacity && string->characters[string->size] == 0) { // Copy 0 terminator if existing?
-            buffer[string->size] = 0;
-        }
-
-        if (string->arena == nullptr) {
-            delete[] string->characters;
-        }
-        string->characters = buffer;
-        string->capacity = new_capacity;
-    }
-}
-
-bool string_equals(String* s1, String* s2)
-{
-    if (s1->size != s2->size) { return false; }
-    return memcmp(s1->characters, s2->characters, s1->size) == 0;
-}
-
-bool string_equals(String s1, String s2) {
-    if (s1.size != s2.size) { return false; }
-    return memcmp(s1.characters, s2.characters, s1.size) == 0;
-}
-
-bool string_in_order(String* s1, String* s2)
-{
-    int res = strncmp(s1->characters, s2->characters, math_minimum(s1->size, s2->size));
+    int res = strncmp(a.characters, b.characters, math_minimum(a.size, b.size));
     if (res == 0) {
-        return s1->size > s2->size;
+        return a.size > b.size;
     }
     return res >= 0;
 }
 
-void string_append(String* string, const char* appendix) {
-    int appendix_length = (int)strlen(appendix);
-    int required_capacity = string->size + appendix_length + 1;
-    string_reserve(string, required_capacity);
-    strcpy_s(string->characters + string->size, appendix_length+1, appendix);
-    string->size += appendix_length;
-}
-
-void string_add_null_terminator(String* string) {
-    string_reserve(string, string->size + 1);
-    string->characters[string->size] = '\0';
-}
-
-void string_replace_character(String* string, char to_replace, char replace_with)
+bool string_compare_substring(String string, int start_index, String other) 
 {
-    for (int i = 0; i < string->size; i++) {
-        if (string->characters[i] == to_replace) {
-            string->characters[i] = replace_with;
-        }
-    }
-}
-
-void string_truncate(String* string, int vector_length) {
-    if (vector_length < string->size) {
-        string->size = vector_length;
-        string->characters[vector_length] = 0;
-    }
-}
-
-Optional<int> string_find_character_index_reverse(String* string, char character, int startpos)
-{
-    Optional<int> result;
-    if (startpos >= string->size || startpos < 0) {
-        result.available = false;
-        return result;
-    }
-
-    for (int i = startpos; i >= 0; i--) {
-        if (string->characters[i] == character) {
-            result.available = true;
-            result.value = i;
-            return result;
-        }
-    }
-
-    result.available = false;
-    return result;
-}
-
-bool string_starts_with(String str, const char* start) {
-    int start_length = (int) strlen(start);
-    if (start_length > str.size) return false;
-    return strncmp(str.characters, start, start_length) == 0;
-}
-
-bool string_ends_with(String str, const char* ending)
-{
-    int ending_length = (int) strlen(ending);
-    if (ending_length == 0) return true;
-    int string_length = (int)str.size;
-    if (ending_length > string_length) return false;
-    return memory_compare((void*)ending, &(str.characters[string_length - ending_length]), ending_length);
-}
-
-bool cstring_ends_with(const char* string, const char* ending) {
-    int ending_length = (int) strlen(ending);
-    int string_length = (int) strlen(string);
-    if (ending_length > string_length) return false;
-    return strcmp(ending, &(string[string_length - ending_length])) == 0;
-}
-
-void string_append_formated(String* string, const char* format, ...) 
-{
-    va_list args;
-    va_start(args, format);
-    int message_length = vsnprintf(0, 0, format, args);
-    string_reserve(string, string->size + message_length + 1);
-    int ret_val = vsnprintf(string->characters + string->size, string->capacity - string->size, format, args);
-    if (ret_val < 0) {
-        panic("Shouldn't happen");
-    }
-    string->size = string->size + message_length;
-    /*
-    if (c_string->size != strlen(c_string->characters)) {
-        logg("shit??\n");
-    }
-    */
-    va_end(args);
-}
-
-void string_append_character(String* string, char c)
-{
-    string_reserve(string, string->size + 2);
-    string->characters[string->size] = c; // Overwrite 0 terminator
-    string->characters[string->size+1] = 0; // Set 0 terminator again
-    string->size += 1;
-}
-
-void string_remove_substring(String* string, int start_index, int end_index) 
-{
-    if (string->size == 0 || end_index <= start_index) {
-        return;
-    }
-    start_index = math_clamp(start_index, 0, string->size-1);
-    end_index = math_clamp(end_index, 0, string->size);
-    int length = end_index - start_index;
-    for (int i = start_index; i < string->size - length; i++) {
-        string->characters[i] = string->characters[i + length];
-    }
-    string->size = string->size - length;
-    string->characters[string->size] = 0;
-}
-
-void string_reset(String* string)
-{
-    string->size = 0;
-    if (string->capacity == 0) {
-        string->characters = "";
-    }
-    else {
-        string->characters[0] = 0;
-    }
-}
-
-void string_append_string(String* string, String* appendix)
-{
-    string_reserve(string, string->size + appendix->size + 1);
-    memory_copy(string->characters + string->size, appendix->characters, appendix->size + 1);
-    string->size += appendix->size;
-    string->characters[string->size] = '\0';
-}
-
-void string_remove_character(String* string, int index) 
-{
-    if (index >= string->size || index < 0) {
-        return;
-    }
-    for (int i = index; i + 1 <= string->size; i++) {
-        string->characters[i] = string->characters[i+1];
-    }
-    string->size -= 1;
-}
-
-void string_insert_character_before(String* string, byte character, int index)
-{
-    // Check if enough space is available
-    string_reserve(string, string->size + 2);
-    // Move all character after index one forward (Overwriting the 0 terminator)
-    for (int i = string->size; i - 1 >= index; i--) {
-        string->characters[i] = string->characters[i-1];
-    }
-    // Insert character
-    string->characters[index] = character;
-    // Update size
-    string->size += 1;
-    string->characters[string->size] = 0; // Null-Terminator
-}
-
-Optional<int> string_find_character_index(String* string, char c, int start_position) {
-    if (start_position >= string->size) {
-        return optional_make_failure<int>();
-    }
-    char* result = strchr(string->characters + start_position, c);
-    if (result == nullptr) {
-        return optional_make_failure<int>();
-    }
-    else {
-        return optional_make_success<int>(result - string->characters);
-    }
-}
-
-bool string_compare_substring(String* string, int start_index, String* other) {
-    if (string->size - start_index < other->size) {
+    if (string.size - start_index < other.size) {
         return false;
     }
-    return strncmp(string->characters + start_index, other->characters, other->size) == 0;
+    return strncmp(string.characters + start_index, other.characters, other.size) == 0;
 }
 
-void string_insert_string(String* string, String* insertion, int position) 
-{
-    position = math_clamp(position, 0, string->size);
-    int new_size = string->size + insertion->size;
-    string_reserve(string, new_size+1);
-    string->characters[new_size] = 0;
-    // Create a hole in the c_string where we the insertion can be placed
-    for (int i = new_size - 1; i-insertion->size >= position; i--) {
-        string->characters[i] = string->characters[i - insertion->size];
-    }
-    // Fill the hole with the insertion
-    memory_copy(string->characters + position, insertion->characters, insertion->size);
-    string->size = new_size;
-}
-
-void string_prepend_string(String* string, String* prepension) {
-    string_insert_string(string, prepension, 0);
-}
-
-
-int string_contains_substring(String string, int search_start, String substring) { // -1 if not available
+int string_contains_substring(String string, String substring, int search_start) 
+{ 
+    // -1 if not available
     if (substring.size > string.size - search_start) return -1;
     if (search_start >= string.size) return -1;
 
-    for (int i = search_start; i < string.size; i++) {
+    for (int i = search_start; i < string.size; i++) 
+    {
         if (i + substring.size > string.size) return -1;
 
         bool success = true;
@@ -438,55 +92,22 @@ int string_contains_substring(String string, int search_start, String substring)
     return -1;
 }
 
-void string_clear(String* string)
+bool string_starts_with(String str, String start)
 {
-    string->size = 0;
-    string->characters[0] = 0;
+    if (start.size == 0) return true;
+    if (start.size > str.size) return false;
+    return strncmp(str.characters, start.characters, start.size) == 0;
 }
 
-void string_set_characters(String* string, const char* characters)
+bool string_ends_with(String str, String end) 
 {
-    string_clear(string);
-    string_append(string, characters);
+    if (end.size > 0) return true;
+    if (end.size > str.size) return false;
+    return memory_compare((void*)end.characters, (void*)&str.characters[str.size - end.size], end.size);
 }
 
-Optional<float> string_parse_float(String* string) {
-    char* end_ptr;
-    float result = strtof(string->characters, &end_ptr);
-    if (string->characters + string->size != end_ptr) {
-        return optional_make_failure<float>();
-    }
-    return optional_make_success(result);
-}
-
-Optional<int> string_parse_int(String* string) {
-    char* end_ptr;
-    int result = strtol(string->characters, &end_ptr, 10);
-    if (string->characters + string->size != end_ptr) {
-        return optional_make_failure<int>();
-    }
-    return optional_make_success(result);
-}
-
-Optional<i64> string_parse_i64(String* string) {
-    char* end_ptr;
-    i64 result = strtoll(string->characters, &end_ptr, 10);
-    if (string->characters + string->size != end_ptr) {
-        return optional_make_failure<i64>();
-    }
-    return optional_make_success(result);
-}
-
-Optional<i64> string_parse_i64_hex(String string) {
-    char* end_ptr;
-    i64 result = strtoll(string.characters, &end_ptr, 16);
-    if (string.characters + string.size != end_ptr) {
-        return optional_make_failure<i64>();
-    }
-    return optional_make_success(result);
-}
-
-bool string_contains_character(String string, char character) {
+bool string_contains_character(String string, char character) 
+{
     for (int i = 0; i < string.size; i++) {
         if (string.characters[i] == character) {
             return true;
@@ -495,22 +116,11 @@ bool string_contains_character(String string, char character) {
     return false;
 }
 
-void string_append_character_array(String* string, Array<char> appendix) 
+bool string_contains_only_characters_in_set(String string, String set, bool use_set_complement)
 {
-    int appendix_length = appendix.size;
-    int required_capacity = string->size + appendix_length+1;
-    string_reserve(string, required_capacity);
-
-    memory_copy(string->characters + string->size, appendix.data, appendix.size);
-    string->size += appendix.size;
-    string->characters[string->size] = 0;
-}
-
-bool string_contains_only_characters_in_set(String* string, String set, bool use_set_complement)
-{
-    for (int i = 0; i < string->size; i++)
+    for (int i = 0; i < string.size; i++)
     {
-        char c = string->characters[i];
+        char c = string.characters[i];
         if (!use_set_complement) {
             if (!string_contains_character(set, c)) return false;
         }
@@ -521,46 +131,372 @@ bool string_contains_only_characters_in_set(String* string, String set, bool use
     return true;
 }
 
-bool string_equals_cstring(String* string, const char* compare) {
-    int c_size = (int)strlen(compare);
-    if (string->size != c_size) return false;
-    if (strncmp(string->characters, compare, string->size) == 0) {
-        return true;
+bool string_test_char(String str, int char_index, char c) 
+{
+    if (char_index < 0 || char_index >= str.size) return false;
+    return str.characters[char_index] == c;
+}
+
+Optional<int> string_find_character_index(String string, char c, int start_position) 
+{
+    if (start_position >= string.size) {
+        return optional_make_failure<int>();
     }
-    return false;
+    const char* result = strchr(string.characters + start_position, c);
+    if (result == nullptr) {
+        return optional_make_failure<int>();
+    }
+    else {
+        return optional_make_success<int>(result - string.characters);
+    }
 }
 
-bool string_test_char(String str, int char_index, char c)
+Optional<int> string_find_character_index_reverse(String string, char character, int startpos)
 {
-    if (char_index > str.size) return false;
-    return str[char_index] == c;
+    Optional<int> result;
+    if (startpos >= string.size || startpos < 0) {
+        result.available = false;
+        return result;
+    }
+
+    for (int i = startpos; i >= 0; i--) {
+        if (string.characters[i] == character) {
+            result.available = true;
+            result.value = i;
+            return result;
+        }
+    }
+
+    result.available = false;
+    return result;
 }
 
-Array<String> string_split(String string, char c)
+Optional<float> string_parse_float(String string) 
 {
-    auto parts = dynamic_array_create<String>(1);
+    char* end_ptr;
+    float result = strtof(string.characters, &end_ptr);
+    if (string.characters + string.size != end_ptr) {
+        return optional_make_failure<float>();
+    }
+    return optional_make_success(result);
+}
+
+Optional<int> string_parse_int(String string) 
+{
+    char* end_ptr;
+    int result = strtol(string.characters, &end_ptr, 10);
+    if (string.characters + string.size != end_ptr) {
+        return optional_make_failure<int>();
+    }
+    return optional_make_success(result);
+}
+
+Optional<i64> string_parse_i64(String string) 
+{
+    char* end_ptr;
+    i64 result = strtoll(string.characters, &end_ptr, 10);
+    if (string.characters + string.size != end_ptr) {
+        return optional_make_failure<i64>();
+    }
+    return optional_make_success(result);
+}
+
+Optional<i64> string_parse_i64_hex(String string) 
+{
+    char* end_ptr;
+    i64 result = strtoll(string.characters, &end_ptr, 16);
+    if (string.characters + string.size != end_ptr) {
+        return optional_make_failure<i64>();
+    }
+    return optional_make_success(result);
+}
+
+Array<String> string_split(String string, char c, Arena* arena)
+{
+    DynArray<String> parts = DynArray<String>::create(arena);
     int last_start = 0;
     for (int i = 0; i < string.size; i++) {
         if (string.characters[i] == c) {
-            String sub = string_create_substring_static(&string, last_start, i);
-            dynamic_array_push_back(&parts, sub);
+            String sub = string_make_substring(string, last_start, i);
+            parts.push_back(sub);
             last_start = i + 1;
         }
     }
-    String end = string_create_substring_static(&string, last_start, string.size);
-    dynamic_array_push_back(&parts, end);
+    String end = string_make_substring(string, last_start, string.size);
+    parts.push_back(end);
 
-    return dynamic_array_as_array(&parts);
+    return parts.as_array();
 }
 
-void string_split_destroy(Array<String> parts) {
-    delete parts.data;
-    parts.data = 0;
-}
 
-bool string_fill_from_line(String* to_fill)
+
+// String_List
+String_List String_List::create_empty(Allocator_Base* allocator)
 {
-    string_reset(to_fill);
+    String_List result;
+    result.size = 0;
+    result.allocator = allocator;
+    result.options.small_string_buffer[0] = 0;
+    return result;
+}
+
+String_List String_List::create(Allocator_Base* allocator, String string)
+{
+    String_List result = String_List::create_empty(allocator);
+    result.set(string);
+    return result;
+}
+
+void String_List::reset()
+{
+    // Free all allocated nodes
+    if (size > STRING_LIST_SMALL_STRING_SIZE) 
+    {
+        String_List_Node* next = options.head;
+        while (next != nullptr) {
+            String_List_Node* after = next->next;
+            allocator->deallocate(next);
+            next = after;
+        }
+    }
+
+    size = 0;
+}
+
+void String_List::set(String string)
+{
+    size = string.size;
+
+    // Small-string optimization
+    if (string.size <= STRING_LIST_SMALL_STRING_SIZE) 
+    {
+        reset(); // Remove all allocated nodes
+        memory_copy(&options.small_string_buffer[0], (void*)string.characters, string.size);
+        return;
+    }
+
+    String_List_Node* last_node = nullptr;
+    String_List_Node* current_node = options.head;
+    int current_char = 0;
+    while (current_char < string.size)
+    {
+        if (current_node == nullptr) 
+        {
+            current_node = allocator->allocate<String_List_Node>();
+            current_node->next = nullptr;
+            if (last_node == nullptr) {
+                options.head = current_node;
+            }
+            else {
+                last_node->next = current_node;
+            }
+        }
+
+        memory_copy(
+            &current_node->buffer[0],
+            (void*)&string.characters[current_char],
+            math_minimum(STRING_LIST_NODE_BUFFER_SIZE, string.size - current_char)
+        );
+
+        current_char += STRING_LIST_NODE_BUFFER_SIZE;
+        last_node = current_node;
+        current_node = current_node->next;
+    }
+
+    // At the end, we need to free the remaining nodes
+    assert(last_node != nullptr, "Otherwise we would have returned by now");
+    last_node->next = nullptr;
+    while (current_node != nullptr) {
+        String_List_Node* next = current_node->next;
+        allocator->deallocate(current_node);
+        current_node = next;
+    }
+}
+
+void String_List::destroy()
+{
+    reset();
+}
+
+void String_List::append_to_dynstring(DynString* output)
+{
+    if (size == 0) return;
+
+    output->reserve(output->size + size);
+
+    if (size <= STRING_LIST_SMALL_STRING_SIZE) {
+        memory_copy(&output->characters[output->size], &options.small_string_buffer[0], size);
+        output->size += size;
+        return;
+    }
+
+    int current_char = 0;
+    String_List_Node* node = options.head;
+    while (current_char < size)
+    {
+        assert(node != nullptr, "");
+
+        int copy_size = math_minimum(STRING_LIST_NODE_BUFFER_SIZE, size - current_char);
+        memory_copy(&output->characters[output->size + current_char], (void*)&node->buffer[0], copy_size);
+
+        current_char += STRING_LIST_NODE_BUFFER_SIZE;
+        node = node->next;
+    }
+    output->size += size;
+}
+
+
+
+// DynString
+DynString dynstring_create(Arena* arena)
+{
+    DynString result;
+    result.size = 0;
+    result.capacity = 0;
+    result.characters = nullptr;
+    result.arena = arena;
+    return result;
+}
+
+DynString dynstring_create_copy(String string, Arena* arena)
+{
+    DynString result = dynstring_create(arena);
+    dynstring_set(&result, string);
+    return result;
+}
+
+String dynstring_to_string(DynString string)
+{
+    return string_make(string.characters, string.size);
+}
+
+void dynstring_reserve(DynString* string, int new_capacity) 
+{
+    if (string->capacity >= new_capacity) {
+        return;
+    }
+
+    // Calculate new capacity 
+    int cap = math_maximum(1, string->capacity);
+    while (cap < new_capacity) {
+        cap = (cap * 3 / 2) + 1;
+    }
+    new_capacity = cap;
+
+    // Check if we can resize arena
+    if (string->arena->resize(string->characters, string->capacity, new_capacity)) {
+        string->capacity = new_capacity;
+        return;
+    }
+
+
+    char* new_buffer = (char*) string->arena->allocate_raw(new_capacity, 1);
+    if (string->capacity != 0) {
+        memory_copy(new_buffer, string->characters, string->size);
+    }
+    string->capacity = new_capacity;
+    string->characters = new_buffer;
+}
+
+void dynstring_reset(DynString* string) {
+    string->size = 0;
+}
+
+void dynstring_truncate(DynString* string, int size) {
+    string->size = size;
+}
+
+void dynstring_set(DynString* string, String value) {
+    dynstring_reserve(string, value.size);
+    memory_copy(string->characters, (void*) value.characters, value.size);
+    string->size = value.size;
+}
+
+void dynstring_append(DynString* string, String appendix)
+{
+    dynstring_reserve(string, string->size + appendix.size);
+    memcpy((void*)&string->characters[string->size], (void*)appendix.characters, appendix.size);
+    string->size += appendix.size;
+}
+
+void dynstring_append_character(DynString* string, char c) {
+    dynstring_append(string, string_make(&c, 1));
+}
+
+void dynstring_append_formated(DynString* string, const char* format, ...)
+{
+    va_list args;
+    va_start(args, format);
+
+    // Check how long formated message will be and reserve buffer
+    int message_length = vsnprintf(0, 0, format, args);
+    dynstring_reserve(string, string->size + message_length + 1);
+
+    // Add formated string at end of current string
+    int ret_value = vsnprintf(string->characters + string->size, string->capacity - string->size, format, args);
+    assert(ret_value >= 0, "Should always work if params are correct and enough space is provided");
+    string->size = string->size + message_length;
+
+    va_end(args);
+}
+
+void dynstring_insert(DynString* string, String insertion, int position) 
+{
+    if (insertion.size == 0) return;
+
+    position = math_clamp(position, 0, string->size);
+    int new_size = string->size + insertion.size;
+    dynstring_reserve(string, new_size+1);
+
+    // Create a hole in the string where the insertion will be placed
+    memory_copy_overlapping(&string[position + insertion.size], &string[position], insertion.size);
+    // Fill the hole with the insertion
+    memory_copy(&string->characters[position], (void*) insertion.characters, insertion.size);
+    string->size = new_size;
+}
+
+void dynstring_prepend(DynString* string, String prependix) {
+    dynstring_insert(string, prependix, 0);
+}
+
+void dynstring_add_null_terminator(DynString* string) {
+    dynstring_reserve(string, string->size + 1);
+    string->characters[string->size] = '\0';
+}
+
+void dynstring_remove_substring(DynString* string, int start_index, int end_index) 
+{
+    if (string->size == 0 || end_index <= start_index) {
+        return;
+    }
+    start_index = math_clamp(start_index, 0, string->size-1);
+    end_index = math_clamp(end_index, 0, string->size);
+    memory_copy_overlapping(&string->characters[start_index], &string->characters[end_index], string->size - end_index);
+    string->size = string->size - (end_index - start_index);
+}
+
+void dynstring_remove_character(DynString* string, int index) {
+    dynstring_remove_substring(string, index, index + 1);
+}
+
+void dynstring_replace_character(DynString* string, char to_replace, char replace_with)
+{
+    for (int i = 0; i < string->size; i++) {
+        if (string->characters[i] == to_replace) {
+            string->characters[i] = replace_with;
+        }
+    }
+}
+
+void dynstring_remove_trailing_whitespace(DynString* str) 
+{
+    while (str->size > 0 && char_is_whitespace(str->characters[str->size - 1])) {
+        str->size -= 1;
+    }
+}
+
+bool dynstring_read_line_from_console(DynString* to_fill)
+{
     while (true)
     {
         int c = getc(stdin);
@@ -573,59 +509,91 @@ bool string_fill_from_line(String* to_fill)
         if (c == '\r' || c < ' ') {
             continue;
         }
-        string_append_character(to_fill, c);
+        dynstring_append_character(to_fill, c);
     }
 
     return false;
 }
 
-String* String::append(const char* text) {
-    string_append(this, text);
+
+
+DynString DynString::create(Arena* arena) {
+    return dynstring_create(arena);
+}
+
+DynString DynString::create_copy(String string, Arena* arena) {
+    return dynstring_create_copy(string, arena);
+}
+
+DynString* DynString::reset() {
+    dynstring_reset(this);
     return this;
 }
 
-String* String::append(String str) {
-    string_append_string(this, &str);
+void DynString::reserve(int new_capacity) {
+    dynstring_reserve(this, new_capacity);
+}
+
+String DynString::to_string() {
+    return string_make(characters, size);
+}
+
+const char* DynString::to_cstring() {
+    dynstring_add_null_terminator(this);
+    return characters;
+}
+
+DynString* DynString::append(const char* text) {
+    dynstring_append(this, string_make(text));
     return this;
 }
 
-String* String::append(String* str) {
-    string_append_string(this, str);
+DynString* DynString::append(DynString str) {
+    dynstring_append(this, str.to_string());
     return this;
 }
 
-String* String::append(char c) {
-    string_append_character(this, c);
+DynString* DynString::append(DynString* str) {
+    dynstring_append(this, str->to_string());
     return this;
 }
 
-String* String::append_formated(const char* format, ...)
+DynString* DynString::append(String str) {
+    dynstring_append(this, str);
+    return this;
+}
+
+DynString* DynString::append(String* str) {
+    dynstring_append(this, *str);
+    return this;
+}
+
+DynString* DynString::append(char c) {
+    dynstring_append_character(this, c);
+    return this;
+}
+
+DynString* DynString::append_formated(const char* format, ...)
 {
     va_list args;
     va_start(args, format);
+
+    // Check how long formated message will be and reserve buffer
     int message_length = vsnprintf(0, 0, format, args);
-    string_reserve(this, size + message_length + 1);
-    int ret_val = vsnprintf(characters + size, capacity - size, format, args);
-    if (ret_val < 0) {
-        panic("Shouldn't happen");
-    }
+    dynstring_reserve(this, size + message_length + 1);
+
+    // Add formated string at end of current string
+    int ret_value = vsnprintf(characters + size, capacity - size, format, args);
+    assert(ret_value >= 0, "Should always work if params are correct and enough space is provided");
     size = size + message_length;
+
     va_end(args);
 
     return this;
 }
 
-String* String::reset() {
-    string_reset(this);
+DynString* DynString::append(String_List string_list)
+{
+    string_list.append_to_dynstring(this);
     return this;
-}
-
-void string_remove_trailing_whitespace(String* str) {
-    while (str->size > 0 && char_is_whitespace(str->characters[str->size - 1])) {
-        str->size -= 1;
-    }
-}
-char String::at(int index, char backup) {
-    if (index < 0 || index >= (int)size) return backup;
-    return characters[index];
 }

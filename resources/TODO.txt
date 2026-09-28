@@ -1,11 +1,23 @@
 
+String Rework:
+--------------
+ - Rename String to DynString
+ - Create String struct (For string views/literals)
+ - Create String_List class
+
+DynString won't be compatible with String
+ - Requires Arena
+ - Does not work with static strings --> Normal string class
+
+
+
 
 TODO:
 -----
  X Fix Bugs from file_io
  X Scratch-Arenas need to be supported in compiler thread + in fibers (Just store 2 arenas per workload, and switch them in.)
  X Editor should be working again
- - Git-Commit
+ X Git-Commit
  - Rewrite String to DynString, use String for other shit
     DynString can not be static? Maybe I'll add it, with capacity 0
     DynString needs an arena? Probably

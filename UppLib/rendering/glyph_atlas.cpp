@@ -5,9 +5,9 @@
 #include "../utility/binary_parser.hpp"
 #include "../datastructures/string.hpp"
 
-void glyph_information_append_to_string(Glyph_Information* information, String* string) 
+void glyph_information_append_to_string(Glyph_Information* information, DynString* string) 
 {
-    string_append_formated(
+    dynstring_append_formated(
         string, "Character '%c', advance: %5d, bearing x/y: %5d/%5d, width/height: %5d/%5d\n",
         information->character == 0 ? '?' : information->character, information->advance_x, 
         information->bearing_x, information->bearing_y,
@@ -249,12 +249,12 @@ Optional<Font_Information> glyph_atlas_create_from_atlas_file(const char* atlas_
 
 void glyph_atlas_print_glyph_information(Font_Information* atlas)
 {
-    String message = string_create(4096);
+    DynString message = dynstring_create(4096);
     SCOPE_EXIT(string_destroy(&message));
     string_append(&message, "\nGlyphAtlas Informations:\n");
-    string_append_formated(&message, "\tAscender:         %d\n", atlas->ascender);
-    string_append_formated(&message, "\tDescender:        %d\n", atlas->descender);
-    string_append_formated(&message, "Glphys (#%d):\n", atlas->glyph_informations.size);
+    dynstring_append_formated(&message, "\tAscender:         %d\n", atlas->ascender);
+    dynstring_append_formated(&message, "\tDescender:        %d\n", atlas->descender);
+    dynstring_append_formated(&message, "Glphys (#%d):\n", atlas->glyph_informations.size);
     for (int i = 0; i < atlas->glyph_informations.size; i++) {
         string_append(&message, "\t");
         glyph_information_append_to_string(&atlas->glyph_informations.data[i], &message);

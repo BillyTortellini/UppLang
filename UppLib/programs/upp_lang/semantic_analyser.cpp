@@ -23,7 +23,7 @@ bool PRINT_DEPENDENCIES = false;
 bool PRINT_TIMING = false;
 
 // PROTOTYPES
-Upp_Function* upp_function_create_empty(Call_Signature* signature, String* name, Compilation_Data* compilation_data);
+Upp_Function* upp_function_create_empty(Call_Signature* signature, DynString* name, Compilation_Data* compilation_data);
 Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expression, Expression_Context context, Semantic_Context* semantic_context);
 Datatype* semantic_analyser_analyse_expression_value(
 	AST::Expression* expression, Expression_Context context, Semantic_Context* semantic_context, bool allow_nothing = false, bool allow_pattern = false);
@@ -44,7 +44,7 @@ void expression_context_apply(
 
 bool workload_executer_switch_to_workload(Workload_Executer* executer, Workload_Base* workload);
 void analysis_workload_entry(void* userdata);
-void analysis_workload_append_to_string(Workload_Base* workload, String* string);
+void analysis_workload_append_to_string(Workload_Base* workload, DynString* string);
 void workload_executer_wait_for_dependency_resolution(Semantic_Context* semantic_context);
 Dependency_Failure_Info dependency_failure_info_make_none();
 void analysis_workload_add_dependency(
@@ -63,7 +63,7 @@ void analyse_custom_operator_node(AST::Definition_Custom_Operator* custom_operat
 Call_Info call_info_make_with_empty_arguments(Call_Origin origin, Arena* arena);
 Call_Origin call_origin_make(Poly_Header* poly_header);
 void analyse_function_body(Upp_Function* function, Semantic_Context* semantic_context, const Function_Body& body, Symbol_Table* parameter_table);
-Optional<Upp_Constant> query_default_value(Semantic_Context* semantic_context, String* name, Datatype* datatype, Upp_Function* function = nullptr);
+Optional<Upp_Constant> query_default_value(Semantic_Context* semantic_context, DynString* name, Datatype* datatype, Upp_Function* function = nullptr);
 bool semantic_context_wait_for_workload(Semantic_Context* context, Workload_Base* workload);
 Datatype* analyse_variable_definition(
 	Optional<AST::Expression*> datatype_expr, Optional<AST::Expression*> initial_value_expr,
@@ -371,7 +371,7 @@ void log_error_info_argument_count(Semantic_Context* semantic_context, int given
     add_error_info_to_last_error(semantic_context, info);
 }
 
-void log_error_info_id(Semantic_Context* semantic_context, String* id) {
+void log_error_info_id(Semantic_Context* semantic_context, DynString* id) {
     assert(id != 0, "");
     Error_Information info = error_information_make_empty(Error_Information_Type::ID);
     info.options.id = id;
@@ -442,7 +442,7 @@ void log_error_info_cycle_workload(Semantic_Context* context, Workload_Base* wor
 
 
 // Upp-Function
-Upp_Function* upp_function_create_empty(Call_Signature* signature, String* name, Compilation_Data* compilation_data)
+Upp_Function* upp_function_create_empty(Call_Signature* signature, DynString* name, Compilation_Data* compilation_data)
 {
 	Upp_Function* function = compilation_data->arena.allocate<Upp_Function>();
 	memory_zero(function);
@@ -1432,7 +1432,7 @@ void call_info_set_parameter_to_expression(Call_Info* call_info, int param_index
 
 	auto& arg_info = call_info->argument_infos[argument_index];
 	arg_info.expression = expression;
-	arg_info.name = optional_make_failure<String*>();
+	arg_info.name = optional_make_failure<DynString*>();
 	arg_info.parameter_index = param_index;
 }
 
@@ -2126,68 +2126,68 @@ void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* co
 		// Print workloads and dependencies
 		if (PRINT_DEPENDENCIES)
 		{
-			String tmp = string_create(256);
+			DynString tmp = dynstring_create(256);
 			SCOPE_EXIT(string_destroy(&tmp));
-			string_append_formated(&tmp, "\n\n--------------------\nWorkload Execution Round %d\n---------------------\n", round_no);
+			dynstring_append_formated(&tmp, "\n\n--------------------\nWorkload Execution Round %d\n---------------------\n", round_no);
 			for (int i = 0; i < executer->runnable_workloads.size; i++)
 			{
 				auto workload = executer->runnable_workloads[i];
 				if (i == 0) {
-					string_append_formated(&tmp, "Runnable workloads:\n");
+					dynstring_append_formated(&tmp, "Runnable workloads:\n");
 				}
 				if (workload->dependencies.element_count > 0) continue;
 				if (workload->is_finished) continue;
-				string_append_formated(&tmp, "  ");
+				dynstring_append_formated(&tmp, "  ");
 				analysis_workload_append_to_string(workload, &tmp);
-				string_append_formated(&tmp, "\n");
+				dynstring_append_formated(&tmp, "\n");
 
 				// Append dependents
 				List_Node<Workload_Base*>* dependent_node = workload->dependents.head;
 				while (dependent_node != 0) {
 					SCOPE_EXIT(dependent_node = dependent_node->next);
 					Workload_Base* dependent = dependent_node->value;
-					string_append_formated(&tmp, "    ");
+					dynstring_append_formated(&tmp, "    ");
 					analysis_workload_append_to_string(dependent, &tmp);
-					string_append_formated(&tmp, "\n");
+					dynstring_append_formated(&tmp, "\n");
 				}
 			}
 
 			for (int i = 0; i < all_workloads.size; i++)
 			{
 				if (i == 0) {
-					string_append_formated(&tmp, "\nWorkloads with dependencies:\n");
+					dynstring_append_formated(&tmp, "\nWorkloads with dependencies:\n");
 				}
 				Workload_Base* workload = all_workloads[i];
 				if (workload->is_finished || workload->dependencies.element_count == 0) continue;
-				string_append_formated(&tmp, "  ");
+				dynstring_append_formated(&tmp, "  ");
 				analysis_workload_append_to_string(workload, &tmp);
-				string_append_formated(&tmp, "\n");
+				dynstring_append_formated(&tmp, "\n");
 				// Print dependencies
 				{
 					List_Node<Workload_Base*>* dependency_node = workload->dependencies.head;
 					if (dependency_node != 0) {
-						string_append_formated(&tmp, "    Depends On:\n");
+						dynstring_append_formated(&tmp, "    Depends On:\n");
 					}
 					while (dependency_node != 0) {
 						SCOPE_EXIT(dependency_node = dependency_node->next);
 						Workload_Base* dependency = dependency_node->value;
-						string_append_formated(&tmp, "      ");
+						dynstring_append_formated(&tmp, "      ");
 						analysis_workload_append_to_string(dependency, &tmp);
-						string_append_formated(&tmp, "\n");
+						dynstring_append_formated(&tmp, "\n");
 					}
 				}
 				// Dependents
 				{
 					List_Node<Workload_Base*>* dependent_node = workload->dependents.head;
 					if (dependent_node != 0) {
-						string_append_formated(&tmp, "    Dependents:\n");
+						dynstring_append_formated(&tmp, "    Dependents:\n");
 					}
 					while (dependent_node != 0) {
 						SCOPE_EXIT(dependent_node = dependent_node->next);
 						Workload_Base* dependent = dependent_node->value;
-						string_append_formated(&tmp, "      ");
+						dynstring_append_formated(&tmp, "      ");
 						analysis_workload_append_to_string(dependent, &tmp);
-						string_append_formated(&tmp, "\n");
+						dynstring_append_formated(&tmp, "\n");
 					}
 				}
 
@@ -2209,7 +2209,7 @@ void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* co
 			executer->progress_was_made = true;
 
 			if (PRINT_DEPENDENCIES) {
-				String tmp = string_create(128);
+				DynString tmp = dynstring_create(128);
 				analysis_workload_append_to_string(workload, &tmp);
 				logg("Executing workload: %s\n", tmp.characters);
 				string_destroy(&tmp);
@@ -2479,7 +2479,7 @@ bool workload_executer_switch_to_workload(Workload_Executer* executer, Workload_
 	scratch_arena_set_arenas(current_pair);
 
 	if (PRINT_DEPENDENCIES) {
-		auto tmp = string_create(1);
+		auto tmp = dynstring_create(1);
 		analysis_workload_append_to_string(workload, &tmp);
 		if (workload->dependencies.element_count == 0) {
 			SCOPE_EXIT(string_destroy(&tmp));
@@ -2490,14 +2490,14 @@ bool workload_executer_switch_to_workload(Workload_Executer* executer, Workload_
 			// Print dependencies
 			List_Node<Workload_Base*>* dependency_node = workload->dependencies.head;
 			if (dependency_node != 0) {
-				string_append_formated(&tmp, "    Depends On:\n");
+				dynstring_append_formated(&tmp, "    Depends On:\n");
 			}
 			while (dependency_node != 0) {
 				SCOPE_EXIT(dependency_node = dependency_node->next);
 				Workload_Base* dependency = dependency_node->value;
-				string_append_formated(&tmp, "      ");
+				dynstring_append_formated(&tmp, "      ");
 				analysis_workload_append_to_string(dependency, &tmp);
-				string_append_formated(&tmp, "\n");
+				dynstring_append_formated(&tmp, "\n");
 			}
 			logg("WAITING: %s\n", tmp.characters);
 		}
@@ -2535,7 +2535,7 @@ const char* analysis_workload_type_as_string(Analysis_Workload_Type workload_typ
 	return "";
 }
 
-void analysis_workload_append_to_string(Workload_Base* workload, String* string)
+void analysis_workload_append_to_string(Workload_Base* workload, DynString* string)
 {
 	switch (workload->type)
 	{
@@ -2551,7 +2551,7 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
 	}
 	case Analysis_Workload_Type::ENUM: {
 		auto enumeration = downcast<Workload_Enum>(workload);
-		string_append_formated(string, "Enum: %s", enumeration->node->symbol->name->characters);
+		dynstring_append_formated(string, "Enum: %s", enumeration->node->symbol->name->characters);
 		break;
 	}
 	case Analysis_Workload_Type::EXTERN_IMPORT: {
@@ -2561,34 +2561,34 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
 	case Analysis_Workload_Type::FAST_CALL: 
 	{
 		auto fast_call = downcast<Workload_Fast_Call>(workload);
-		string_append_formated(string, "Fast_Call %s", fast_call->symbol->id->characters);
+		dynstring_append_formated(string, "Fast_Call %s", fast_call->symbol->id->characters);
 		break;
 	}
 	case Analysis_Workload_Type::GLOBAL_OR_COMPTIME_VALUE: 
 	{
 		auto def = downcast<Workload_Global>(workload);
-		string_append_formated(string, "Global/Comptime %s", def->symbol->id->characters);
+		dynstring_append_formated(string, "Global/Comptime %s", def->symbol->id->characters);
 		break;
 	}
 	case Analysis_Workload_Type::FUNCTION_BODY: {
 		Symbol* symbol = 0;
 		auto function = downcast<Workload_Function_Body>(workload)->function;
-		string_append_formated(string, "Body \"%s\"", function->name->characters);
+		dynstring_append_formated(string, "Body \"%s\"", function->name->characters);
 		break;
 	}
 	case Analysis_Workload_Type::FUNCTION_HEADER: {
 		auto function = downcast<Workload_Function_Header>(workload)->function;
-		string_append_formated(string, "Header \"%s\"", function->name->characters);
+		dynstring_append_formated(string, "Header \"%s\"", function->name->characters);
 		break;
 	}
 	case Analysis_Workload_Type::STRUCT_BODY: {
 		auto struct_id = downcast<Workload_Structure_Body>(workload)->upp_struct->datatype->name->characters;
-		string_append_formated(string, "Struct-Analysis \"%s\"", struct_id);
+		dynstring_append_formated(string, "Struct-Analysis \"%s\"", struct_id);
 		break;
 	}
 	case Analysis_Workload_Type::STRUCT_HEADER: {
 		auto struct_id = downcast<Workload_Structure_Header>(workload)->upp_struct->datatype->name->characters;
-		string_append_formated(string, "Struct-Analysis \"%s\"", struct_id);
+		dynstring_append_formated(string, "Struct-Analysis \"%s\"", struct_id);
 		break;
 	}
 	default: panic("");
@@ -4240,7 +4240,7 @@ bool equals_poly_instance(Poly_Instance** ap, Poly_Instance** bp)
 struct Parameter_Symbol_Lookup
 {
 	int parameter_index;
-	String* lookup_id;
+	DynString* lookup_id;
 	AST::Symbol_Node* node;
 };
 
@@ -4391,7 +4391,7 @@ void analyse_parameter_type_and_value(Call_Parameter& parameter, AST::Parameter*
 
 // Defines all necessary symbols in symbol-table, and looks for polymorphism
 Poly_Header* poly_header_analyse(
-	AST::Signature* signature_node, Symbol_Table* symbol_table, String* name, Semantic_Context* semantic_context,
+	AST::Signature* signature_node, Symbol_Table* symbol_table, DynString* name, Semantic_Context* semantic_context,
 	Upp_Function* upp_function = nullptr, Workload_Structure_Header* poly_struct = nullptr)
 {
 	auto type_system = semantic_context->compilation_data->type_system;
@@ -5828,16 +5828,16 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 				// Convert relative-path filename to full path
 				auto arena_checkpoint = semantic_context->scratch_arena->make_checkpoint();
 				SCOPE_EXIT(arena_checkpoint.rewind());
-				String path = string_create(semantic_context->scratch_arena);
+				DynString path = dynstring_create(semantic_context->scratch_arena);
 
 				// Replace filename in path with import string (All imports are currently relative)
 				path.append(import_node->options.file_import.node_unit->filepath);
 				Optional<int> last_pos = string_find_character_index_reverse(&path, '/', path.size - 1);
 				if (last_pos.available) {
-				    string_truncate(&path, last_pos.value + 1);
+				    dynstring_truncate(&path, last_pos.value + 1);
 				}
 				else {
-				    string_reset(&path);
+				    dynstring_reset(&path);
 				}
 				string_append_string(&path, import_node->options.file_import.relative_path);
 				filepath_relative_to_absolute_path(&path);
@@ -5931,8 +5931,8 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 				break;
 			}
 
-			Dynamic_Array<String*>& values = semantic_context->compilation_data->extern_sources.compiler_settings[(int)extern_import->options.setting.type];
-			String* id = extern_import->options.setting.value;
+			Dynamic_Array<DynString*>& values = semantic_context->compilation_data->extern_sources.compiler_settings[(int)extern_import->options.setting.type];
+			DynString* id = extern_import->options.setting.value;
 
 			// Check if unique
 			bool found = false;
@@ -7925,7 +7925,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			bool return_type_matched = false;
 			for (int j = 0; j < args.size && !remove_symbol; j++)
 			{
-				String* name = args[j]->id;
+				DynString* name = args[j]->id;
 				Datatype* arg_type = arg_types[j];
 
 				// Find parameter with matching name
@@ -9177,7 +9177,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 	}
 	case AST::Expression_Type::AUTO_ENUM:
 	{
-		String* id = expr->options.auto_enum;
+		DynString* id = expr->options.auto_enum;
 		if (context.type != Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
 			if (context.type != Expression_Context_Type::ERROR_OCCURED) {
 				log_semantic_error(semantic_context, "Could not determine context for auto enum", expr);
@@ -9821,7 +9821,7 @@ Array<Reachable_Table> symbol_table_find_reachable_operators_cached(Symbol_Table
 	);
 }
 
-Optional<Upp_Constant> query_default_value(Semantic_Context* semantic_context, String* name, Datatype* datatype, Upp_Function* function)
+Optional<Upp_Constant> query_default_value(Semantic_Context* semantic_context, DynString* name, Datatype* datatype, Upp_Function* function)
 {
 	if (!semantic_context->can_access_custom_operators) return optional_make_failure<Upp_Constant>();
 
@@ -11160,7 +11160,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 	case AST::Statement_Type::CONTINUE_STATEMENT:
 	{
 		bool is_continue = statement->type == AST::Statement_Type::CONTINUE_STATEMENT;
-		Optional<String*> search_id_opt = is_continue ? statement->options.continue_name : statement->options.break_name;
+		Optional<DynString*> search_id_opt = is_continue ? statement->options.continue_name : statement->options.break_name;
 		AST::Code_Block* found_block = 0;
 		auto& block_stack = semantic_context->block_stack;
 
@@ -11957,7 +11957,7 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block, Semantic_Co
 
 // ERRORS
 void error_information_append_to_rich_string(
-	const Error_Information& info, Compilation_Data* compilation_data, String* string, Datatype_Format format
+	const Error_Information& info, Compilation_Data* compilation_data, DynString* string, Datatype_Format format
 )
 {
 	auto type_system = compilation_data->type_system;
@@ -12050,7 +12050,7 @@ void error_information_append_to_rich_string(
 	}
 }
 
-void compilation_data_append_code_errors_to_string(Compilation_Data* compilation_data, String* string, int indentation)
+void compilation_data_append_code_errors_to_string(Compilation_Data* compilation_data, DynString* string, int indentation)
 {
 	auto& errors = compilation_data->code_errors;
 	for (int i = 0; i < errors.size; i++)

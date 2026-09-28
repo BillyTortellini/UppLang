@@ -111,18 +111,18 @@ Key_Message key_message_make(Key_Code key_code, bool key_down, char c, bool shif
     return result;
 }
 
-void key_message_append_to_string(Key_Message* msg, String* string)
+void key_message_append_to_string(Key_Message* msg, DynString* string)
 {
     if (msg->character == 0) {
-        string_append_formated(string, "char: '\\0' ");
+        dynstring_append_formated(string, "char: '\\0' ");
     }
     else {
-        string_append_formated(string, "char: '%c'  ", (byte)msg->character);
+        dynstring_append_formated(string, "char: '%c'  ", (byte)msg->character);
     }
-    string_append_formated(string, "key_code: %s ", key_code_to_string(msg->key_code));
-    string_append_formated(string, "down: %s ", msg->key_down ? "TRUE" : "FALSE");
-    string_append_formated(string, "shift: %s ", msg->shift_down ? "TRUE" : "FALSE");
-    string_append_formated(string, "alt: %s ", msg->alt_down ? "TRUE" : "FALSE");
+    dynstring_append_formated(string, "key_code: %s ", key_code_to_string(msg->key_code));
+    dynstring_append_formated(string, "down: %s ", msg->key_down ? "TRUE" : "FALSE");
+    dynstring_append_formated(string, "shift: %s ", msg->shift_down ? "TRUE" : "FALSE");
+    dynstring_append_formated(string, "alt: %s ", msg->alt_down ? "TRUE" : "FALSE");
 }
 
 

@@ -7,7 +7,7 @@ Renderer_2D* renderer_2D_create(Text_Renderer* text_renderer)
 {
     Renderer_2D* result = new Renderer_2D();
     result->text_renderer = text_renderer;
-    result->string_buffer = string_create(256);
+    result->string_buffer = dynstring_create(256);
 
     auto& predef = rendering_core.predefined;
     result->mesh = rendering_core_query_mesh(

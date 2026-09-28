@@ -260,7 +260,7 @@ void Font_Renderer::add_draw_call(Render_Pass* pass)
     batch_start = batch_end;
 }
 
-void Raster_Font::push_line(ivec2 pos, String text, vec3 color)
+void Raster_Font::push_line(ivec2 pos, DynString text, vec3 color)
 {
     if (text.size == 0) {
         return;

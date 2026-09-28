@@ -66,7 +66,7 @@ struct Symbol_Table_Range
 struct Block_ID_Range
 {
     Text_Range range;
-    String* block_id;
+    DynString* block_id;
     int tree_depth;
 };
 
@@ -75,7 +75,7 @@ struct Block_ID_Range
 // Source Code
 struct Source_Line
 {
-    String text;
+    DynString text;
     Dynamic_Array<Editor_Info_Reference> item_infos;
 };
 
@@ -99,7 +99,7 @@ struct Source_Code
 
 Source_Code* source_code_create(); 
 Source_Code* source_code_copy(Source_Code* copy_from); 
-Source_Code* source_code_load_from_file(String filepath);
+Source_Code* source_code_load_from_file(DynString filepath);
 void source_code_destroy(Source_Code* code);
 void source_code_reset(Source_Code* code);
 void source_code_print_bundles(Source_Code* code);
@@ -109,8 +109,8 @@ Source_Line* source_code_insert_line(Source_Code* code, int new_line_index);
 void source_code_remove_line(Source_Code* code, int line_index);
 
 // Utility
-void source_code_fill_from_string(Source_Code* code, String text);
-void source_code_append_to_string(Source_Code* code, String* text);
+void source_code_fill_from_string(Source_Code* code, DynString text);
+void source_code_append_to_string(Source_Code* code, DynString* text);
 
 // Index Functions
 int source_code_get_line_bundle_index(Source_Code* code, int line_index);

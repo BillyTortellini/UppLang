@@ -6,10 +6,10 @@
 #include "../utility/utils.hpp"
 #include "../datastructures/allocators.hpp"
 
-Optional<Array<byte>> file_io_load_binary_file(String path, Arena* arena)
+Optional<Array<byte>> file_io_load_binary_file(DynString path, Arena* arena)
 {
     SCRATCH_ARENA_MAKE_SCOPED(arena);
-    String null_terminated_string = string_copy(path, scratch_arena);
+    DynString null_terminated_string = dynstring_copy(path, scratch_arena);
     string_add_null_terminator(&null_terminated_string);
 
     FILE* file;
@@ -41,14 +41,14 @@ Optional<Array<byte>> file_io_load_binary_file(String path, Arena* arena)
     return optional_make_success(result);
 }
 
-Optional<String> file_io_load_text_file(String path, Arena* arena)
+Optional<DynString> file_io_load_text_file(DynString path, Arena* arena)
 {
     Optional<Array<byte>> file_content_opt = file_io_load_binary_file(path, arena);
     if (!file_content_opt.available) {
-        return optional_make_failure<String>();
+        return optional_make_failure<DynString>();
     }
 
-    String string;
+    DynString string;
     string.characters = (char*) file_content_opt.value.data;
     string.capacity   = file_content_opt.value.size;
     string.size       = string.capacity;
@@ -56,10 +56,10 @@ Optional<String> file_io_load_text_file(String path, Arena* arena)
     return optional_make_success(string);
 }
 
-bool file_io_write_binary_file(String path, Array<byte> data)
+bool file_io_write_binary_file(DynString path, Array<byte> data)
 {
     SCRATCH_ARENA_MAKE_SCOPED(nullptr);
-    String null_terminated_path = string_copy(path, scratch_arena);
+    DynString null_terminated_path = dynstring_copy(path, scratch_arena);
     string_add_null_terminator(&null_terminated_path);
 
     FILE* file;
@@ -72,7 +72,7 @@ bool file_io_write_binary_file(String path, Array<byte> data)
     return true;
 }
 
-bool file_io_write_text_file(String path, String text) 
+bool file_io_write_text_file(DynString path, DynString text) 
 {
     return file_io_write_binary_file(path, array_create_static<byte>((byte*)text.characters, text.size));
 }
@@ -82,7 +82,7 @@ u64 helper_dwords_to_u64(DWORD high, DWORD low)
     return (((u64)high) << 32) | ((u64)low);
 }
 
-File_Info file_io_get_file_info(String path)
+File_Info file_io_get_file_info(DynString path)
 {
     File_Info file_info;
     file_info.status = File_Info_Status::COULD_NOT_QUERY;
@@ -91,7 +91,7 @@ File_Info file_io_get_file_info(String path)
     file_info.last_write_access_time = 0;
 
     SCRATCH_ARENA_MAKE_SCOPED(nullptr);
-    String null_terminated_path = string_copy(path, scratch_arena);
+    DynString null_terminated_path = dynstring_copy(path, scratch_arena);
     string_add_null_terminator(&null_terminated_path);
 
     // Try opening file
@@ -122,7 +122,7 @@ File_Info file_io_get_file_info(String path)
 }
 
 static char buffer[256];
-bool file_io_open_file_selection_dialog(String* write_to)
+bool file_io_open_file_selection_dialog(DynString* write_to)
 {
     // open a file base_name
     OPENFILENAME ofn;
@@ -141,18 +141,18 @@ bool file_io_open_file_selection_dialog(String* write_to)
 
     int ret_val = GetOpenFileName(&ofn);
     if (ret_val == 0) return false;
-    string_reset(write_to);
+    dynstring_reset(write_to);
     string_append(write_to, buffer);
     return true;
 }
 
-List<Directory_Item> file_io_get_directory_content(String directory_path, Arena* arena)
+List<Directory_Item> file_io_get_directory_content(DynString directory_path, Arena* arena)
 {
     assert(!string_ends_with(directory_path, "/"), "");
 
     SCRATCH_ARENA_MAKE_SCOPED(arena);
 
-    String search_string = string_copy(directory_path, scratch_arena);
+    DynString search_string = dynstring_copy(directory_path, scratch_arena);
     search_string.append("/*");
     string_add_null_terminator(&search_string);
 
@@ -168,7 +168,7 @@ List<Directory_Item> file_io_get_directory_content(String directory_path, Arena*
         Directory_Item item;
         item.is_directory = found_file_description.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY;
         item.size = helper_dwords_to_u64(found_file_description.nFileSizeHigh, found_file_description.nFileSizeLow);
-        item.filename = string_create(found_file_description.cFileName, arena);
+        item.filename = dynstring_create(found_file_description.cFileName, arena);
         items.append(item);
     } while (FindNextFile(search_handle, &found_file_description) != 0);
 
@@ -184,7 +184,7 @@ List<Directory_Item> file_io_get_directory_content(String directory_path, Arena*
 
 
 
-Filepath_Parts filepath_get_parts(String path)
+Filepath_Parts filepath_get_parts(DynString path)
 {
     Filepath_Parts parts;
     parts.directory = string_create_static("");
@@ -209,7 +209,7 @@ Filepath_Parts filepath_get_parts(String path)
     return parts;
 }
 
-Filename_Parts filename_get_parts(String filename)
+Filename_Parts filename_get_parts(DynString filename)
 {
     Filename_Parts parts;
     Optional<int> dot_pos_opt = string_find_character_index_reverse(&filename, '.', filename.size - 1);
@@ -219,7 +219,7 @@ Filename_Parts filename_get_parts(String filename)
     return parts;
 }
 
-void filepath_relative_to_absolute_path(String* filepath)
+void filepath_relative_to_absolute_path(DynString* filepath)
 {
     string_add_null_terminator(filepath);
     char buffer[1024];
@@ -227,7 +227,7 @@ void filepath_relative_to_absolute_path(String* filepath)
     if (length == 0 || length >= 1024) {
         return;
     }
-    string_reset(filepath);
+    dynstring_reset(filepath);
     string_append(filepath, buffer);
     string_replace_character(filepath, '\\', '/');
 }

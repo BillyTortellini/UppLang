@@ -989,81 +989,81 @@ void bytecode_generator_compile_function(Compilation_Data* compilation_data, Upp
     }
 }
 
-void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction instruction)
+void bytecode_instruction_append_to_string(DynString* string, Bytecode_Instruction instruction)
 {
     Bytecode_Instruction& i = instruction;
     switch (instruction.instruction_type)
     {
     case Instruction_Type::MOVE_STACK_DATA:
-        string_append_formated(string, "MOVE_STACK_DATA              dst: %d, src: %d, size: %d", i.op1, i.op2, i.op3);
+        dynstring_append_formated(string, "MOVE_STACK_DATA              dst: %d, src: %d, size: %d", i.op1, i.op2, i.op3);
         break;
     case Instruction_Type::WRITE_MEMORY:
-        string_append_formated(string, "WRITE_MEMORY                 addr_reg: %d, value_reg: %d, size: %d", i.op1, i.op2, i.op3);
+        dynstring_append_formated(string, "WRITE_MEMORY                 addr_reg: %d, value_reg: %d, size: %d", i.op1, i.op2, i.op3);
         break;
     case Instruction_Type::READ_MEMORY:
-        string_append_formated(string, "READ_MEMORY                  dst: %d, addr_reg: %d, size: %d", i.op1, i.op2, i.op3);
+        dynstring_append_formated(string, "READ_MEMORY                  dst: %d, addr_reg: %d, size: %d", i.op1, i.op2, i.op3);
         break;
     case Instruction_Type::MEMORY_COPY:
-        string_append_formated(string, "MEMORY_COPY                  dst_addr_reg: %d, src_addr_reg:%d, size: %d", i.op1, i.op2, i.op3);
+        dynstring_append_formated(string, "MEMORY_COPY                  dst_addr_reg: %d, src_addr_reg:%d, size: %d", i.op1, i.op2, i.op3);
         break;
     case Instruction_Type::READ_GLOBAL:
-        string_append_formated(string, "READ_GLOBAL                  dst: %d, global_index: %d, size: %d", i.op1, i.op2, i.op3);
+        dynstring_append_formated(string, "READ_GLOBAL                  dst: %d, global_index: %d, size: %d", i.op1, i.op2, i.op3);
         break;
     case Instruction_Type::WRITE_GLOBAL:
-        string_append_formated(string, "WRITE_GLOBAL                 global_index: %d, src: %d, size: %d", i.op1, i.op2, i.op3);
+        dynstring_append_formated(string, "WRITE_GLOBAL                 global_index: %d, src: %d, size: %d", i.op1, i.op2, i.op3);
         break;
     case Instruction_Type::READ_CONSTANT:
-        string_append_formated(string, "READ_CONSTANT                dst: %d, const_index: %d, size: %d", i.op1, i.op2, i.op3);
+        dynstring_append_formated(string, "READ_CONSTANT                dst: %d, const_index: %d, size: %d", i.op1, i.op2, i.op3);
         break;
     case Instruction_Type::U64_ADD_CONSTANT_I32:
-        string_append_formated(string, "U64_ADD_CONSTANT_I32         dst: %d, base: %d, offset: %d", i.op1, i.op2, i.op3);
+        dynstring_append_formated(string, "U64_ADD_CONSTANT_I32         dst: %d, base: %d, offset: %d", i.op1, i.op2, i.op3);
         break;
     case Instruction_Type::U64_MULTIPLY_ADD_I32:
-        string_append_formated(string, "U64_MULTIPLY_ADD_I32         dst: %d, base: %d, index_reg: %d, size: %d", i.op1, i.op2, i.op3, i.op4);
+        dynstring_append_formated(string, "U64_MULTIPLY_ADD_I32         dst: %d, base: %d, index_reg: %d, size: %d", i.op1, i.op2, i.op3, i.op4);
         break;
     case Instruction_Type::JUMP:
-        string_append_formated(string, "JUMP                         instr-nr: %d", i.op1);
+        dynstring_append_formated(string, "JUMP                         instr-nr: %d", i.op1);
         break;
     case Instruction_Type::JUMP_ON_TRUE:
-        string_append_formated(string, "JUMP_ON_TRUE                 instr-nr: %d, cond_reg: %d", i.op1, i.op2);
+        dynstring_append_formated(string, "JUMP_ON_TRUE                 instr-nr: %d, cond_reg: %d", i.op1, i.op2);
         break;
     case Instruction_Type::JUMP_ON_FALSE:
-        string_append_formated(string, "JUMP_ON_FALSE                instr-nr: %d, cond_reg: %d", i.op1, i.op2);
+        dynstring_append_formated(string, "JUMP_ON_FALSE                instr-nr: %d, cond_reg: %d", i.op1, i.op2);
         break;
     case Instruction_Type::JUMP_ON_INT_EQUAL:
-        string_append_formated(string, "JUMP_ON_INT_EQUAL            instr-nr: %d, cond_reg: %d, equal_value: %d", i.op1, i.op2, i.op3);
+        dynstring_append_formated(string, "JUMP_ON_INT_EQUAL            instr-nr: %d, cond_reg: %d, equal_value: %d", i.op1, i.op2, i.op3);
         break;
     case Instruction_Type::CALL_FUNCTION:
-        string_append_formated(string, "CALL_FUNCTION                function-start-instr: %d, new-frame-offset: %d", i.op1, i.op2);
+        dynstring_append_formated(string, "CALL_FUNCTION                function-start-instr: %d, new-frame-offset: %d", i.op1, i.op2);
         break;
     case Instruction_Type::CALL_FUNCTION_POINTER:
-        string_append_formated(string, "CALL_FUNCTION_POINTER        pointer-reg: %d, new-frame-offset: %d", i.op1, i.op2);
+        dynstring_append_formated(string, "CALL_FUNCTION_POINTER        pointer-reg: %d, new-frame-offset: %d", i.op1, i.op2);
         break;
     case Instruction_Type::CALL_BUILTIN_FUNCTION:
-        string_append_formated(string, "CALL_BUILTIN_FUNCTION      hardcoded_func_type:");
+        dynstring_append_formated(string, "CALL_BUILTIN_FUNCTION      hardcoded_func_type:");
         string->append(hardcoded_type_get_info((Hardcoded_Type)i.op1).symbol_name);
-        string_append_formated(string, ", new-frame-offset: %d", i.op2);
+        dynstring_append_formated(string, ", new-frame-offset: %d", i.op2);
         break;
     case Instruction_Type::RETURN:
-        string_append_formated(string, "RETURN                       ");
+        dynstring_append_formated(string, "RETURN                       ");
         break;
     case Instruction_Type::EXIT: {
-        string_append_formated(string, "EXIT                         Code: ");
+        dynstring_append_formated(string, "EXIT                         Code: ");
         Exit_Code code = exit_code_from_exit_instruction(instruction);
         exit_code_append_to_string(string, code);
         break;
     }
     case Instruction_Type::LOAD_REGISTER_ADDRESS:
-        string_append_formated(string, "LOAD_REGISTER_ADDRESS        dst: %d, reg-to-load: %d", i.op1, i.op2);
+        dynstring_append_formated(string, "LOAD_REGISTER_ADDRESS        dst: %d, reg-to-load: %d", i.op1, i.op2);
         break;
     case Instruction_Type::LOAD_GLOBAL_ADDRESS:
-        string_append_formated(string, "LOAD_GLOBAL_ADDRESS          dst: %d, global-index: %d", i.op1, i.op2);
+        dynstring_append_formated(string, "LOAD_GLOBAL_ADDRESS          dst: %d, global-index: %d", i.op1, i.op2);
         break;
     case Instruction_Type::LOAD_CONSTANT_ADDRESS:
-        string_append_formated(string, "LOAD_CONSTANT_ADDRESS        dst: %d, constant-index: %d", i.op1, i.op2);
+        dynstring_append_formated(string, "LOAD_CONSTANT_ADDRESS        dst: %d, constant-index: %d", i.op1, i.op2);
         break;
     case Instruction_Type::LOAD_FUNCTION_LOCATION:
-        string_append_formated(string, "LOAD_FUNCTION_LOCATION       dst: %d, function-index: %d", i.op1, i.op2);
+        dynstring_append_formated(string, "LOAD_FUNCTION_LOCATION       dst: %d, function-index: %d", i.op1, i.op2);
         break;
     case Instruction_Type::IR_OPERATION:
     {
@@ -1072,27 +1072,27 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
         Bytecode_Type right_type;
         Bytecode_Type dst_type;
         bytecode_unpack_operation_and_types_from_int(i.op4, ir_op, left_type, right_type, dst_type);
-        string_append_formated(string, "IR_OPERATION                 dst: %d, src1: %d, src2: %d", i.op1, i.op2, i.op3);
-        string_append_formated(string, "\n       %s, left_type: %s", ir_operation_as_string(ir_op), bytecode_type_as_string(left_type));
+        dynstring_append_formated(string, "IR_OPERATION                 dst: %d, src1: %d, src2: %d", i.op1, i.op2, i.op3);
+        dynstring_append_formated(string, "\n       %s, left_type: %s", ir_operation_as_string(ir_op), bytecode_type_as_string(left_type));
         if (ir_operation_parameter_count(ir_op) == 2) {
-            string_append_formated(string, " right_type: %s", bytecode_type_as_string(right_type));
+            dynstring_append_formated(string, " right_type: %s", bytecode_type_as_string(right_type));
         }
-        string_append_formated(string, " dst_type: %s", bytecode_type_as_string(dst_type));
+        dynstring_append_formated(string, " dst_type: %s", bytecode_type_as_string(dst_type));
         break;
 
     }
     default:
-        string_append_formated(string, "FUCKING HELL\n");
+        dynstring_append_formated(string, "FUCKING HELL\n");
         break;
     }
 }
 
-void bytecode_generator_append_bytecode_to_string(Compilation_Data* compilation_data, String* string)
+void bytecode_generator_append_bytecode_to_string(Compilation_Data* compilation_data, DynString* string)
 {
     for (int i = 0; i < compilation_data->functions.size; i++)
     {
         Upp_Function* function = compilation_data->functions[i];
-        string_append_formated(string, "Function #%d: \"%s\" \n", i, function->name->characters);
+        dynstring_append_formated(string, "Function #%d: \"%s\" \n", i, function->name->characters);
         if (function->bytecode_start_instruction == -1) {
             string_append(string, "NO instructions generated!\n");
             continue;
@@ -1101,11 +1101,11 @@ void bytecode_generator_append_bytecode_to_string(Compilation_Data* compilation_
         for (int i = function->bytecode_start_instruction; i < function->bytecode_end_instruction; i++)
         {
             Bytecode_Instruction& instruction = compilation_data->bytecode[i];
-            string_append_formated(string, "%4d: ", i);
+            dynstring_append_formated(string, "%4d: ", i);
             bytecode_instruction_append_to_string(string, instruction);
-            string_append_formated(string, "\n");
+            dynstring_append_formated(string, "\n");
         }
-        string_append_formated(string, "\n");
+        dynstring_append_formated(string, "\n");
     }
 }
 

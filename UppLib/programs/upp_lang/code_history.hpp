@@ -33,7 +33,7 @@ struct Code_Change
         } char_insert;
         struct {
             Text_Index index;
-            String text;
+            DynString text;
         } text_insert;
     } options;
 };
@@ -88,13 +88,13 @@ void history_set_cursor_pos(Code_History* history, Text_Index cursor);
 Optional<Text_Index> history_get_cursor_pos(Code_History* history);
 
 // Change Interface
-void history_insert_text(Code_History* history, Text_Index index, String string);
+void history_insert_text(Code_History* history, Text_Index index, DynString string);
 void history_delete_text(Code_History* history, Text_Index index, int char_end);
 void history_insert_char(Code_History* history, Text_Index index, char c);
 void history_delete_char(Code_History* history, Text_Index index);
 
 void history_insert_line(Code_History* history, int line_index);
-void history_insert_line_with_text(Code_History* history, int line_index, String string);
+void history_insert_line_with_text(Code_History* history, int line_index, DynString string);
 void history_remove_line(Code_History* history, int line_index);
 
 

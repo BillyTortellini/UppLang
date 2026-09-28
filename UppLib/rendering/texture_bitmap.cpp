@@ -374,18 +374,18 @@ Array<float> texture_bitmap_create_distance_field_bad(Texture_Bitmap* source)
 
 void texture_bitmap_print_distance_field(Array<float> data, int width)
 {
-    String result = string_create(1024);
+    DynString result = dynstring_create(1024);
     SCOPE_EXIT(string_destroy(&result));
-    string_append_formated(&result, "\nPrinting bitmap, width = %d\n", width);
+    dynstring_append_formated(&result, "\nPrinting bitmap, width = %d\n", width);
     for (int y = 0; y < width; y++)
     {
-        string_append_formated(&result, "Row %3d =", y);
+        dynstring_append_formated(&result, "Row %3d =", y);
         for (int x = 0; x < width; x++)
         {
             int index = x + y * width;
-            string_append_formated(&result, "%06.2f ", data[index]);
+            dynstring_append_formated(&result, "%06.2f ", data[index]);
         }
-        string_append_formated(&result, "\n");
+        dynstring_append_formated(&result, "\n");
     }
     logg("\n%s\n", result.characters);
 }

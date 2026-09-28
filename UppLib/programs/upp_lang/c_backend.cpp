@@ -48,19 +48,19 @@ void c_compiler_initialize()
     // Load system vars (Required to use cl.exe and link.exe)
     // These are generated once with the batch script in some misc folder, and then loaded from that file.
     //  Otherwise the initialization takes quite a while...
-    Optional<String> file_content = file_io_load_text_file(string_create_static("backend/misc/env_vars.txt"), scratch_arena);
+    Optional<DynString> file_content = file_io_load_text_file(string_create_static("backend/misc/env_vars.txt"), scratch_arena);
 
     if (!file_content.available) {
         panic("System-Variables file for compilation (Pre-generated) were not available!");
         return;
     }
 
-    String env_var = string_create(64);
-    String var_value = string_create(64);
+    DynString env_var = dynstring_create(64);
+    DynString var_value = dynstring_create(64);
     SCOPE_EXIT(string_destroy(&env_var));
     SCOPE_EXIT(string_destroy(&var_value));
 
-    String string = file_content.value;
+    DynString string = file_content.value;
     // Each line_index contains a base_name, and is separated by \n
     int i = 0;
     bool parsing_name = true;
@@ -82,8 +82,8 @@ void c_compiler_initialize()
             if (c == '\n') {
                 //printf("Var base_name: %s = %s\n", env_var.characters, var_value.characters);
                 SetEnvironmentVariableA(env_var.characters, var_value.characters);
-                string_reset(&env_var);
-                string_reset(&var_value);
+                dynstring_reset(&env_var);
+                dynstring_reset(&var_value);
                 parsing_name = true;
             }
             else {
@@ -104,7 +104,7 @@ void c_compiler_compile(Compilation_Data* compilation_data)
     }
 
     // Create compilation command
-    String command = string_create(128);
+    DynString command = dynstring_create(128);
     SCOPE_EXIT(string_destroy(&command));
     {
         /*
@@ -118,48 +118,48 @@ void c_compiler_compile(Compilation_Data* compilation_data)
         */
         // Note: MDd should be replaced between debug and optimized build
         const char* compiler_options = "/MDd /EHsc /Zi /std:c++latest /Fobackend/build/ /Fdbackend/build/main.pdb /Febackend/build/main.exe";
-        string_append_formated(&command, "\"cl\" "); // Not sure why we need those Quotations, maybe for CreateProcess?
-        string_append_formated(&command, compiler_options);
+        dynstring_append_formated(&command, "\"cl\" "); // Not sure why we need those Quotations, maybe for CreateProcess?
+        dynstring_append_formated(&command, compiler_options);
 
         auto& extern_sources = compilation_data->extern_sources;
         // Defines
-        Dynamic_Array<String*> defines = extern_sources.compiler_settings[(int)Extern_Compiler_Setting::DEFINITION];
+        Dynamic_Array<DynString*> defines = extern_sources.compiler_settings[(int)Extern_Compiler_Setting::DEFINITION];
         for (int i = 0; i < defines.size; i++) {
-            string_append_formated(&command, " /D \"%s\"", defines[i]->characters);
+            dynstring_append_formated(&command, " /D \"%s\"", defines[i]->characters);
         }
 
         // Include directories
-        Dynamic_Array<String*> includes = extern_sources.compiler_settings[(int)Extern_Compiler_Setting::INCLUDE_DIRECTORY];
+        Dynamic_Array<DynString*> includes = extern_sources.compiler_settings[(int)Extern_Compiler_Setting::INCLUDE_DIRECTORY];
         for (int i = 0; i < includes.size; i++) {
-            string_append_formated(&command, " /I \"%s\"", includes[i]->characters);
+            dynstring_append_formated(&command, " /I \"%s\"", includes[i]->characters);
         }
 
         // Forced includes (Header files)
-        Dynamic_Array<String*> header_files = extern_sources.compiler_settings[(int)Extern_Compiler_Setting::HEADER_FILE];
+        Dynamic_Array<DynString*> header_files = extern_sources.compiler_settings[(int)Extern_Compiler_Setting::HEADER_FILE];
         for (int i = 0; i < header_files.size; i++) {
-            string_append_formated(&command, " /FI \"%s\"", header_files[i]->characters);
+            dynstring_append_formated(&command, " /FI \"%s\"", header_files[i]->characters);
         }
 
         // Source files
         string_append(&command, " backend/src/main.cpp backend/hardcoded/hardcoded_functions.cpp");
-        Dynamic_Array<String*> source_files = extern_sources.compiler_settings[(int)Extern_Compiler_Setting::SOURCE_FILE];
+        Dynamic_Array<DynString*> source_files = extern_sources.compiler_settings[(int)Extern_Compiler_Setting::SOURCE_FILE];
         for (int i = 0; i < source_files.size; i++) {
-            string_append_formated(&command, " \"%s\"", source_files[i]->characters);
+            dynstring_append_formated(&command, " \"%s\"", source_files[i]->characters);
         }
 
         // LINKER
-        string_append_formated(&command, " /link");
+        dynstring_append_formated(&command, " /link");
 
         // Library directories
         auto lib_dirs = extern_sources.compiler_settings[(int)Extern_Compiler_Setting::LIBRARY_DIRECTORY];
         for (int i = 0; i < lib_dirs.size; i++) {
-            string_append_formated(&command, " /LIBPATH:\"%s\"", lib_dirs[i]->characters);
+            dynstring_append_formated(&command, " /LIBPATH:\"%s\"", lib_dirs[i]->characters);
         }
 
         // Libraries 
-        Dynamic_Array<String*> lib_files = extern_sources.compiler_settings[(int)Extern_Compiler_Setting::LIBRARY];
+        Dynamic_Array<DynString*> lib_files = extern_sources.compiler_settings[(int)Extern_Compiler_Setting::LIBRARY];
         for (int i = 0; i < lib_files.size; i++) {
-            string_append_formated(&command, " \"%s\"", lib_files[i]->characters);
+            dynstring_append_formated(&command, " \"%s\"", lib_files[i]->characters);
         }
     }
 
@@ -279,7 +279,7 @@ struct C_Type_Dependency
 {
     Dynamic_Array<C_Type_Dependency*> depends_on;
     Dynamic_Array<C_Type_Dependency*> dependees;
-    String type_definition; // e.g. struct A {int value; B b;} 
+    DynString type_definition; // e.g. struct A {int value; B b;} 
     Datatype* signature;
     int dependency_count;
 };
@@ -321,8 +321,8 @@ struct Translation_Char_Info
 struct C_Generator
 {
     Compilation_Data* compilation_data;
-    String sections[(int)Generator_Section::MAX_ENUM_VALUE];
-    String* text; // Current text that's being worked on
+    DynString sections[(int)Generator_Section::MAX_ENUM_VALUE];
+    DynString* text; // Current text that's being worked on
     int name_counter;
 
     Hashtable<Datatype*, C_Type_Dependency*> type_to_dependency_mapping;
@@ -337,12 +337,12 @@ C_Generator* c_generator_create(Compilation_Data* compilation_data)
     C_Generator* c_generator = new C_Generator;
     C_Generator& result = *c_generator;
     for (int i = 0; i < (int)Generator_Section::MAX_ENUM_VALUE; i++) {
-        result.sections[i] = string_create(256);
+        result.sections[i] = dynstring_create(256);
     }
     result.compilation_data = compilation_data;
     result.program_translation.line_infos = dynamic_array_create<C_Line_Info>(32);
-    result.program_translation.name_mapping = hashtable_create_empty<C_Translation, String>(64, c_translation_hash, c_translation_is_equal);
-    result.program_translation.source_code = string_create(2048);
+    result.program_translation.name_mapping = hashtable_create_empty<C_Translation, DynString>(64, c_translation_hash, c_translation_is_equal);
+    result.program_translation.source_code = dynstring_create(2048);
     result.type_dependencies = dynamic_array_create<C_Type_Dependency*>();
     result.type_to_dependency_mapping = hashtable_create_pointer_empty<Datatype*, C_Type_Dependency*>(32);
     result.translation_characters = dynamic_array_create<Translation_Char_Info>(32);
@@ -385,17 +385,17 @@ void c_generator_output_constant_access(C_Generator* generator, Upp_Constant& co
 void output_memory_as_new_constant(C_Generator* generator, byte* base_memory, Datatype* base_type, bool requires_memory_address, int current_indentation_level);
 
 
-void string_add_indentation(String* str, int indentation)
+void string_add_indentation(DynString* str, int indentation)
 {
     for (int i = 0; i < indentation; i++) {
-        string_append_formated(str, "    ");
+        dynstring_append_formated(str, "    ");
     }
 }
 
 void c_generator_generate_struct_content(C_Generator* generator, Datatype_Struct* structure, C_Type_Dependency* type_dependency, int indentation_level)
 {
     auto& gen = *generator;
-    String* backup_text = gen.text;
+    DynString* backup_text = gen.text;
     SCOPE_EXIT(gen.text = backup_text);
     gen.text = &type_dependency->type_definition;
 
@@ -406,7 +406,7 @@ void c_generator_generate_struct_content(C_Generator* generator, Datatype_Struct
 
         string_add_indentation(gen.text, indentation_level);
         c_generator_output_type_reference(generator, member.datatype);
-        string_append_formated(gen.text, " %s;\n", member.name->characters);
+        dynstring_append_formated(gen.text, " %s;\n", member.name->characters);
 
         // Add dependencies if necessary
         auto member_type = member.datatype;
@@ -432,7 +432,7 @@ void c_generator_generate_struct_content(C_Generator* generator, Datatype_Struct
             string_append(gen.text, "struct {\n");
             c_generator_generate_struct_content(generator, child_content, type_dependency, indentation_level + 2);
             string_add_indentation(gen.text, indentation_level + 1);
-            string_append_formated(gen.text, "} %s;", child_content->name->characters);
+            dynstring_append_formated(gen.text, "} %s;", child_content->name->characters);
             string_append(gen.text, "\n");
         }
         string_add_indentation(gen.text, indentation_level);
@@ -461,7 +461,7 @@ C_Type_Dependency* get_type_dependency(C_Generator* generator, Datatype* datatyp
     dep->depends_on = dynamic_array_create<C_Type_Dependency*>();
     dep->dependency_count = 0;
     dep->signature = datatype;
-    dep->type_definition = string_create(32);
+    dep->type_definition = dynstring_create(32);
 
     dynamic_array_push_back(&gen.type_dependencies, dep);
     hashtable_insert_element(&gen.type_to_dependency_mapping, datatype, dep);
@@ -482,7 +482,7 @@ void c_generator_output_type_reference(C_Generator* generator, Datatype* type)
     translation.type = C_Translation_Type::DATATYPE;
     translation.options.datatype = type;
     {
-        String* translated = hashtable_find_element(&gen.program_translation.name_mapping, translation);
+        DynString* translated = hashtable_find_element(&gen.program_translation.name_mapping, translation);
         if (translated != 0) {
             string_append(gen.text, translated->characters);
             return;
@@ -490,13 +490,13 @@ void c_generator_output_type_reference(C_Generator* generator, Datatype* type)
     }
 
     // Otherwise generate the type reference
-    String constant_string;
+    DynString constant_string;
     constant_string.size = 0;
     constant_string.capacity = 0;
     SCOPE_EXIT(if (constant_string.capacity != 0) string_destroy(&constant_string));
 
-    String access_name = string_create(32);
-    String* backup_text = gen.text;
+    DynString access_name = dynstring_create(32);
+    DynString* backup_text = gen.text;
     SCOPE_EXIT(gen.text = backup_text);
 
     switch (type->type)
@@ -544,43 +544,43 @@ void c_generator_output_type_reference(C_Generator* generator, Datatype* type)
     case Datatype_Type::PATTERN_VARIABLE:
     case Datatype_Type::UNKNOWN_TYPE:
     {
-        string_append_formated(&access_name, "UNUSED_TYPE_BACKEND_"); // See hardcoded_functions.h for definition
+        dynstring_append_formated(&access_name, "UNUSED_TYPE_BACKEND_"); // See hardcoded_functions.h for definition
         break;
     }
     case Datatype_Type::ENUM:
     {
         auto enum_type = downcast<Datatype_Enum>(type);
         auto& members = enum_type->members;
-        string_append_formated(&access_name, "%s_Enum_%d", enum_type->name->characters, gen.name_counter);
+        dynstring_append_formated(&access_name, "%s_Enum_%d", enum_type->name->characters, gen.name_counter);
         gen.name_counter++;
 
-        String* enum_section = &gen.sections[(int)Generator_Section::ENUM_DECLARATIONS];
-        string_append_formated(enum_section, "enum class %s : i64\n{\n", access_name.characters); // Currently enums are i64 in Upp
+        DynString* enum_section = &gen.sections[(int)Generator_Section::ENUM_DECLARATIONS];
+        dynstring_append_formated(enum_section, "enum class %s : i64\n{\n", access_name.characters); // Currently enums are i64 in Upp
         for (int i = 0; i < members.size; i++) {
             auto member = &members[i];
-            string_append_formated(enum_section, "    %s = %d,\n", member->name->characters, member->value);
+            dynstring_append_formated(enum_section, "    %s = %d,\n", member->name->characters, member->value);
         }
-        string_append_formated(enum_section, "};\n");
+        dynstring_append_formated(enum_section, "};\n");
         break;
     }
     case Datatype_Type::SLICE:
     {
         auto slice_type = downcast<Datatype_Slice>(type);
-        string_append_formated(&access_name, "Slice_%d", gen.name_counter);
+        dynstring_append_formated(&access_name, "Slice_%d", gen.name_counter);
         gen.name_counter++;
 
-        String* section_prototypes = &gen.sections[(int)Generator_Section::STRUCT_PROTOTYPES];
-        String* section_structs = &gen.sections[(int)Generator_Section::STRUCT_AND_ARRAY_DECLARATIONS];
-        string_append_formated(section_prototypes, "struct %s;\n", access_name.characters);
+        DynString* section_prototypes = &gen.sections[(int)Generator_Section::STRUCT_PROTOTYPES];
+        DynString* section_structs = &gen.sections[(int)Generator_Section::STRUCT_AND_ARRAY_DECLARATIONS];
+        dynstring_append_formated(section_prototypes, "struct %s;\n", access_name.characters);
 
         // Temporary c_string is required when calling this function recursively
-        String tmp = string_create(32);
+        DynString tmp = dynstring_create(32);
         SCOPE_EXIT(string_destroy(&tmp));
 
         gen.text = &tmp;
-        string_append_formated(gen.text, "struct %s {\n    ", access_name.characters);
+        dynstring_append_formated(gen.text, "struct %s {\n    ", access_name.characters);
         c_generator_output_type_reference(generator, slice_type->data_member.datatype);
-        string_append_formated(gen.text, " data;\n    u64 size;\n};\n\n");
+        dynstring_append_formated(gen.text, " data;\n    u64 size;\n};\n\n");
 
         // Now we write to struct section
         gen.text = section_structs;
@@ -592,11 +592,11 @@ void c_generator_output_type_reference(C_Generator* generator, Datatype* type)
     {
         auto signature = downcast<Datatype_Function_Pointer>(type)->signature;
         auto& parameters = signature->parameters;
-        string_append_formated(&access_name, "fptr_%d", gen.name_counter);
+        dynstring_append_formated(&access_name, "fptr_%d", gen.name_counter);
         gen.name_counter++;
 
         // Temporary c_string is required when calling this function recursively
-        String tmp = string_create(32);
+        DynString tmp = dynstring_create(32);
         SCOPE_EXIT(string_destroy(&tmp));
 
         gen.text = &tmp;
@@ -608,19 +608,19 @@ void c_generator_output_type_reference(C_Generator* generator, Datatype* type)
             string_append(gen.text, "void");
         }
 
-        string_append_formated(gen.text, " (*%s)(", access_name.characters);
+        dynstring_append_formated(gen.text, " (*%s)(", access_name.characters);
         bool require_comma = false;
         for (int i = 0; i < parameters.size; i++) {
             auto& param = parameters[i];
             if (i == signature->return_type_index) continue;
             if (require_comma) {
-                string_append_formated(gen.text, ", ");
+                dynstring_append_formated(gen.text, ", ");
             }
             require_comma = true;
             c_generator_output_type_reference(generator, param.datatype);
-            string_append_formated(gen.text, " %s", param.name->characters);
+            dynstring_append_formated(gen.text, " %s", param.name->characters);
         }
-        string_append_formated(gen.text, ");\n\n");
+        dynstring_append_formated(gen.text, ");\n\n");
 
         gen.text = &gen.sections[(int)Generator_Section::TYPE_DECLARATIONS];
         string_append(gen.text, tmp.characters);
@@ -633,30 +633,30 @@ void c_generator_output_type_reference(C_Generator* generator, Datatype* type)
         auto& members = structure->members;
 
         if (structure->base.contains_pattern) {
-            string_append_formated(&access_name, "UNUSED_TYPE_BACKEND_"); // See hardcoded_functions.h for definition
+            dynstring_append_formated(&access_name, "UNUSED_TYPE_BACKEND_"); // See hardcoded_functions.h for definition
             break;
         }
 
         // Extern structs should be accessible by name alone (And forward definition/definition should be in an included header)
         if (structure->upp_struct->is_extern_struct) {
-            string_append_formated(&access_name, structure->name->characters);
+            dynstring_append_formated(&access_name, structure->name->characters);
             break;
         }
 
         // Because structs can contain references to themselves, we need to register the access name before generating the members
         if (structure->upp_struct->is_union) {
-            string_append_formated(&access_name, "%s_Struct_%d", structure->name->characters, gen.name_counter);
+            dynstring_append_formated(&access_name, "%s_Struct_%d", structure->name->characters, gen.name_counter);
         }
         else {
-            string_append_formated(&access_name, "%s_Union_%d", structure->name->characters, gen.name_counter);
+            dynstring_append_formated(&access_name, "%s_Union_%d", structure->name->characters, gen.name_counter);
         }
         gen.name_counter += 1;
         hashtable_insert_element(&gen.program_translation.name_mapping, translation, access_name);
         if (structure->upp_struct->is_union) {
-            string_append_formated(&gen.sections[(int)Generator_Section::STRUCT_PROTOTYPES], "union %s;\n", access_name.characters);
+            dynstring_append_formated(&gen.sections[(int)Generator_Section::STRUCT_PROTOTYPES], "union %s;\n", access_name.characters);
         }
         else {
-            string_append_formated(&gen.sections[(int)Generator_Section::STRUCT_PROTOTYPES], "struct %s;\n", access_name.characters);
+            dynstring_append_formated(&gen.sections[(int)Generator_Section::STRUCT_PROTOTYPES], "struct %s;\n", access_name.characters);
         }
 
         // Generate struct content
@@ -666,14 +666,14 @@ void c_generator_output_type_reference(C_Generator* generator, Datatype* type)
 
         // Handle extern structs (No members, but size and alignment can be different
         if (structure->members.size == 0 && structure->subtypes.size == 0) {
-            string_append_formated(
+            dynstring_append_formated(
                 gen.text, "alignas(%d) %s {\n    u8 values[%d];\n};\n",
                 structure->base.memory_info.value.alignment, access_name.characters, structure->base.memory_info.value.size
             );
         }
         else
         {
-            string_append_formated(gen.text, "%s {\n", access_name.characters);
+            dynstring_append_formated(gen.text, "%s {\n", access_name.characters);
             c_generator_generate_struct_content(generator, structure, dependency, 1);
             string_append(gen.text, "};\n\n");
         }
@@ -686,25 +686,25 @@ void c_generator_output_type_reference(C_Generator* generator, Datatype* type)
     case Datatype_Type::ARRAY:
     {
         auto array_type = downcast<Datatype_Array>(type);
-        string_append_formated(&access_name, "Array_%d", gen.name_counter);
+        dynstring_append_formated(&access_name, "Array_%d", gen.name_counter);
         gen.name_counter++;
-        string_append_formated(&gen.sections[(int)Generator_Section::STRUCT_PROTOTYPES], "struct %s;\n", access_name.characters);
+        dynstring_append_formated(&gen.sections[(int)Generator_Section::STRUCT_PROTOTYPES], "struct %s;\n", access_name.characters);
 
         // Similar to structs we insert the names early
         hashtable_insert_element(&gen.program_translation.name_mapping, translation, access_name);
-        string_append_formated(&gen.sections[(int)Generator_Section::STRUCT_PROTOTYPES], "struct %s;\n", access_name.characters);
+        dynstring_append_formated(&gen.sections[(int)Generator_Section::STRUCT_PROTOTYPES], "struct %s;\n", access_name.characters);
 
         // Generate array definition
         C_Type_Dependency* dependency = get_type_dependency(generator, type);
         gen.text = &dependency->type_definition;
-        string_append_formated(gen.text, "struct %s {\n", access_name.characters);
+        dynstring_append_formated(gen.text, "struct %s {\n", access_name.characters);
         string_add_indentation(gen.text, 1);
         // Note: Here we use the non-const type, because:
         //      In type_system, if the element_type is constant, the array_type is also constant
         //      In C, if a struct is constant, the array in the struct is also automatically constant
         //      By not making the values constant, array_initializers will still work by using a temporary, non-const array
         c_generator_output_type_reference(generator, array_type->element_type);
-        string_append_formated(gen.text, " values[%d];\n};\n", array_type->element_count);
+        dynstring_append_formated(gen.text, " values[%d];\n};\n", array_type->element_count);
 
         // Add dependency if necessary
         auto member_type = array_type->element_type;
@@ -752,7 +752,7 @@ void c_generator_generate(C_Generator* generator)
     // Reset generator data 
     {
         for (int i = 0; i < (int)Generator_Section::MAX_ENUM_VALUE; i++) {
-            string_reset(&gen.sections[i]);
+            dynstring_reset(&gen.sections[i]);
         }
 
         hashtable_for_each_value(&gen.program_translation.name_mapping, string_destroy);
@@ -788,7 +788,7 @@ void c_generator_generate(C_Generator* generator)
         }
     }
 
-    auto append_function_signature = [&](String* function_access_name, Upp_Function* function)
+    auto append_function_signature = [&](DynString* function_access_name, Upp_Function* function)
     {
         Call_Signature* signature = function->signature;
         if (signature->return_type().available) {
@@ -797,7 +797,7 @@ void c_generator_generate(C_Generator* generator)
         else {
             string_append(gen.text, "void");
         }
-        string_append_formated(gen.text, " %s(", function_access_name->characters);
+        dynstring_append_formated(gen.text, " %s(", function_access_name->characters);
 
         auto& parameters = signature->parameters;
         bool require_comma = false;
@@ -834,9 +834,9 @@ void c_generator_generate(C_Generator* generator)
                 continue;
             }
 
-            String access_name = string_create();
+            DynString access_name = dynstring_create();
             string_append_string(&access_name, function->name);
-            string_append_formated(&access_name, "_%d", gen.name_counter);
+            dynstring_append_formated(&access_name, "_%d", gen.name_counter);
             gen.name_counter++;
 
             C_Translation translation;
@@ -857,7 +857,7 @@ void c_generator_generate(C_Generator* generator)
             auto extern_function = extern_fns[i];
             assert(extern_function->is_extern, "Should be extern");
 
-            String access_name = string_create();
+            DynString access_name = dynstring_create();
             string_append(&access_name, extern_function->name->characters);
 
             C_Translation translation;
@@ -884,13 +884,13 @@ void c_generator_generate(C_Generator* generator)
                 C_Translation fn_translation;
                 fn_translation.type = C_Translation_Type::FUNCTION;
                 fn_translation.options.function = function;
-                String* fn_name = hashtable_find_element(&gen.program_translation.name_mapping, fn_translation);
+                DynString* fn_name = hashtable_find_element(&gen.program_translation.name_mapping, fn_translation);
                 assert(fn_name != 0, "");
 
                 append_function_signature(fn_name, function);
             }
             else {
-                String name = string_create_static("upp_entry_");
+                DynString name = string_create_static("upp_entry_");
                 append_function_signature(&name, function);
             }
         }
@@ -907,7 +907,7 @@ void c_generator_generate(C_Generator* generator)
         gen.text = &gen.sections[(int)Generator_Section::CONSTANT_ARRAY_HOLDERS];
         string_append(gen.text, "struct Type_Information_Holder_ {\n    ");
         c_generator_output_type_reference(generator, upcast(types.type_information_type));
-        string_append_formated(gen.text, " infos[%d];\n};\n", type_system->types.size);
+        dynstring_append_formated(gen.text, " infos[%d];\n};\n", type_system->types.size);
 
         // Create constant
         gen.text = &gen.sections[(int)Generator_Section::CONSTANTS];
@@ -931,13 +931,13 @@ void c_generator_generate(C_Generator* generator)
 
             // Set base info
             string_add_indentation(gen.text, 1);
-            string_append_formated(gen.text, "info = &type_infos_.infos[%d];\n", i);
+            dynstring_append_formated(gen.text, "info = &type_infos_.infos[%d];\n", i);
             string_add_indentation(gen.text, 1);
-            string_append_formated(gen.text, "info->type      = %d;\n", type->type_handle.index);
+            dynstring_append_formated(gen.text, "info->type      = %d;\n", type->type_handle.index);
             string_add_indentation(gen.text, 1);
-            string_append_formated(gen.text, "info->size      = %d;\n", memory.size);
+            dynstring_append_formated(gen.text, "info->size      = %d;\n", memory.size);
             string_add_indentation(gen.text, 1);
-            string_append_formated(gen.text, "info->alignment = %d;\n", memory.alignment);
+            dynstring_append_formated(gen.text, "info->alignment = %d;\n", memory.alignment);
             string_add_indentation(gen.text, 1);
             string_append(gen.text, "info->tag_      = ");
             output_memory_as_new_constant(
@@ -960,9 +960,9 @@ void c_generator_generate(C_Generator* generator)
             }
             case Datatype_Type::ARRAY: {
                 auto array_type = downcast<Datatype_Array>(type);
-                string_append_formated(gen.text, "info->subtypes_.Array.element_type = %d;\n", array_type->element_type->type_handle.index);
+                dynstring_append_formated(gen.text, "info->subtypes_.Array.element_type = %d;\n", array_type->element_type->type_handle.index);
                 string_add_indentation(gen.text, 1);
-                string_append_formated(gen.text, "info->subtypes_.Array.size         = %d;\n", array_type->element_count);
+                dynstring_append_formated(gen.text, "info->subtypes_.Array.size         = %d;\n", array_type->element_count);
                 break;
             }
             case Datatype_Type::BUILT_IN: 
@@ -970,48 +970,48 @@ void c_generator_generate(C_Generator* generator)
                 auto built_in = downcast<Datatype_Builtin>(type);
                 string_append(gen.text, "info->subtypes_.Builtin.type = (");
                 c_generator_output_type_reference(generator, types.builtin_type_enum);
-                string_append_formated(gen.text, ")%d;\n", (int)built_in->builtin_type); // Do i need plus one here?
+                dynstring_append_formated(gen.text, ")%d;\n", (int)built_in->builtin_type); // Do i need plus one here?
                 string_add_indentation(gen.text, 1);
                 break;
             }
             case Datatype_Type::POINTER: {
                 auto pointer = downcast<Datatype_Pointer>(type);
-                string_append_formated(gen.text, "info->subtypes_.Pointer.element_type = %d;\n", pointer->element_type->type_handle.index);
+                dynstring_append_formated(gen.text, "info->subtypes_.Pointer.element_type = %d;\n", pointer->element_type->type_handle.index);
                 break;
             }
             case Datatype_Type::SLICE: {
                 auto slice = downcast<Datatype_Slice>(type);
-                string_append_formated(gen.text, "info->subtypes_.Slice.element_type = %d;\n", slice->element_type->type_handle.index);
+                dynstring_append_formated(gen.text, "info->subtypes_.Slice.element_type = %d;\n", slice->element_type->type_handle.index);
                 break;
             }
             case Datatype_Type::ENUM:
             {
                 auto enumeration = downcast<Datatype_Enum>(type);
                 auto& internal_info = type_system->types[i]->internal_info->options.enumeration;
-                string_append_formated(gen.text, "info->subtypes_.Enum.name = ");
+                dynstring_append_formated(gen.text, "info->subtypes_.Enum.name = ");
                 output_memory_as_new_constant(generator, (byte*)&internal_info.name, types.string->upcast(), false, 1);
                 string_append(gen.text, ";\n");
 
                 string_add_indentation(gen.text, 1);
-                string_append_formated(gen.text, "info->subtypes_.Enum.members.size = %d;\n", internal_info.members.size);
+                dynstring_append_formated(gen.text, "info->subtypes_.Enum.members.size = %d;\n", internal_info.members.size);
                 string_add_indentation(gen.text, 1);
                 if (internal_info.members.size > 0)
                 {
-                    string_append_formated(gen.text, "info->subtypes_.Enum.members.data = new ");
+                    dynstring_append_formated(gen.text, "info->subtypes_.Enum.members.data = new ");
                     c_generator_output_type_reference(generator, upcast(types.internal_enum_member_info_type)); // Check if this works
-                    string_append_formated(gen.text, "[%d];\n", internal_info.members.size);
+                    dynstring_append_formated(gen.text, "[%d];\n", internal_info.members.size);
                     for (int j = 0; j < internal_info.members.size; j++) {
                         auto& member = internal_info.members.data[j];
                         string_add_indentation(gen.text, 1);
-                        string_append_formated(gen.text, "info->subtypes_.Enum.members.data[%d].name = ", j);
+                        dynstring_append_formated(gen.text, "info->subtypes_.Enum.members.data[%d].name = ", j);
                         output_memory_as_new_constant(generator, (byte*)&member.name, types.string->upcast(), false, 1);
                         string_append(gen.text, ";\n");
                         string_add_indentation(gen.text, 1);
-                        string_append_formated(gen.text, "info->subtypes_.Enum.members.data[%d].value = %d;\n", j, member.value);
+                        dynstring_append_formated(gen.text, "info->subtypes_.Enum.members.data[%d].value = %d;\n", j, member.value);
                     }
                 }
                 else {
-                    string_append_formated(gen.text, "info->subtypes_.Enum.members.data = nullptr;\n");
+                    dynstring_append_formated(gen.text, "info->subtypes_.Enum.members.data = nullptr;\n");
                 }
                 break;
             }
@@ -1024,25 +1024,25 @@ void c_generator_generate(C_Generator* generator)
                 // string_append_formated(gen.text, "info->subtypes_.Function.return_type = %d;\n", 
                 //     return_type.available ? return_type.value->type_handle.index : -1);
                 // string_add_indentation(gen.text, 1);
-                string_append_formated(gen.text, "info->subtypes_.Function_Pointer.has_return_type = %s;\n", return_type.available ? "true" : "false");
+                dynstring_append_formated(gen.text, "info->subtypes_.Function_Pointer.has_return_type = %s;\n", return_type.available ? "true" : "false");
                 string_add_indentation(gen.text, 1);
-                string_append_formated(gen.text, "info->subtypes_.Function_Pointer.parameter_types.size = %d;\n", parameters.size);
+                dynstring_append_formated(gen.text, "info->subtypes_.Function_Pointer.parameter_types.size = %d;\n", parameters.size);
                 if (parameters.size != 0) 
                 {
                     string_add_indentation(gen.text, 1);
-                    string_append_formated(gen.text, "info->subtypes_.Function_Pointer.parameter_types.data = new ");
+                    dynstring_append_formated(gen.text, "info->subtypes_.Function_Pointer.parameter_types.data = new ");
                     c_generator_output_type_reference(generator, upcast(types.type_handle)); // Check if this works
-                    string_append_formated(gen.text, "[%d];\n", parameters.size);
+                    dynstring_append_formated(gen.text, "[%d];\n", parameters.size);
                     for (int j = 0; j < parameters.size; j++) {
                         auto& param = parameters[j];
                         string_add_indentation(gen.text, 1);
-                        string_append_formated(
+                        dynstring_append_formated(
                             gen.text, "info->subtypes_.Function_Pointer.parameter_types.data[%d] = %d;\n", j, param.datatype->type_handle.index);
                     }
                 }
                 else {
                     string_add_indentation(gen.text, 1);
-                    string_append_formated(gen.text, "info->subtypes_.Function_Pointer.parameter_types.data = nullptr;\n");
+                    dynstring_append_formated(gen.text, "info->subtypes_.Function_Pointer.parameter_types.data = nullptr;\n");
                 }
                 break;
             }
@@ -1052,10 +1052,10 @@ void c_generator_generate(C_Generator* generator)
                 const char* access_prefix = "info->subtypes_.Struct";
 
                 auto structure = downcast<Datatype_Struct>(type);
-                string_append_formated(gen.text, "%s.is_union = %s;\n", access_prefix, structure->upp_struct->is_union ? "true" : "false");
+                dynstring_append_formated(gen.text, "%s.is_union = %s;\n", access_prefix, structure->upp_struct->is_union ? "true" : "false");
                 string_add_indentation(gen.text, indentation_level);
 
-                string_append_formated(gen.text, "%s.name = ", access_prefix);
+                dynstring_append_formated(gen.text, "%s.name = ", access_prefix);
                 Upp_String upp_string = upp_string_from_id(structure->name);
                 output_memory_as_new_constant(generator, (byte*)&upp_string, types.string->upcast(), false, 1);
                 string_append(gen.text, ";\n");
@@ -1065,61 +1065,61 @@ void c_generator_generate(C_Generator* generator)
                 {
                     const char* access_prefix = "info->subtypes_.Struct.tag_member";
                     string_add_indentation(gen.text, indentation_level);
-                    string_append_formated(gen.text, "%s.name = ", access_prefix);
+                    dynstring_append_formated(gen.text, "%s.name = ", access_prefix);
                     upp_string = upp_string_from_id(structure->tag_member.name);
                     output_memory_as_new_constant(generator, (byte*)&upp_string, types.string->upcast(), false, 1);
                     string_append(gen.text, ";\n");
                     string_add_indentation(gen.text, indentation_level);
-                    string_append_formated(gen.text, "%s.type = %d;\n", access_prefix, structure->tag_member.datatype->type_handle.index);
+                    dynstring_append_formated(gen.text, "%s.type = %d;\n", access_prefix, structure->tag_member.datatype->type_handle.index);
                     string_add_indentation(gen.text, indentation_level);
-                    string_append_formated(gen.text, "%s.offset = %d;\n", access_prefix, structure->tag_member.offset);
+                    dynstring_append_formated(gen.text, "%s.offset = %d;\n", access_prefix, structure->tag_member.offset);
                 }
 
                 // Generate members
                 string_add_indentation(gen.text, indentation_level);
-                string_append_formated(gen.text, "%s.members.size = %d;\n", access_prefix, structure->members.size);
+                dynstring_append_formated(gen.text, "%s.members.size = %d;\n", access_prefix, structure->members.size);
                 if (structure->members.size != 0)
                 {
                     string_add_indentation(gen.text, indentation_level);
-                    string_append_formated(gen.text, "%s.members.data = new ", access_prefix);
+                    dynstring_append_formated(gen.text, "%s.members.data = new ", access_prefix);
                     c_generator_output_type_reference(generator, upcast(types.internal_member_info_type));
-                    string_append_formated(gen.text, "[%d];\n", structure->members.size);
+                    dynstring_append_formated(gen.text, "[%d];\n", structure->members.size);
                     for (int i = 0; i < structure->members.size; i++) {
                         auto& member = structure->members[i];
                         string_add_indentation(gen.text, indentation_level);
-                        string_append_formated(gen.text, "%s.members.data[%d].name = ", access_prefix, i);
+                        dynstring_append_formated(gen.text, "%s.members.data[%d].name = ", access_prefix, i);
                         upp_string = upp_string_from_id(member.name);
                         output_memory_as_new_constant(generator, (byte*)&upp_string, types.string->upcast(), false, 1);
                         string_append(gen.text, ";\n");
 
                         string_add_indentation(gen.text, indentation_level);
-                        string_append_formated(gen.text, "%s.members.data[%d].type = %d;\n", access_prefix, i, member.datatype->type_handle.index);
+                        dynstring_append_formated(gen.text, "%s.members.data[%d].type = %d;\n", access_prefix, i, member.datatype->type_handle.index);
                         string_add_indentation(gen.text, indentation_level);
-                        string_append_formated(gen.text, "%s.members.data[%d].offset = %d;\n", access_prefix, i, member.offset);
+                        dynstring_append_formated(gen.text, "%s.members.data[%d].offset = %d;\n", access_prefix, i, member.offset);
                     }
                 }
                 else { // Extern c struct i guess?
                     string_add_indentation(gen.text, indentation_level);
-                    string_append_formated(gen.text, "%s.members.data = nullptr;\n", access_prefix);
+                    dynstring_append_formated(gen.text, "%s.members.data = nullptr;\n", access_prefix);
                 }
 
                 // Generate subtypes
                 string_add_indentation(gen.text, indentation_level);
-                string_append_formated(gen.text, "%s.subtypes.size = %d;\n", access_prefix, structure->subtypes.size);
+                dynstring_append_formated(gen.text, "%s.subtypes.size = %d;\n", access_prefix, structure->subtypes.size);
                 if (structure->subtypes.size > 0)
                 {
                     string_add_indentation(gen.text, indentation_level);
-                    string_append_formated(gen.text, "%s.subtypes.data = new ", access_prefix);
+                    dynstring_append_formated(gen.text, "%s.subtypes.data = new ", access_prefix);
                     c_generator_output_type_reference(generator, upcast(types.type_handle));
-                    string_append_formated(gen.text, "[%d];\n", structure->subtypes.size);
+                    dynstring_append_formated(gen.text, "[%d];\n", structure->subtypes.size);
                     for (int i = 0; i < structure->subtypes.size; i++) {
                         string_add_indentation(gen.text, indentation_level);
-                        string_append_formated(gen.text, "%s.subtypes.data[%d] = %d;\n", access_prefix, i, structure->subtypes[i]->base.type_handle.index);
+                        dynstring_append_formated(gen.text, "%s.subtypes.data[%d] = %d;\n", access_prefix, i, structure->subtypes[i]->base.type_handle.index);
                     }
                 }
                 else {
                     string_add_indentation(gen.text, indentation_level);
-                    string_append_formated(gen.text, "%s.subtypes.data = nullptr;\n", access_prefix);
+                    dynstring_append_formated(gen.text, "%s.subtypes.data = nullptr;\n", access_prefix);
                 }
 
                 break;
@@ -1184,7 +1184,7 @@ void c_generator_generate(C_Generator* generator)
 
     // Combine all sections + entry into one string 
     auto& source_code = gen.program_translation.source_code;
-    string_reset(&source_code);
+    dynstring_reset(&source_code);
     int function_implementation_char_index = -1;
     {
         string_append(
@@ -1198,30 +1198,30 @@ void c_generator_generate(C_Generator* generator)
         string_append(&gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION], "    return 0;\n}\n\n");
 
         // Combine sections into one program
-        string_append_formated(&source_code, "/* INTRODUCTION\n----------------*/\n");
+        dynstring_append_formated(&source_code, "/* INTRODUCTION\n----------------*/\n");
         string_append(&source_code, "#pragma once\n#include <cstdlib>\n#include \"../hardcoded/hardcoded_functions.h\"\n#include \"../hardcoded/datatypes.h\"\n\n");
         string_append(&source_code, "#include <iostream>\n#include <cstdio>\n");
         // string_append_formated(&source_code, "/* EXTERN HEADERS\n----------------*/\n");
         // string_append_string(&source_code, &section_extern_includes);
         // string_append_formated(&source_code, "\n/* STRING_DATA\n----------------*/\n");
         // string_append_string(&source_code, &generator->section_string_data);
-        string_append_formated(&source_code, "\n/* ENUMS\n----------------*/\n");
+        dynstring_append_formated(&source_code, "\n/* ENUMS\n----------------*/\n");
         string_append_string(&source_code, &gen.sections[(int)Generator_Section::ENUM_DECLARATIONS]);
-        string_append_formated(&source_code, "\n/* STRUCT_PROTOTYPES\n----------------*/\n");
+        dynstring_append_formated(&source_code, "\n/* STRUCT_PROTOTYPES\n----------------*/\n");
         string_append_string(&source_code, &gen.sections[(int)Generator_Section::STRUCT_PROTOTYPES]);
-        string_append_formated(&source_code, "\n/* TYPE_DECLARATIONS\n------------------*/\n");
+        dynstring_append_formated(&source_code, "\n/* TYPE_DECLARATIONS\n------------------*/\n");
         string_append_string(&source_code, &gen.sections[(int)Generator_Section::TYPE_DECLARATIONS]);
-        string_append_formated(&source_code, "\n/* STRUCT_IMPLEMENTATIONS\n----------------*/\n");
+        dynstring_append_formated(&source_code, "\n/* STRUCT_IMPLEMENTATIONS\n----------------*/\n");
         string_append_string(&source_code, &gen.sections[(int)Generator_Section::STRUCT_AND_ARRAY_DECLARATIONS]);
-        string_append_formated(&source_code, "\n/* ARRAY_HOLDER_SECTION\n----------------*/\n");
+        dynstring_append_formated(&source_code, "\n/* ARRAY_HOLDER_SECTION\n----------------*/\n");
         string_append_string(&source_code, &gen.sections[(int)Generator_Section::CONSTANT_ARRAY_HOLDERS]);
-        string_append_formated(&source_code, "\n/* FUNCTION PROTOTYPES\n------------------*/\n"); // Need to be declared before constants for function pointers constants to work
+        dynstring_append_formated(&source_code, "\n/* FUNCTION PROTOTYPES\n------------------*/\n"); // Need to be declared before constants for function pointers constants to work
         string_append_string(&source_code, &gen.sections[(int)Generator_Section::FUNCTION_PROTOTYPES]);
-        string_append_formated(&source_code, "\n/* CONSTANTS\n------------------*/\n");
+        dynstring_append_formated(&source_code, "\n/* CONSTANTS\n------------------*/\n");
         string_append_string(&source_code, &gen.sections[(int)Generator_Section::CONSTANTS]);
-        string_append_formated(&source_code, "\n/* GLOBALS\n------------------*/\n");
+        dynstring_append_formated(&source_code, "\n/* GLOBALS\n------------------*/\n");
         string_append_string(&source_code, &gen.sections[(int)Generator_Section::GLOBALS]);
-        string_append_formated(&source_code, "\n/* FUNCTIONS\n------------------*/\n");
+        dynstring_append_formated(&source_code, "\n/* FUNCTIONS\n------------------*/\n");
         function_implementation_char_index = source_code.size;
         string_append_string(&source_code, &gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION]);
     }
@@ -1335,7 +1335,7 @@ void output_struct_content_block_recursive(C_Generator* generator, Datatype_Stru
         byte* member_memory = struct_start_memory + member.offset;
 
         // Generate designator
-        string_append_formated(gen.text, ".%s = ", member.name->characters);
+        dynstring_append_formated(gen.text, ".%s = ", member.name->characters);
         output_memory_as_new_constant(generator, member_memory, member.datatype, false, block_indentation);
         if (i != members.size - 1) {
             string_append(gen.text, ", \n");
@@ -1348,7 +1348,7 @@ void output_struct_content_block_recursive(C_Generator* generator, Datatype_Stru
         int subtype_index = (*(int*)(struct_start_memory + structure->tag_member.offset)) - 1;
         assert(subtype_index >= 0 && subtype_index < structure->subtypes.size, "");
         Datatype_Struct* child_structure = structure->subtypes[subtype_index];
-        string_append_formated(gen.text, ".subtypes_ = { .%s = ", child_structure->name->characters);
+        dynstring_append_formated(gen.text, ".subtypes_ = { .%s = ", child_structure->name->characters);
         output_struct_content_block_recursive(generator, child_structure, struct_start_memory, block_indentation);
         string_append(gen.text, "}, \n");
 
@@ -1368,7 +1368,7 @@ void c_generator_output_constant_access(C_Generator* generator, Upp_Constant& co
 {
     auto& gen = *generator;
     auto& types = gen.compilation_data->type_system->predefined_types;
-    String* backup_text = gen.text;
+    DynString* backup_text = gen.text;
     SCOPE_EXIT(gen.text = backup_text);
 
     Datatype* type = constant.type;
@@ -1386,7 +1386,7 @@ void c_generator_output_constant_access(C_Generator* generator, Upp_Constant& co
     constant_translation.options.constant.index = constant.constant_index;
     constant_translation.options.constant.requires_memory_address = requires_memory_address;
     {
-        String* access_name = hashtable_find_element(&gen.program_translation.name_mapping, constant_translation);
+        DynString* access_name = hashtable_find_element(&gen.program_translation.name_mapping, constant_translation);
         if (access_name != 0) {
             string_append(gen.text, access_name->characters);
             return;
@@ -1394,28 +1394,28 @@ void c_generator_output_constant_access(C_Generator* generator, Upp_Constant& co
     }
 
     // Create access
-    String access_name = string_create(12);
+    DynString access_name = dynstring_create(12);
     gen.text = &access_name;
     {
-        String* backup_text = gen.text;
+        DynString* backup_text = gen.text;
         SCOPE_EXIT(gen.text = backup_text);
 
         Datatype* base_type = type;
         byte* base_memory = constant.memory;
 
-        String constant_string;
+        DynString constant_string;
         constant_string.size = 0;
         constant_string.capacity = 0;
         SCOPE_EXIT(if (constant_string.capacity != 0) string_destroy(&constant_string));
 
         if (requires_memory_address)
         {
-            constant_string = string_create(32);
+            constant_string = dynstring_create(32);
             gen.text = &constant_string;
 
             c_generator_output_type_reference(generator, base_type);
-            string_append_formated(gen.text, " const_%d = ", gen.name_counter);
-            string_append_formated(backup_text, "const_%d", gen.name_counter);
+            dynstring_append_formated(gen.text, " const_%d = ", gen.name_counter);
+            dynstring_append_formated(backup_text, "const_%d", gen.name_counter);
             gen.name_counter += 1;
         }
 
@@ -1435,7 +1435,7 @@ void c_generator_output_constant_access(C_Generator* generator, Upp_Constant& co
                 break;
             }
             case Builtin_Type::TYPE_HANDLE: {
-                string_append_formated(gen.text, "%u", *(u32*)base_memory);
+                dynstring_append_formated(gen.text, "%u", *(u32*)base_memory);
                 break;
             }
             case Builtin_Type::ANY: 
@@ -1443,17 +1443,17 @@ void c_generator_output_constant_access(C_Generator* generator, Upp_Constant& co
                 // Any in constant-pool only works
                 Upp_Any* any = (Upp_Any*)base_memory;
                 assert(any->data == nullptr, "Any in constnat pool cannot work with pointers");
-                string_append_formated(gen.text, "upp_any_make_(nullptr, %u)", any->type.index);
+                dynstring_append_formated(gen.text, "upp_any_make_(nullptr, %u)", any->type.index);
                 break;
             }
             case Builtin_Type::STRING: 
             {
                 // Note: Maybe we need something smarter in the future to handle multi-line strings 
                 Upp_String string = *(Upp_String*)base_memory;
-                string_append_formated(gen.text, "{.data = (void*) \"");
+                dynstring_append_formated(gen.text, "{.data = (void*) \"");
 
                 // Note: I need to escape escape sequences, so this is what i'm doing now...
-                String escaped = string_create(16);
+                DynString escaped = dynstring_create(16);
                 SCOPE_EXIT(string_destroy(&escaped));
                 for (int i = 0; i < string.size; i++) {
                     char c = ((const char*)string.data)[i];
@@ -1470,7 +1470,7 @@ void c_generator_output_constant_access(C_Generator* generator, Upp_Constant& co
                 }
 
                 string_append(gen.text, escaped.characters);
-                string_append_formated(gen.text, "\", .size = %d }", string.size);
+                dynstring_append_formated(gen.text, "\", .size = %d }", string.size);
                 break;
             }
             case Builtin_Type::C_STRING: {
@@ -1479,11 +1479,11 @@ void c_generator_output_constant_access(C_Generator* generator, Upp_Constant& co
             }
             case Builtin_Type::C_CHAR: {
                 u8* value = (u8*)base_memory;
-                string_append_formated(gen.text, "((char)%d)", *value);
+                dynstring_append_formated(gen.text, "((char)%d)", *value);
                 break;
             }
             case Builtin_Type::CODE_POINT: {
-                string_append_formated(gen.text, "%u", *(u32*)base_memory);
+                dynstring_append_formated(gen.text, "%u", *(u32*)base_memory);
                 break;
             }
             default: panic("");
@@ -1496,18 +1496,18 @@ void c_generator_output_constant_access(C_Generator* generator, Upp_Constant& co
             byte* memory = base_memory;
             switch (primitive->primitive_type)
             {
-            case Primitive_Type::INT:  string_append_formated(gen.text, "%lld", (*(i64*)memory)); break;
-            case Primitive_Type::UINT: string_append_formated(gen.text, "%llu", (*(u64*)memory)); break;
-            case Primitive_Type::I8:  string_append_formated(gen.text, "%d", (int)(*(i8*)memory)); break;
-            case Primitive_Type::I16: string_append_formated(gen.text, "%d", (int)(*(i16*)memory)); break;
-            case Primitive_Type::I32: string_append_formated(gen.text, "%d", (int)(*(i32*)memory)); break;
-            case Primitive_Type::I64: string_append_formated(gen.text, "%lld", (i64)(*(i64*)memory)); break;
-            case Primitive_Type::U8:  string_append_formated(gen.text, "%u", (u32)(*(u8*)memory)); break;
-            case Primitive_Type::U16: string_append_formated(gen.text, "%u", (u32)(*(u16*)memory)); break;
-            case Primitive_Type::U32: string_append_formated(gen.text, "%u", (u32)(*(u32*)memory)); break;
-            case Primitive_Type::U64: string_append_formated(gen.text, "%llu", (u64)(*(u64*)memory)); break;
-            case Primitive_Type::F32: string_append_formated(gen.text, "%f", (double)(*(float*)memory)); break;
-            case Primitive_Type::F64: string_append_formated(gen.text, "%f", (double)(*(double*)memory)); break;
+            case Primitive_Type::INT:  dynstring_append_formated(gen.text, "%lld", (*(i64*)memory)); break;
+            case Primitive_Type::UINT: dynstring_append_formated(gen.text, "%llu", (*(u64*)memory)); break;
+            case Primitive_Type::I8:  dynstring_append_formated(gen.text, "%d", (int)(*(i8*)memory)); break;
+            case Primitive_Type::I16: dynstring_append_formated(gen.text, "%d", (int)(*(i16*)memory)); break;
+            case Primitive_Type::I32: dynstring_append_formated(gen.text, "%d", (int)(*(i32*)memory)); break;
+            case Primitive_Type::I64: dynstring_append_formated(gen.text, "%lld", (i64)(*(i64*)memory)); break;
+            case Primitive_Type::U8:  dynstring_append_formated(gen.text, "%u", (u32)(*(u8*)memory)); break;
+            case Primitive_Type::U16: dynstring_append_formated(gen.text, "%u", (u32)(*(u16*)memory)); break;
+            case Primitive_Type::U32: dynstring_append_formated(gen.text, "%u", (u32)(*(u32*)memory)); break;
+            case Primitive_Type::U64: dynstring_append_formated(gen.text, "%llu", (u64)(*(u64*)memory)); break;
+            case Primitive_Type::F32: dynstring_append_formated(gen.text, "%f", (double)(*(float*)memory)); break;
+            case Primitive_Type::F64: dynstring_append_formated(gen.text, "%f", (double)(*(double*)memory)); break;
             case Primitive_Type::BOOLEAN: string_append(gen.text, ((*(bool*)memory) ? "true" : "false")); break;
             default: panic("What");
             }
@@ -1532,7 +1532,7 @@ void c_generator_output_constant_access(C_Generator* generator, Upp_Constant& co
 
             auto member = enum_type->members[member_index];
             c_generator_output_type_reference(generator, type);
-            string_append_formated(gen.text, "::%s", member.name->characters);
+            dynstring_append_formated(gen.text, "::%s", member.name->characters);
             break;
         }
         case Datatype_Type::FUNCTION_POINTER:
@@ -1547,9 +1547,9 @@ void c_generator_output_constant_access(C_Generator* generator, Upp_Constant& co
                 C_Translation function_translation;
                 function_translation.type = C_Translation_Type::FUNCTION;
                 function_translation.options.function = gen.compilation_data->functions[function_index - 1];
-                String* fn_name = hashtable_find_element(&gen.program_translation.name_mapping, function_translation);
+                DynString* fn_name = hashtable_find_element(&gen.program_translation.name_mapping, function_translation);
                 assert(fn_name != 0, "");
-                string_append_formated(gen.text, "(&%s)", fn_name->characters);
+                dynstring_append_formated(gen.text, "(&%s)", fn_name->characters);
             }
             break;
         }
@@ -1566,7 +1566,7 @@ void c_generator_output_constant_access(C_Generator* generator, Upp_Constant& co
             Datatype* element_type = downcast<Datatype_Slice>(type)->element_type;
             Upp_Slice_Base slice = *(Upp_Slice_Base*)base_memory;
             assert(slice.size == 0 && slice.data == nullptr, "");
-            string_append_formated(gen.text, "{.data = nullptr, .size = 0}");
+            dynstring_append_formated(gen.text, "{.data = nullptr, .size = 0}");
             break;
         }
         case Datatype_Type::ARRAY:
@@ -1636,16 +1636,16 @@ void c_generator_output_parameter_access(C_Generator* generator, Upp_Function* f
     translation.options.parameter.function = function;
     translation.options.parameter.index = parameter_index;
     {
-        String* name = hashtable_find_element(&gen.program_translation.name_mapping, translation);
+        DynString* name = hashtable_find_element(&gen.program_translation.name_mapping, translation);
         if (name != 0) {
             string_append(gen.text, name->characters);
             return;
         }
     }
 
-    String new_name = string_create(16);
+    DynString new_name = dynstring_create(16);
     auto& param = function->signature->parameters[parameter_index];
-    string_append_formated(&new_name, "%s_%d", param.name->characters, gen.name_counter);
+    dynstring_append_formated(&new_name, "%s_%d", param.name->characters, gen.name_counter);
     gen.name_counter++;
 
     hashtable_insert_element(&gen.program_translation.name_mapping, translation, new_name);
@@ -1663,23 +1663,23 @@ void c_generator_output_global_access(C_Generator* generator, int global_index)
     translation.type = C_Translation_Type::GLOBAL;
     translation.options.global_index = global_index;
     {
-        String* name = hashtable_find_element(&gen.program_translation.name_mapping, translation);
+        DynString* name = hashtable_find_element(&gen.program_translation.name_mapping, translation);
         if (name != 0) {
             string_append(gen.text, name->characters);
             return;
         }
     }
 
-    String new_name = string_create(16);
+    DynString new_name = dynstring_create(16);
     if (global->is_extern) {
         string_append(&new_name, global->symbol->id->characters);
     }
     else {
         if (global->symbol != 0) {
-            string_append_formated(&new_name, "%s_g%d", global->symbol->id->characters, gen.name_counter);
+            dynstring_append_formated(&new_name, "%s_g%d", global->symbol->id->characters, gen.name_counter);
         }
         else {
-            string_append_formated(&new_name, "global_%d", gen.name_counter);
+            dynstring_append_formated(&new_name, "global_%d", gen.name_counter);
         }
     }
     gen.name_counter++;
@@ -1702,7 +1702,7 @@ void c_generator_output_data_access(C_Generator* generator, IR_Data_Access* acce
         translation.options.register_translation.code_block = access->option.register_access.definition_block;
         translation.options.register_translation.index = access->option.register_access.index;
         {
-            String* name = hashtable_find_element(&gen.program_translation.name_mapping, translation);
+            DynString* name = hashtable_find_element(&gen.program_translation.name_mapping, translation);
             if (name != 0) {
                 string_append(gen.text, name->characters);
                 break;
@@ -1710,14 +1710,14 @@ void c_generator_output_data_access(C_Generator* generator, IR_Data_Access* acce
         }
 
         auto& reg = access->option.register_access.definition_block->registers[access->option.register_access.index];
-        String new_name = string_create(16);
+        DynString new_name = dynstring_create(16);
         if (reg.name.available) {
             string_append(&new_name, reg.name.value->characters);
         }
         else {
             string_append(&new_name, "tmp");
         }
-        string_append_formated(&new_name, "%_%d", gen.name_counter);
+        dynstring_append_formated(&new_name, "%_%d", gen.name_counter);
         gen.name_counter++;
 
         hashtable_insert_element(&gen.program_translation.name_mapping, translation, new_name);
@@ -1791,12 +1791,12 @@ void c_generator_output_data_access(C_Generator* generator, IR_Data_Access* acce
                 for (int j = 0; j < deref_count; j++) {
                     iter = iter->parent;
                 }
-                string_append_formated(gen.text, ".subtypes_.%s", iter->name->characters);
+                dynstring_append_formated(gen.text, ".subtypes_.%s", iter->name->characters);
             }
         }
 
         // Append member access
-        string_append_formated(gen.text, ".%s", member.name->characters);
+        dynstring_append_formated(gen.text, ".%s", member.name->characters);
 
         break;
     }
@@ -1822,9 +1822,9 @@ void c_generator_output_data_access(C_Generator* generator, IR_Data_Access* acce
     case IR_Data_Access_Type::NON_DESTRUCTIVE_CAST:
     {
         auto& infos = access->option.non_destructive_cast;
-        string_append_formated(gen.text, "(");
+        dynstring_append_formated(gen.text, "(");
         c_generator_output_type_reference(generator, access->datatype);
-        string_append_formated(gen.text, ") ");
+        dynstring_append_formated(gen.text, ") ");
         c_generator_output_data_access(generator, infos.value_access, add_parenthesis_on_pointer_ops);
         break;
     }
@@ -1846,9 +1846,9 @@ void c_generator_output_cast_if_necessary(C_Generator* generator, Datatype* dst_
 
     if (types_are_equal(dst_type, src_type)) return;
 
-    string_append_formated(gen.text, "(");
+    dynstring_append_formated(gen.text, "(");
     c_generator_output_type_reference(generator, dst_type);
-    string_append_formated(gen.text, ") ");
+    dynstring_append_formated(gen.text, ") ");
 }
 
 // define_registers_in_outer_scope is used for e.g. the while loop condition-block
@@ -1862,7 +1862,7 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
         if (!define_registers_in_outer_scope)
         {
             string_add_indentation(gen.text, indentation_level);
-            string_append_formated(gen.text, "{\n");
+            dynstring_append_formated(gen.text, "{\n");
         }
         for (int i = 0; i < code_block->registers.size; i++)
         {
@@ -1877,18 +1877,18 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
             }
             Datatype* sig = code_block->registers[i].type;
             c_generator_output_type_reference(generator, sig);
-            string_append_formated(gen.text, " ");
+            dynstring_append_formated(gen.text, " ");
 
             IR_Data_Access access;
             access.type = IR_Data_Access_Type::REGISTER;
             access.option.register_access.definition_block = code_block;
             access.option.register_access.index = i;
             c_generator_output_data_access(generator, &access);
-            string_append_formated(gen.text, ";\n");
+            dynstring_append_formated(gen.text, ";\n");
         }
         if (define_registers_in_outer_scope) {
             string_add_indentation(gen.text, indentation_level);
-            string_append_formated(gen.text, "{\n");
+            dynstring_append_formated(gen.text, "{\n");
         }
     }
 
@@ -1940,7 +1940,7 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
             }
             if (signature->return_type().available) {
                 c_generator_output_data_access(generator, call->destination);
-                string_append_formated(gen.text, " = ");
+                dynstring_append_formated(gen.text, " = ");
                 c_generator_output_cast_if_necessary(generator, call->destination->datatype, signature->return_type().value);
             }
 
@@ -1952,9 +1952,9 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
                 C_Translation fn_translation;
                 fn_translation.type = C_Translation_Type::FUNCTION;
                 fn_translation.options.function = call->options.function;
-                String* fn_name = hashtable_find_element(&gen.program_translation.name_mapping, fn_translation);
+                DynString* fn_name = hashtable_find_element(&gen.program_translation.name_mapping, fn_translation);
                 assert(fn_name != 0, "Hey");
-                string_append_formated(gen.text, fn_name->characters);
+                dynstring_append_formated(gen.text, fn_name->characters);
                 break;
             }
             case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL: {
@@ -1971,7 +1971,7 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
                     string_append(gen.text, "&type_infos_.infos[");
                     assert(call->arguments.size == 1, "");
                     c_generator_output_data_access(generator, call->arguments[0]);
-                    string_append_formated(gen.text, "];\n");
+                    dynstring_append_formated(gen.text, "];\n");
                     call_handled = true;
                     break;
                 }
@@ -1998,52 +1998,52 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
                 break;
             }
 
-            string_append_formated(gen.text, "(");
+            dynstring_append_formated(gen.text, "(");
             for (int j = 0; j < call->arguments.size; j++)
             {
                 // Add cast (Implemented because of signed char/char difference in C) // ? Is this comment outdated ?
                 c_generator_output_data_access(generator, call->arguments[j]);
                 if (j != call->arguments.size - 1) {
-                    string_append_formated(gen.text, ", ");
+                    dynstring_append_formated(gen.text, ", ");
                 }
             }
-            string_append_formated(gen.text, ");\n");
+            dynstring_append_formated(gen.text, ");\n");
             break;
         }
         case IR_Instruction_Type::MATCH:
         {
             IR_Instruction_Switch* switch_instr = &instr->options.switch_instr;
-            string_append_formated(gen.text, "switch ((int) ");
+            dynstring_append_formated(gen.text, "switch ((int) ");
             c_generator_output_data_access(generator, switch_instr->condition_access);
-            string_append_formated(gen.text, ")\n");
+            dynstring_append_formated(gen.text, ")\n");
             string_add_indentation(gen.text, indentation_level);
-            string_append_formated(gen.text, "{\n");
+            dynstring_append_formated(gen.text, "{\n");
             for (int i = 0; i < switch_instr->cases.size; i++)
             {
                 IR_Switch_Case* switch_case = &switch_instr->cases[i];
                 string_add_indentation(gen.text, indentation_level);
-                string_append_formated(gen.text, "case %d: \n", switch_case->value);
+                dynstring_append_formated(gen.text, "case %d: \n", switch_case->value);
                 c_generator_output_code_block(generator, switch_case->block, indentation_level + 1, false);
                 string_add_indentation(gen.text, indentation_level);
-                string_append_formated(gen.text, "break;\n");
+                dynstring_append_formated(gen.text, "break;\n");
             }
             string_add_indentation(gen.text, indentation_level);
-            string_append_formated(gen.text, "default:\n");
+            dynstring_append_formated(gen.text, "default:\n");
             c_generator_output_code_block(generator, switch_instr->default_block, indentation_level + 1, false);
             string_add_indentation(gen.text, indentation_level);
-            string_append_formated(gen.text, "}\n");
+            dynstring_append_formated(gen.text, "}\n");
             break;
         }
         case IR_Instruction_Type::IF:
         {
             IR_Instruction_If* if_instr = &instr->options.if_instr;
-            string_append_formated(gen.text, "if (");
+            dynstring_append_formated(gen.text, "if (");
             c_generator_output_data_access(generator, if_instr->condition);
-            string_append_formated(gen.text, ")\n");
+            dynstring_append_formated(gen.text, ")\n");
             c_generator_output_code_block(generator, if_instr->true_branch, indentation_level + 1, false);
             if (if_instr->false_branch->instructions.size != 0) {
                 string_add_indentation(gen.text, indentation_level + 1);
-                string_append_formated(gen.text, "else\n");
+                dynstring_append_formated(gen.text, "else\n");
                 c_generator_output_code_block(generator, if_instr->false_branch, indentation_level + 1, false);
             }
             break;
@@ -2051,15 +2051,15 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
         case IR_Instruction_Type::WHILE:
         {
             IR_Instruction_While* while_instr = &instr->options.while_instr;
-            string_append_formated(gen.text, "while(true){\n");
+            dynstring_append_formated(gen.text, "while(true){\n");
             c_generator_output_code_block(generator, while_instr->condition_code, indentation_level + 2, true);
             string_add_indentation(gen.text, indentation_level + 2);
-            string_append_formated(gen.text, "if(!(");
+            dynstring_append_formated(gen.text, "if(!(");
             c_generator_output_data_access(generator, while_instr->condition_access);
-            string_append_formated(gen.text, ")) break;\n");
+            dynstring_append_formated(gen.text, ")) break;\n");
             c_generator_output_code_block(generator, while_instr->code, indentation_level + 2, false);
             string_add_indentation(gen.text, indentation_level + 1);
-            string_append_formated(gen.text, "}\n");
+            dynstring_append_formated(gen.text, "}\n");
             break;
         }
         case IR_Instruction_Type::BLOCK:
@@ -2068,11 +2068,11 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
             break;
         }
         case IR_Instruction_Type::GOTO: {
-            string_append_formated(gen.text, "goto upp_label_%d;\n", instr->options.label_index);
+            dynstring_append_formated(gen.text, "goto upp_label_%d;\n", instr->options.label_index);
             break;
         }
         case IR_Instruction_Type::LABEL: {
-            string_append_formated(gen.text, "upp_label_%d: {}\n", instr->options.label_index);
+            dynstring_append_formated(gen.text, "upp_label_%d: {}\n", instr->options.label_index);
             break;
         }
         case IR_Instruction_Type::RETURN:
@@ -2087,18 +2087,18 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
                     string_append(gen.text, "std::cin.ignore();\n");
                     string_add_indentation(gen.text, indentation_level);
                 }
-                string_append_formated(gen.text, "exit(%d);\n", (i32)return_instr->options.exit_code.type);
+                dynstring_append_formated(gen.text, "exit(%d);\n", (i32)return_instr->options.exit_code.type);
                 break;
             }
             case IR_Instruction_Return_Type::RETURN_DATA: {
-                string_append_formated(gen.text, "return ");
+                dynstring_append_formated(gen.text, "return ");
                 c_generator_output_cast_if_necessary(generator, return_instr->options.return_value->datatype, code_block->function->signature->return_type().value);
                 c_generator_output_data_access(generator, return_instr->options.return_value);
-                string_append_formated(gen.text, ";\n");
+                dynstring_append_formated(gen.text, ";\n");
                 break;
             }
             case IR_Instruction_Return_Type::RETURN_EMPTY: {
-                string_append_formated(gen.text, "return;\n");
+                dynstring_append_formated(gen.text, "return;\n");
                 break;
             }
             default: panic("What");
@@ -2110,7 +2110,7 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
             auto& def = instr->options.variable_definition;
 
             c_generator_output_type_reference(generator, def.variable_access->datatype);
-            string_append_formated(gen.text, " ");
+            dynstring_append_formated(gen.text, " ");
             c_generator_output_data_access(generator, def.variable_access);
 
             if (def.initial_value.available) {
@@ -2124,24 +2124,24 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
         {
             IR_Instruction_Function_Address* addr_of = &instr->options.function_address;
             c_generator_output_data_access(generator, addr_of->destination);
-            string_append_formated(gen.text, " = ");
+            dynstring_append_formated(gen.text, " = ");
 
             C_Translation fn_translation;
             fn_translation.type = C_Translation_Type::FUNCTION;
             fn_translation.options.function = addr_of->function;
-            String* fn_name = hashtable_find_element(&gen.program_translation.name_mapping, fn_translation);
+            DynString* fn_name = hashtable_find_element(&gen.program_translation.name_mapping, fn_translation);
             assert(fn_name != 0, "HEY");
-            string_append_formated(gen.text, "&%s;\n", fn_name->characters);
+            dynstring_append_formated(gen.text, "&%s;\n", fn_name->characters);
             break;
         }
         case IR_Instruction_Type::MOVE:
         {
             auto& move = instr->options.move;
             c_generator_output_data_access(generator, move.destination);
-            string_append_formated(gen.text, " = ");
+            dynstring_append_formated(gen.text, " = ");
             c_generator_output_cast_if_necessary(generator, move.destination->datatype, move.source->datatype);
             c_generator_output_data_access(generator, move.source);
-            string_append_formated(gen.text, ";\n");
+            dynstring_append_formated(gen.text, ";\n");
             break;
         }
         case IR_Instruction_Type::OPERATION:
@@ -2162,10 +2162,10 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
             {
                 op_handled = true;
                 c_generator_output_data_access(generator, operation.destination);
-                string_append_formated(gen.text, " = ");
+                dynstring_append_formated(gen.text, " = ");
                 c_generator_output_cast_if_necessary(generator, operation.destination->datatype, operation.operand_1->datatype);
                 c_generator_output_data_access(generator, operation.operand_1);
-                string_append_formated(gen.text, ";\n");
+                dynstring_append_formated(gen.text, ";\n");
                 break;
             }
             case Primitive_Operation::HIGHEST_SET_BIT:
@@ -2190,10 +2190,10 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
                 c_generator_output_data_access(generator, operation.destination);
                 string_append(gen.text, " = ");
                 c_generator_output_cast_if_necessary(generator, operation.destination->datatype, function_value_datatype);
-                string_append_formated(gen.text, "%s%s(", fn_name, postfix);
+                dynstring_append_formated(gen.text, "%s%s(", fn_name, postfix);
                 c_generator_output_cast_if_necessary(generator, operation.operand_1->datatype, function_value_datatype);
                 c_generator_output_data_access(generator, operation.operand_1);
-                string_append_formated(gen.text, ");\n");
+                dynstring_append_formated(gen.text, ");\n");
                 break;
             }
 
@@ -2284,7 +2284,7 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
                 c_generator_output_data_access(generator, operation.operand_1);
                 string_append(gen.text, ")");
 
-                string_append_formated(gen.text, " %s ", binop_str);
+                dynstring_append_formated(gen.text, " %s ", binop_str);
 
                 string_append(gen.text, "(");
                 c_generator_output_cast_if_necessary(
@@ -2293,25 +2293,25 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
                 c_generator_output_data_access(generator, operation.operand_2);
                 string_append(gen.text, ")");
 
-                string_append_formated(gen.text, ";\n");
+                dynstring_append_formated(gen.text, ";\n");
             }
             else if (unop_str != nullptr)
             {
                 c_generator_output_data_access(generator, operation.destination);
-                string_append_formated(gen.text, " = ");
-                string_append_formated(gen.text, "%s", unop_str);
+                dynstring_append_formated(gen.text, " = ");
+                dynstring_append_formated(gen.text, "%s", unop_str);
                 c_generator_output_data_access(generator, operation.operand_1);
-                string_append_formated(gen.text, ";\n");
+                dynstring_append_formated(gen.text, ";\n");
             }
             else if (float_fn_name != nullptr)
             {
                 int param_count = ir_operation_parameter_count(operation.type);
                 c_generator_output_data_access(generator, operation.destination);
-                string_append_formated(gen.text, " = ");
-                string_append_formated(gen.text, "%s");
+                dynstring_append_formated(gen.text, " = ");
+                dynstring_append_formated(gen.text, "%s");
                 if (append_f_for_f32_version && downcast<Datatype_Primitive>(operation.operand_1->datatype)->primitive_type == Primitive_Type::F32)
                 {
-                    string_append_formated(gen.text, "f");
+                    dynstring_append_formated(gen.text, "f");
                 }
                 string_append(gen.text, "(");
                 c_generator_output_data_access(generator, operation.operand_1);
@@ -2319,7 +2319,7 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
                     string_append(gen.text, ", ");
                     c_generator_output_data_access(generator, operation.operand_2);
                 }
-                string_append_formated(gen.text, ");\n");
+                dynstring_append_formated(gen.text, ");\n");
             }
             else {
                 panic("operation was not handled");
@@ -2332,6 +2332,6 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
     }
 
     string_add_indentation(gen.text, indentation_level);
-    string_append_formated(gen.text, "}\n");
+    dynstring_append_formated(gen.text, "}\n");
 }
 

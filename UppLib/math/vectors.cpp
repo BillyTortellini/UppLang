@@ -326,7 +326,7 @@ vec4 vec4_color_from_rgb(u8 r, u8 g, u8 b) {
 
 vec4 vec4_color_from_code(const char* c_str)
 {
-	String str = string_create_static(c_str);
+	DynString str = string_create_static(c_str);
 	auto get_hex_digit_value = [](char c) -> int {
 		if (c >= '0' && c <= '9') return c - '0';
 		if (c >= 'a' && c <= 'f') return 10 + c - 'a';

@@ -21,13 +21,13 @@
 
 #include <Windows.h>
 
-typedef void (*file_change_callback_fn)(void* userdata, String filepath);
+typedef void (*file_change_callback_fn)(void* userdata, DynString filepath);
 
 struct Monitored_Directory;
 
 struct Monitored_File
 {
-    String filename;
+    DynString filename;
     Monitored_Directory* directory;
     file_change_callback_fn callback_fn;
     void* userdata;
@@ -36,7 +36,7 @@ struct Monitored_File
 
 struct Monitored_Directory
 {
-    String path; // Full undecorated path to directory without trailing /
+    DynString path; // Full undecorated path to directory without trailing /
     HANDLE listener;
     DynSet<Monitored_File*> files; // Filename to monitored mapping
 };
@@ -56,12 +56,12 @@ File_Change_Listener file_change_listener_create(Arena* arena)
 }
 
 // Returns nullptr if file does not exist or file is already beeing watched
-Monitored_File* file_change_listener_add_file(File_Change_Listener* listener, String filepath)
+Monitored_File* file_change_listener_add_file(File_Change_Listener* listener, DynString filepath)
 {
     SCRATCH_ARENA_MAKE_SCOPED(listener->arena);
 
     // Extract infos from path
-    String path_copy = string_copy(filepath, scratch_arena);
+    DynString path_copy = dynstring_copy(filepath, scratch_arena);
     // file_io_relative_to_full_path(&path_copy);
     // string_create_from_filepath_to_path_and_filename
     return nullptr;
@@ -81,7 +81,7 @@ struct GRX_Shader;
 struct GRX_Shader
 {
     GRX_Core* core;
-    String filename; // Filename in shader directory
+    DynString filename; // Filename in shader directory
     GLint program_id; // If success
     Watched_File* watched_file;
 };
@@ -94,17 +94,17 @@ struct GRX_Core
     bool logging_enabled;
 
     // Shaders
-    String shader_directory;
+    DynString shader_directory;
     DynArray<GRX_Shader> shaders;
 };
 
-void grx_core_log(GRX_Core* core, String msg)
+void grx_core_log(GRX_Core* core, DynString msg)
 {
     if (!core->logging_enabled) return;
     printf("GRX_Core log: %.*s\n", msg.size, msg.characters);
 }
 
-void grx_core_log(GRX_Core* core, String* msg){
+void grx_core_log(GRX_Core* core, DynString* msg){
     grx_core_log(core, *msg);
 }
 
@@ -112,18 +112,18 @@ void grx_core_log_cstring(GRX_Core* core, const char* msg) {
     grx_core_log(core, string_create_static(msg));
 }
 
-void grx_core_initialize(GRX_Core* core, Arena* arena, Window* window, File_Listener* file_listener, String shader_directory)
+void grx_core_initialize(GRX_Core* core, Arena* arena, Window* window, File_Listener* file_listener, DynString shader_directory)
 {
     core->arena = arena;
     core->window = window;
     core->file_listener = file_listener;
-    core->shader_directory = string_copy(shader_directory, arena);
+    core->shader_directory = dynstring_copy(shader_directory, arena);
     core->logging_enabled = true;
 
     Arena tmp_arena_stack = Arena::create();
     Arena* tmp_arena = &tmp_arena_stack;
     SCOPE_EXIT(tmp_arena->destroy());
-    String tmp_string = string_create(tmp_arena);
+    DynString tmp_string = dynstring_create(tmp_arena);
 
     // Load all shaders from folder
     {

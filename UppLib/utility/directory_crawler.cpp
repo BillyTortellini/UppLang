@@ -8,7 +8,7 @@
 #include "../win32/windows_helper_functions.hpp"
 
 struct Directory_Crawler {
-    String path;
+    DynString path;
     Dynamic_Array<Directory_Item> file_infos;
     bool path_changed;
 };
@@ -16,7 +16,7 @@ struct Directory_Crawler {
 Directory_Crawler* directory_crawler_create()
 {
     Directory_Crawler* result = new Directory_Crawler();
-    result->path = string_create(".");
+    result->path = dynstring_create(".");
     result->path_changed = true;
     result->file_infos = dynamic_array_create<Directory_Item>();
     directory_crawler_set_to_working_directory(result);
@@ -32,18 +32,18 @@ void directory_crawler_destroy(Directory_Crawler* crawler) {
     delete crawler;
 }
 
-void directory_crawler_set_path(Directory_Crawler* crawler, String path)
+void directory_crawler_set_path(Directory_Crawler* crawler, DynString path)
 {
-    string_reset(&crawler->path);
+    dynstring_reset(&crawler->path);
     string_append_string(&crawler->path, &path);
     filepath_relative_to_absolute_path(&crawler->path);
     crawler->path_changed = true;
 }
 
-void directory_crawler_set_path_to_file_dir(Directory_Crawler* crawler, String file_path) 
+void directory_crawler_set_path_to_file_dir(Directory_Crawler* crawler, DynString file_path) 
 {
     auto& path = crawler->path;
-    string_reset(&path);
+    dynstring_reset(&path);
     string_append_string(&path, &file_path);
     int trim_pos = 0;
     auto last_slash = string_find_character_index_reverse(&path, '/', path.size - 1);
@@ -53,31 +53,31 @@ void directory_crawler_set_path_to_file_dir(Directory_Crawler* crawler, String f
     if (last_slash.available) {
         trim_pos = last_slash.value;
     }
-    string_truncate(&path, trim_pos);
+    dynstring_truncate(&path, trim_pos);
     filepath_relative_to_absolute_path(&path);
     crawler->path_changed = true;
 }
 
 void directory_crawler_set_to_working_directory(Directory_Crawler* crawler) {
     int path_length = GetCurrentDirectory(0, 0);
-    String path = string_create(path_length);
+    DynString path = dynstring_create(path_length);
     SCOPE_EXIT(string_destroy(&path));
     int written_string_length = GetCurrentDirectory(path.capacity, path.characters);
     string_replace_character(&path, '\\', '/');
     directory_crawler_set_path(crawler, path);
 }
 
-String directory_crawler_get_path(Directory_Crawler* crawler) {
+DynString directory_crawler_get_path(Directory_Crawler* crawler) {
     return crawler->path;
 }
 
 bool directory_crawler_go_up_one_directory(Directory_Crawler* crawler) {
-    String* path = &crawler->path;
+    DynString* path = &crawler->path;
     Optional<int> last_pos = string_find_character_index_reverse(path, '/', path->size-1);
     if (!last_pos.available) {
         return false;
     }
-    string_truncate(path, last_pos.value);
+    dynstring_truncate(path, last_pos.value);
     return true;
 }
 
@@ -86,7 +86,7 @@ bool directory_crawler_go_down_one_directory(Directory_Crawler* crawler, int dir
     if (dir_index < 0 || dir_index >= files.size) return false;
     auto file = files[dir_index];
     if (!file.is_directory) return false;
-    string_append_formated(&crawler->path, "/%s", file.filename.characters);
+    dynstring_append_formated(&crawler->path, "/%s", file.filename.characters);
     crawler->path_changed = true;
     return true;
 }
@@ -106,7 +106,7 @@ Array<Directory_Item> directory_crawler_get_content(Directory_Crawler* crawler)
     HANDLE search_handle;
     WIN32_FIND_DATA found_file_description;
     {
-        String search_path = string_create_from_string_with_extra_capacity(&crawler->path, 3);
+        DynString search_path = string_create_from_string_with_extra_capacity(&crawler->path, 3);
         SCOPE_EXIT(string_destroy(&search_path));
         string_append(&search_path, "/*");
         search_handle = FindFirstFile(search_path.characters, &found_file_description);
@@ -120,7 +120,7 @@ Array<Directory_Item> directory_crawler_get_content(Directory_Crawler* crawler)
         Directory_Item info;
         info.is_directory = found_file_description.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY;
         info.size = found_file_description.nFileSizeHigh * (((i64)MAXDWORD)+1) + found_file_description.nFileSizeLow;
-        info.filename = string_create(found_file_description.cFileName);
+        info.filename = dynstring_create(found_file_description.cFileName);
         dynamic_array_push_back(&crawler->file_infos, info);
     } while (FindNextFile(search_handle, &found_file_description) != 0);
 

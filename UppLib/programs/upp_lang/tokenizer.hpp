@@ -148,20 +148,20 @@ struct Token
     {
         i64 integer_value;
         f64 float_value;
-        String* string_value; // Set to null without further processing
+        DynString* string_value; // Set to null without further processing
     } options; 
 };
 
 Token token_make(Token_Type type, int start, int end, int line);
 
-void tokenizer_tokenize_single_line(String text, DynArray<Token>* tokens, int line_index, bool remove_comments);
+void tokenizer_tokenize_single_line(DynString text, DynArray<Token>* tokens, int line_index, bool remove_comments);
 DynArray<Token> tokenize_partial_code(
     Source_Code* code, Text_Index index, Arena* arena, int& token_index, bool handle_line_continuations, bool remove_comments);
 
 // Returns start/end index (Inclusive), -1 if not found
 bool source_line_tokens_may_connect(Source_Code* code, int first_line_index, Arena* arena, int& nearby_bundle_index);
 ivec2 tokens_get_parenthesis_range(DynArray<Token> tokens, int start, Token_Type type, Arena* arena);
-void tokenizer_parse_string_literal(String literal, String* append_to);
+void tokenizer_parse_string_literal(DynString literal, DynString* append_to);
 
 Token_Class token_type_get_class(Token_Type type);
 bool token_type_is_operator(Token_Type type);

@@ -10,7 +10,7 @@ const int BUNDLE_MAX_SIZE = 500;
 const int BUNDLE_MERGE_THRESHHOLD = 300; // If a bundle can merge with a neighbor bundle into another bundle with fewer than these lines, it will do so
 
 // PROTOTYPES
-void source_text_remove_invalid_whitespaces(String& text);
+void source_text_remove_invalid_whitespaces(DynString& text);
 
 void add_first_bundle_and_line(Source_Code* code)
 {
@@ -19,7 +19,7 @@ void add_first_bundle_and_line(Source_Code* code)
     first_bundle.lines = dynamic_array_create<Source_Line>();
 
     Source_Line first_line;
-    first_line.text = string_create();
+    first_line.text = dynstring_create();
     first_line.item_infos = dynamic_array_create<Editor_Info_Reference>();
 
     dynamic_array_push_back(&first_bundle.lines, first_line);
@@ -51,7 +51,7 @@ Source_Code* source_code_copy(Source_Code* copy_from)
         bundle.lines = dynamic_array_create_copy<Source_Line>(bundle.lines.data, bundle.lines.size);
         for (int j = 0; j < bundle.lines.size; j++) {
             auto& line = bundle.lines[j];
-            line.text = string_copy(line.text);
+            line.text = dynstring_copy(line.text);
             line.item_infos = dynamic_array_create_copy(line.item_infos.data, line.item_infos.size);
         }
     }
@@ -191,7 +191,7 @@ Source_Line* source_code_insert_line(Source_Code* code, int new_line_index)
         assert(index_in_bundle <= bundle->lines.size, "");
 
         Source_Line line;
-        line.text = string_create();
+        line.text = dynstring_create();
         line.item_infos = dynamic_array_create<Editor_Info_Reference>();
         dynamic_array_insert_ordered(&bundle->lines, line, index_in_bundle);
     }
@@ -213,7 +213,7 @@ void source_code_remove_line(Source_Code* code, int line_index)
     // Don't remove line if only one line exists
     if (code->line_count <= 1) {
         auto& line = code->bundles[0].lines[0];
-        string_reset(&line.text);
+        dynstring_reset(&line.text);
         return;
     }
 
@@ -264,7 +264,7 @@ void source_code_remove_line(Source_Code* code, int line_index)
 }
 
 // Loading/Writing from file
-void source_code_fill_from_string(Source_Code* code, String text)
+void source_code_fill_from_string(Source_Code* code, DynString text)
 {
     // Reset
     source_code_reset(code);
@@ -285,7 +285,7 @@ void source_code_fill_from_string(Source_Code* code, String text)
         }
 
         Source_Line* line = source_code_insert_line(code, code->line_count);
-        String substring = string_create_substring_static(&text, line_start_index, line_end_index);
+        DynString substring = string_create_substring_static(&text, line_start_index, line_end_index);
         int sub_index = 0;
         while (sub_index < substring.size && substring[sub_index] == '\t') {
             line->text.append("    ");
@@ -303,7 +303,7 @@ void source_code_fill_from_string(Source_Code* code, String text)
     }
 }
 
-void source_code_append_to_string(Source_Code* code, String* text) 
+void source_code_append_to_string(Source_Code* code, DynString* text) 
 {
     for (int i = 0; i < code->bundles.size; i++)
     {
@@ -311,15 +311,15 @@ void source_code_append_to_string(Source_Code* code, String* text)
         for (int j = 0; j < bundle.lines.size; j++) {
             Source_Line& line = bundle.lines[j];
             string_append_string(text, &line.text);
-            string_append_formated(text, "\n");
+            dynstring_append_formated(text, "\n");
         }
     }
 }
 
-Source_Code* source_code_load_from_file(String filepath)
+Source_Code* source_code_load_from_file(DynString filepath)
 {
     SCRATCH_ARENA_MAKE_SCOPED(nullptr);
-	Optional<String> file_content = file_io_load_text_file(filepath, scratch_arena);
+	Optional<DynString> file_content = file_io_load_text_file(filepath, scratch_arena);
 	if (!file_content.available) {
 	    return nullptr;
 	}
@@ -330,7 +330,7 @@ Source_Code* source_code_load_from_file(String filepath)
 }
 
 // Utils
-void source_text_remove_invalid_whitespaces(String& text)
+void source_text_remove_invalid_whitespaces(DynString& text)
 {
     int index = 0;
     while (index < text.size)

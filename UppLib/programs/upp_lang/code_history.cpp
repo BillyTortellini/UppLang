@@ -272,7 +272,7 @@ Code_Change code_change_create_empty(Code_Change_Type type, bool apply_forwards)
 
 
 // Public interface
-void history_insert_text(Code_History* history, Text_Index index, String string)
+void history_insert_text(Code_History* history, Text_Index index, DynString string)
 {
     if (string.size == 0) {
         return;
@@ -284,7 +284,7 @@ void history_insert_text(Code_History* history, Text_Index index, String string)
 
     auto change = code_change_create_empty(Code_Change_Type::TEXT_INSERT, true);
     change.options.text_insert.index = index;
-    change.options.text_insert.text = string_copy(string);
+    change.options.text_insert.text = dynstring_copy(string);
     history_insert_and_apply_change(history, change);
 }
 
@@ -340,7 +340,7 @@ void history_insert_line(Code_History* history, int line_index)
     history_insert_and_apply_change(history, change);
 }
 
-void history_insert_line_with_text(Code_History* history, int line_index, String string)
+void history_insert_line_with_text(Code_History* history, int line_index, DynString string)
 {
     history_start_complex_command(history);
     SCOPE_EXIT(history_stop_complex_command(history));
@@ -517,7 +517,7 @@ void code_change_apply(Source_Code* code, Code_Change* change, bool forwards, Ed
     {
         char char_buffer[] = { 0, 0 };
         Text_Index pos;
-        String str;
+        DynString str;
         if (change->type == Code_Change_Type::TEXT_INSERT) {
             pos = change->options.text_insert.index;
             str = change->options.text_insert.text;
@@ -557,7 +557,7 @@ void code_change_apply(Source_Code* code, Code_Change* change, bool forwards, Ed
         }
         else 
         {
-            string_remove_substring(&line->text, pos.character, pos.character + str.size);
+            dynstring_remove_substring(&line->text, pos.character, pos.character + str.size);
 
             // Update line-item ranges
             int start = pos.character;

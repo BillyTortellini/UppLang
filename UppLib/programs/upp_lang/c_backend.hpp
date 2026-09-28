@@ -10,7 +10,7 @@ struct C_Generator;
 struct C_Compiler;
 struct IR_Code_Block;
 struct Datatype;
-struct String;
+struct DynString;
 struct Upp_Function;
 struct Compilation_Data;
 
@@ -66,10 +66,10 @@ struct C_Line_Info
 
 struct C_Program_Translation
 {
-    String source_code;
+    DynString source_code;
     int line_offset; // Our line-indices start at 0, and the function-implementation starts at an offset
     Dynamic_Array<C_Line_Info> line_infos;
-    Hashtable<C_Translation, String> name_mapping;
+    Hashtable<C_Translation, DynString> name_mapping;
 };
 
 

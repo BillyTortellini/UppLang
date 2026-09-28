@@ -3,7 +3,7 @@
 #include <Windows.h>
 #include "windows_helper_functions.hpp"
 
-Optional<Process_Result> process_start(String command)
+Optional<Process_Result> process_start(DynString command)
 {
     HANDLE handle_stdout_read = 0;
     HANDLE handle_stdout_write = 0;
@@ -86,7 +86,7 @@ Optional<Process_Result> process_start(String command)
 
     // Read from child
     Process_Result result;
-    result.output = string_create(1024);
+    result.output = dynstring_create(1024);
     char buffer[1024];
     DWORD read_bytes = 0;
     while (true)
@@ -113,7 +113,7 @@ Optional<Process_Result> process_start(String command)
     return optional_make_success(result);
 }
 
-int process_start_no_pipes(String command, bool wait_for_exit)
+int process_start_no_pipes(DynString command, bool wait_for_exit)
 {
     STARTUPINFO start_info;
     ZeroMemory(&start_info, sizeof(start_info));

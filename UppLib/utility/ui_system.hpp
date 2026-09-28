@@ -112,7 +112,7 @@ struct Button_Input
 
 struct Text_Input_State {
 	bool text_was_changed;
-	String new_text;
+	DynString new_text;
 	Widget_Handle handle;
 };
 
@@ -129,11 +129,11 @@ struct Dropdown_State
 	bool value_was_changed;
 };
 
-Widget_Handle ui_system_push_label(String text, bool restrain_label_size);
+Widget_Handle ui_system_push_label(DynString text, bool restrain_label_size);
 Widget_Handle ui_system_push_label(const char* text, bool restrain_label_size);
 void ui_system_push_next_component_label(const char* label_text);
 Button_Input ui_system_push_button(const char* label_text);
-Text_Input_State ui_system_push_text_input(String text);
+Text_Input_State ui_system_push_text_input(DynString text);
 int ui_system_push_int_input(int value);
 float ui_system_push_float_input(float value);
 
@@ -141,7 +141,7 @@ bool ui_system_push_icon_button(UI_Icon icon, bool draw_background, Widget_Handl
 bool ui_system_push_checkbox_style(bool enabled, UI_Icon enabled_icon, UI_Icon disabled_icon, bool draw_background);
 bool ui_system_push_checkbox(bool enabled);
 UI_Subsection_Info ui_system_push_subsection(bool enabled, const char* section_name, bool own_scrollbar);
-void ui_system_push_dropdown(Dropdown_State& state, Array<String> possible_values);
+void ui_system_push_dropdown(Dropdown_State& state, Array<DynString> possible_values);
 Container_Handle ui_system_push_line_container();
 Container_Handle ui_system_push_indented_container(int indent_count, bool draw_background, vec3 bg_color);
 

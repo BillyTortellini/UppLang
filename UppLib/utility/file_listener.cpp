@@ -9,7 +9,7 @@
 
 struct Watched_File
 {
-    String filepath;
+    DynString filepath;
     file_listener_callback_func callback;
     u64 last_write_time;
     void* userdata;
@@ -29,7 +29,7 @@ Watched_File* watched_file_create(const char* filepath, file_listener_callback_f
     // Add file to file listener list
     Watched_File* file = new Watched_File();
     file->callback = callback;
-    file->filepath = string_create(filepath);
+    file->filepath = dynstring_create(filepath);
     file->last_write_time = file_info.last_write_access_time;
     file->userdata = userdata;
     return file;

@@ -135,7 +135,7 @@ struct IR_Register
 {
     Datatype* type;
     bool has_definition_instruction;
-    Optional<String*> name; // If it's a variable
+    Optional<DynString*> name; // If it's a variable
 };
 
 struct IR_Code_Block
@@ -293,8 +293,8 @@ void ir_code_block_destroy(IR_Code_Block* block);
 void ir_generator_finish(Compilation_Data* compilation_data);
 void ir_generator_generate_function(Upp_Function* function, Compilation_Data* compilation_data);
 
-void ir_program_append_to_string(String* string, bool print_generated_functions, Compilation_Data* compilation_data);
-void ir_instruction_append_to_string(IR_Instruction* instruction, String* string, int indentation, IR_Code_Block* code_block, Compilation_Data* compilation_data);
+void ir_program_append_to_string(DynString* string, bool print_generated_functions, Compilation_Data* compilation_data);
+void ir_instruction_append_to_string(IR_Instruction* instruction, DynString* string, int indentation, IR_Code_Block* code_block, Compilation_Data* compilation_data);
 
 const char* ir_operation_as_string(Primitive_Operation operation);
 Primitive_Operation ast_binop_to_ir_operation(AST::Binop binop);

@@ -275,7 +275,7 @@ enum class Shader_Datatype
     TEXTURE_2D_BINDING
 };
 
-String shader_datatype_as_string(Shader_Datatype type);
+DynString shader_datatype_as_string(Shader_Datatype type);
 
 struct Shader_Datatype_Info
 {

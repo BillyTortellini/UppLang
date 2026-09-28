@@ -103,7 +103,7 @@ union Token_Attribute
     int integer_value;
     float float_value;
     bool bool_value;
-    String* id;
+    DynString* id;
 };
 
 struct C_Token
@@ -119,7 +119,7 @@ struct Identifier_Pool;
 struct C_Lexer
 {
     Identifier_Pool* id_pool;
-    Hashtable<String, C_Token_Type> keywords;
+    Hashtable<DynString, C_Token_Type> keywords;
     Dynamic_Array<C_Token> tokens;
     Dynamic_Array<C_Token> tokens_with_decoration; // Includes comments and whitespaces
 };
@@ -129,5 +129,5 @@ const char* token_type_to_string(C_Token_Type type);
 
 C_Lexer c_lexer_create();
 void c_lexer_destroy(C_Lexer* result);
-void c_lexer_lex(C_Lexer* lexer, String* code, Identifier_Pool* pool);
+void c_lexer_lex(C_Lexer* lexer, DynString* code, Identifier_Pool* pool);
 void c_lexer_print(C_Lexer* result);

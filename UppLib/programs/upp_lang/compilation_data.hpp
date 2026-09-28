@@ -57,7 +57,7 @@ struct Code_Error
 // COMPILATION_DATA
 struct Compilation_Unit
 {
-    String filepath; // For deduplication, full-filepath, owned by this structure
+    DynString filepath; // For deduplication, full-filepath, owned by this structure
 
     // All data may be nullptr until loaded...
     Source_Code* code; // Nullptr if file does not exist?
@@ -143,7 +143,7 @@ struct Compilation_Data
 Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool);
 void compilation_data_destroy(Compilation_Data* data);
 
-Compilation_Unit* compilation_data_add_compilation_unit_unique(Compilation_Data* compilation_data, String filepath, bool load_file_if_new, bool parse_ast);
+Compilation_Unit* compilation_data_add_compilation_unit_unique(Compilation_Data* compilation_data, DynString filepath, bool load_file_if_new, bool parse_ast);
 void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Unit* main_unit, Compile_Type compile_type);
 void compilation_data_update_source_code_information(Compilation_Data* compilation_data);
 Exit_Code compiler_execute(Compilation_Data* compilation_data);
@@ -230,13 +230,13 @@ Call_Signature* call_signature_create_empty();
 void call_signature_destroy(Call_Signature* signature);
 // Note: Returned pointer is invalidated if another parameter is added
 Call_Parameter* call_signature_add_parameter(
-    Call_Signature* signature, String* name, Datatype* datatype, 
+    Call_Signature* signature, DynString* name, Datatype* datatype, 
     bool required, bool requires_named_addressing, bool must_not_be_set);
 
 Call_Parameter* call_signature_add_return_type(Call_Signature* signature, Datatype* datatype, Compilation_Data* compilation_data);
 // Takes ownership of signature, returns deduplicated signature
 Call_Signature* call_signature_register(Call_Signature* signature, Compilation_Data* compilation_data); 
-void call_signature_append_to_string(Call_Signature* signature, String* string, Type_System* type_system, Datatype_Format format);
+void call_signature_append_to_string(Call_Signature* signature, DynString* string, Type_System* type_system, Datatype_Format format);
 
 
 

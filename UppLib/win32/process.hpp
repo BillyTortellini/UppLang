@@ -5,11 +5,11 @@
 struct Process_Result
 {
     int exit_code;
-    String output;
+    DynString output;
 };
 
-Optional<Process_Result> process_start(String command);
-int process_start_no_pipes(String command, bool wait_for_exit);
+Optional<Process_Result> process_start(DynString command);
+int process_start_no_pipes(DynString command, bool wait_for_exit);
 void process_result_destroy(Optional<Process_Result>* result);
 
 struct Thread_Handle
