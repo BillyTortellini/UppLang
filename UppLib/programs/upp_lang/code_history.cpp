@@ -11,27 +11,20 @@
 // Also strings are currently copied, and char inserts are also strings, but since we don't need resizable strings
 // we could just store them in a stack allocator with offset
 
-// Helpers
-void code_change_destroy(Code_Change* change)
-{
-    if (change->type == Code_Change_Type::TEXT_INSERT) {
-        string_destroy(&change->options.text_insert.text);
-    }
-}
-
 // Code History
-Code_History code_history_create(Editor_Tab* editor_tab)
+Code_History* code_history_create(Editor_Tab* editor_tab)
 {
-    Code_History result;
-    result.nodes = dynamic_array_create<History_Node>(1);
-    result.tab = editor_tab;
-    code_history_reset(&result);
+    Code_History* result = new Code_History;
+    result->arena = Arena::create();
+    result->tab = editor_tab;
+    code_history_reset(result);
     return result;
 }
 
 void code_history_reset(Code_History* history)
 {
-    dynamic_array_reset(&history->nodes);
+    history->arena.reset();
+    history->nodes = DynArray<History_Node>::create(&history->arena);
     {
         History_Node root;
         root.type = History_Node_Type::NORMAL;
@@ -40,7 +33,7 @@ void code_history_reset(Code_History* history)
         root.alt_change = -1;
         root.complex_partner = -1;
         root.cursor_index = optional_make_success(text_index_make(0, 0));
-        dynamic_array_push_back(&history->nodes, root);
+        history->nodes.push_back(root);
     }
     history->current = 0;
     history->complex_level = 0;
@@ -49,10 +42,8 @@ void code_history_reset(Code_History* history)
 
 void code_history_destroy(Code_History* history)
 {
-    for (int i = 0; i < history->nodes.size; i++) {
-        code_change_destroy(&history->nodes[i].change);
-    }
-    dynamic_array_destroy(&history->nodes);
+    history->arena.destroy();
+    delete history;
 }
 
 void code_history_sanity_check(Code_History* history)
@@ -132,7 +123,7 @@ int history_insert_and_apply_change(Code_History* history, Code_Change change)
     current_node.next_change = change_index;
 
     history->current = history->nodes.size;
-    dynamic_array_push_back(&history->nodes, node);
+    history->nodes.push_back(node);
     code_change_apply(history->tab->code, &history->nodes[change_index].change, true, history->tab);
     return change_index;
 }
@@ -272,7 +263,7 @@ Code_Change code_change_create_empty(Code_Change_Type type, bool apply_forwards)
 
 
 // Public interface
-void history_insert_text(Code_History* history, Text_Index index, DynString string)
+void history_insert_text(Code_History* history, Text_Index index, String string)
 {
     if (string.size == 0) {
         return;
@@ -284,7 +275,7 @@ void history_insert_text(Code_History* history, Text_Index index, DynString stri
 
     auto change = code_change_create_empty(Code_Change_Type::TEXT_INSERT, true);
     change.options.text_insert.index = index;
-    change.options.text_insert.text = dynstring_copy(string);
+    change.options.text_insert.text = string_allocate_copy(string, history->arena.upcast());
     history_insert_and_apply_change(history, change);
 }
 
@@ -299,14 +290,16 @@ void history_delete_text(Code_History* history, Text_Index index, int char_end)
         return;
     }
 
-    auto& text = source_code_get_line(history->tab->code, index.line)->text;
+    SCRATCH_ARENA_MAKE_SCOPED(&history->arena);
+    DynString text = DynString::create(scratch_arena);
+    source_code_line_append_to_string(history->tab->code, index.line, &text);
     assert(index.character >= 0 && index.character <= text.size, "");
     assert(char_end >= 0 && char_end <= text.size, "");
     assert(index.character < char_end, "");
 
     auto change = code_change_create_empty(Code_Change_Type::TEXT_INSERT, false);
     change.options.text_insert.index = index;
-    change.options.text_insert.text = string_create_substring(&text, index.character, char_end);
+    change.options.text_insert.text = string_allocate_copy(string_make_substring(text.to_string(), index.character, char_end), history->arena.upcast());
     history_insert_and_apply_change(history, change);
 }
 
@@ -320,12 +313,14 @@ void history_insert_char(Code_History* history, Text_Index index, char c)
 
 void history_delete_char(Code_History* history, Text_Index index) 
 {
-    auto& text = source_code_get_line(history->tab->code, index.line)->text;
+    SCRATCH_ARENA_MAKE_SCOPED(&history->arena);
+    DynString text = DynString::create(scratch_arena);
+    source_code_line_append_to_string(history->tab->code, index.line, &text);
     assert(index.character >= 0 && index.character < text.size, "");
 
     auto change = code_change_create_empty(Code_Change_Type::CHAR_INSERT, false);
     change.options.char_insert.index = index;
-    change.options.char_insert.c = text.characters[index.character];
+    change.options.char_insert.c = text[index.character];
     history_insert_and_apply_change(history, change);
 }
 
@@ -334,13 +329,13 @@ void history_delete_char(Code_History* history, Text_Index index)
 // LINES
 void history_insert_line(Code_History* history, int line_index)
 {
-    assert(line_index >= 0 && line_index <= history->tab->code->line_count, "");
+    assert(line_index >= 0 && line_index <= history->tab->code->lines.size, "");
     auto change = code_change_create_empty(Code_Change_Type::LINE_INSERT, true);
     change.options.line_insert.line_index = line_index;
     history_insert_and_apply_change(history, change);
 }
 
-void history_insert_line_with_text(Code_History* history, int line_index, DynString string)
+void history_insert_line_with_text(Code_History* history, int line_index, String string)
 {
     history_start_complex_command(history);
     SCOPE_EXIT(history_stop_complex_command(history));
@@ -350,20 +345,20 @@ void history_insert_line_with_text(Code_History* history, int line_index, DynStr
 
 void history_remove_line(Code_History* history, int line_index)
 {
-    Source_Line* line = source_code_get_line(history->tab->code, line_index);
+    int line_size = source_code_line_get_size(history->tab->code, line_index);
 
     // Cannot remove last line, in this case the line get's emptied
-    if (history->tab->code->line_count == 1) {
+    if (history->tab->code->lines.size == 1) {
         assert(line_index == 0, "");
-        if (line->text.size == 0) {
+        if (line_size == 0) {
             return;
         }
-        history_delete_text(history, text_index_make(0, 0), line->text.size);
+        history_delete_text(history, text_index_make(0, 0), line_size);
         return;
     }
 
     // Do simple line-removal if line is empty
-    if (line->text.size == 0) {
+    if (line_size == 0) {
         auto change = code_change_create_empty(Code_Change_Type::LINE_INSERT, false);
         change.options.line_insert.line_index = line_index;
         history_insert_and_apply_change(history, change);
@@ -373,7 +368,7 @@ void history_remove_line(Code_History* history, int line_index)
     // Otherwise clear line so that it get's restored on undo
     history_start_complex_command(history);
     SCOPE_EXIT(history_stop_complex_command(history));
-    history_delete_text(history, text_index_make(line_index, 0), line->text.size);
+    history_delete_text(history, text_index_make(line_index, 0), line_size);
 
     // Remove line
     auto change = code_change_create_empty(Code_Change_Type::LINE_INSERT, false);
@@ -481,6 +476,9 @@ void code_change_apply(Source_Code* code, Code_Change* change, bool forwards, Ed
         apply_change_forward = !apply_change_forward;
     }
 
+    SCRATCH_ARENA_MAKE_SCOPED(&code->arena);
+    DynString tmp_string = DynString::create(scratch_arena);
+
     switch (change->type)
     {
     case Code_Change_Type::LINE_INSERT:
@@ -489,7 +487,7 @@ void code_change_apply(Source_Code* code, Code_Change* change, bool forwards, Ed
         int line_index = insert.line_index;
         if (apply_change_forward) 
         {
-            assert(insert.line_index >= 0 && insert.line_index <= code->line_count, "");
+            assert(insert.line_index >= 0 && insert.line_index <= code->lines.size, "");
             if (editor_tab != nullptr) {
                 Text_Editing::update_editor_data_before_line_insert(editor_tab, line_index);
             }
@@ -500,7 +498,7 @@ void code_change_apply(Source_Code* code, Code_Change* change, bool forwards, Ed
         }
         else 
         {
-            assert(insert.line_index >= 0 && insert.line_index < code->line_count, "");
+            assert(insert.line_index >= 0 && insert.line_index < code->lines.size, "");
             if (editor_tab != nullptr) {
                 Text_Editing::update_editor_data_before_line_delete(editor_tab, line_index);
             }
@@ -515,19 +513,16 @@ void code_change_apply(Source_Code* code, Code_Change* change, bool forwards, Ed
     case Code_Change_Type::CHAR_INSERT:
     case Code_Change_Type::TEXT_INSERT:
     {
-        char char_buffer[] = { 0, 0 };
         Text_Index pos;
-        DynString str;
+        String str;
         if (change->type == Code_Change_Type::TEXT_INSERT) {
             pos = change->options.text_insert.index;
             str = change->options.text_insert.text;
         } 
         else {
             pos = change->options.char_insert.index;
-            char_buffer[0] = change->options.char_insert.c;
-            str = string_create_static(char_buffer);
+            str = string_make(&change->options.char_insert.c, 1);
         }
-
 
         if (editor_tab != nullptr) {
             Text_Editing::update_editor_data_before_text_insert(editor_tab, pos.line);
@@ -539,41 +534,54 @@ void code_change_apply(Source_Code* code, Code_Change* change, bool forwards, Ed
         );
 
         // Update text and line-items
-        Source_Line* line = source_code_get_line(code, pos.line);
+        DynArray<Editor_Info_Reference> line_infos = DynArray<Editor_Info_Reference>::create(scratch_arena);
+        source_code_line_append_to_string(code, pos.line, tmp_string.reset());
+        source_code_line_get_items(code, pos.line, &line_infos);
         if (apply_change_forward) 
         {
-            string_insert_string(&line->text, &str, pos.character);
+            dynstring_insert(&tmp_string, str, pos.character);
 
             // Update line-item ranges
-		    for (int i = 0; i < line->item_infos.size; i++) 
-		    {
-		    	auto& item = line->item_infos[i];
+            for (int i = 0; i < line_infos.size; i++)
+            {
+                auto& item = line_infos[i];
 		    	if (item.end_char < pos.character) continue; // Note: we would rather grow some items wrongly instead of the other way around
 		    	if (item.start_char > pos.character) {
 		    		item.start_char += str.size;
 		    	}
 		    	item.end_char += str.size;
-		    }
+            }
         }
         else 
         {
-            dynstring_remove_substring(&line->text, pos.character, pos.character + str.size);
+            dynstring_remove_substring(&tmp_string, pos.character, pos.character + str.size);
 
             // Update line-item ranges
             int start = pos.character;
             int end = start + str.size;
-		    for (int i = 0; i < line->item_infos.size; i++) 
-		    {
-		    	auto& item = line->item_infos[i];
+
+            for (int i = 0; i < line_infos.size; i++)
+            {
+                auto& item = line_infos[i];
+		    	if (item.end_char < pos.character) continue; // Note: we would rather grow some items wrongly instead of the other way around
+		    	if (item.start_char > pos.character) {
+		    		item.start_char += str.size;
+		    	}
+		    	item.end_char += str.size;
+            }
+
+            for (int i = 0; i < line_infos.size; i++)
+            {
+                auto& item = line_infos[i];
 
 		    	int intersect_start = math_maximum(pos.character, item.start_char);
 		    	int intersect_end   = math_maximum(intersect_start, math_minimum(end, item.end_char));
 		    	int intersect_length = intersect_end - intersect_start;
 		    	int item_length = item.end_char - item.start_char;
 		    	if (intersect_length >= item_length) {
-		    		dynamic_array_swap_remove(&line->item_infos, i);
-		    		i -= 1;
-		    		continue;
+                    line_infos.remove_ordered(i);
+                    i--;
+                    continue;
 		    	}
 
 		    	// Figure out new start
@@ -586,6 +594,8 @@ void code_change_apply(Source_Code* code, Code_Change* change, bool forwards, Ed
 		    	item.end_char = item.start_char + item_length - intersect_length;
 		    }
         }
+        source_code_line_set_text(code, pos.line, tmp_string.to_string());
+        source_code_line_set_items(code, pos.line, line_infos.as_array());
         break;
     }
     default: panic("");

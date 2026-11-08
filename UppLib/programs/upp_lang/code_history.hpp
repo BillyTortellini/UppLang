@@ -33,7 +33,7 @@ struct Code_Change
         } char_insert;
         struct {
             Text_Index index;
-            DynString text;
+            String text;
         } text_insert;
     } options;
 };
@@ -67,14 +67,15 @@ struct History_Node
 struct Code_History
 {
     Editor_Tab* tab;
-    Dynamic_Array<History_Node> nodes;
-    int current;
+    Arena arena;
+    DynArray<History_Node> nodes;
 
+    int current;
     int complex_level;
     int complex_start;
 };
 
-Code_History code_history_create(Editor_Tab* tab);
+Code_History* code_history_create(Editor_Tab* tab);
 void code_history_reset(Code_History* history);
 void code_history_destroy(Code_History* history);
 
@@ -88,13 +89,13 @@ void history_set_cursor_pos(Code_History* history, Text_Index cursor);
 Optional<Text_Index> history_get_cursor_pos(Code_History* history);
 
 // Change Interface
-void history_insert_text(Code_History* history, Text_Index index, DynString string);
+void history_insert_text(Code_History* history, Text_Index index, String string);
 void history_delete_text(Code_History* history, Text_Index index, int char_end);
 void history_insert_char(Code_History* history, Text_Index index, char c);
 void history_delete_char(Code_History* history, Text_Index index);
 
 void history_insert_line(Code_History* history, int line_index);
-void history_insert_line_with_text(Code_History* history, int line_index, DynString string);
+void history_insert_line_with_text(Code_History* history, int line_index, String string);
 void history_remove_line(Code_History* history, int line_index);
 
 

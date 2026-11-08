@@ -7,7 +7,9 @@ void framebuffer_window_resize_callback(void* userdata);
 
 Framebuffer* framebuffer_create(Texture_Type type, Depth_Type depth_type, bool fullscreen, int width, int height)
 {
-    Framebuffer* result = new Framebuffer();
+    Rendering_Core& core = rendering_core;
+
+    Framebuffer* result = core.arena.allocate<Framebuffer>();
     result->width = width;
     result->height = height;
     result->attachments = dynamic_array_create<Texture*>(1);

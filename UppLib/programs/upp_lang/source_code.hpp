@@ -3,6 +3,7 @@
 #include "../../math/vectors.hpp"
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/string.hpp"
+#include "../../utility/identifier_pool.hpp"
 #include "compiler_misc.hpp"
 
 struct Source_Code;
@@ -66,7 +67,7 @@ struct Symbol_Table_Range
 struct Block_ID_Range
 {
     Text_Range range;
-    DynString* block_id;
+    Identifier block_id;
     int tree_depth;
 };
 
@@ -75,47 +76,44 @@ struct Block_ID_Range
 // Source Code
 struct Source_Line
 {
-    DynString text;
-    Dynamic_Array<Editor_Info_Reference> item_infos;
-};
-
-struct Line_Bundle
-{
-    Dynamic_Array<Source_Line> lines;
-    int first_line_index;
+    String_List text;
+    List<Editor_Info_Reference> item_infos;
 };
 
 struct Source_Code
 {
-    // Note: Source_Code always contains at least 1 line + 1 bundle (So that index 0 is always valid)
-    Dynamic_Array<Line_Bundle> bundles;
-    int line_count;
+    Arena arena;
+    Free_List free_list;
+    DynArray<Source_Line> lines;
 
     // Analysis info
     Symbol_Table* root_table;
-    Dynamic_Array<Symbol_Table_Range> symbol_table_ranges;
-    Dynamic_Array<Block_ID_Range> block_id_range;
+    DynArray<Symbol_Table_Range> symbol_table_ranges;
+    DynArray<Block_ID_Range> block_id_range;
+
+    int line_count();
 };
 
 Source_Code* source_code_create(); 
 Source_Code* source_code_copy(Source_Code* copy_from); 
-Source_Code* source_code_load_from_file(DynString filepath);
+Source_Code* source_code_load_from_file(String filepath);
 void source_code_destroy(Source_Code* code);
 void source_code_reset(Source_Code* code);
-void source_code_print_bundles(Source_Code* code);
 
 // Manipulation Helpers
-Source_Line* source_code_insert_line(Source_Code* code, int new_line_index);
+void source_code_insert_line(Source_Code* code, int new_line_index);
 void source_code_remove_line(Source_Code* code, int line_index);
 
 // Utility
-void source_code_fill_from_string(Source_Code* code, DynString text);
+void source_code_fill_from_string(Source_Code* code, String text);
 void source_code_append_to_string(Source_Code* code, DynString* text);
 
 // Index Functions
-int source_code_get_line_bundle_index(Source_Code* code, int line_index);
-Source_Line* source_code_get_line(Source_Code* code, int line_index);
-Source_Line* source_code_get_line(Source_Code* code, int line_index, int& nearby_bundle_index);
+void source_code_line_set_text(Source_Code* code, int line_index, String text);
+void source_code_line_append_to_string(Source_Code* code, int line_index, DynString* append_to);
+int  source_code_line_get_size(Source_Code* code, int line_index);
+void source_code_line_get_items(Source_Code* code, int line_index, DynArray<Editor_Info_Reference>* append_to);
+void source_code_line_set_items(Source_Code* code, int line_index, Array<Editor_Info_Reference> editor_infos);
 
 
 

@@ -105,13 +105,29 @@ void array_bubble_sort(Array<T> array, bool (*in_order_fn)(T* a, T* b))
     }
 }
 
-template<typename T, typename Comparator>
-void array_sort(Array<T> array, Comparator comparator) {
+template<typename T>
+struct Array_Element_Comparator
+{
+    void* userdata;
+    Order_Comparison_Result(*sort_fn)(T* a, T* b, void* userdata);
+
+    bool operator()(T& a, T& b) {
+        return sort_fn(&a, &b, userdata) == Order_Comparison_Result::LESS;
+    }
+};
+
+template<typename T>
+void array_sort(Array<T> array, Order_Comparison_Result(*sort_fn)(T* a, T* b, void* userdata), void* userdata)
+{
+    Array_Element_Comparator<T> comparator;
+    comparator.userdata = userdata;
+    comparator.sort_fn = sort_fn;
     std::sort(&array.data[0], &array.data[array.size], comparator);
 }
 
 template<typename T>
-Array<T> array_create_empty() {
+Array<T> array_create_empty() 
+{
 	Array<T> result;
 	result.data = nullptr;
 	result.size = 0;

@@ -75,7 +75,7 @@ void Font_Renderer::destroy()
 	delete this;
 }
 
-Raster_Font* Font_Renderer::add_raster_font(const char* filename, int line_height)
+Raster_Font* Font_Renderer::add_raster_font(String filename, int line_height)
 {
     Raster_Font* result = arena.allocate<Raster_Font>();
     result->renderer = this;
@@ -100,7 +100,8 @@ Raster_Font* Font_Renderer::add_raster_font(const char* filename, int line_heigh
     SCOPE_EXIT(FT_Done_FreeType(library));
 
     FT_Face face;
-    ft_error = FT_New_Face(library, filename, 0, &face);
+    DynString tmp_filename = dynstring_create_copy(filename, &arena);
+    ft_error = FT_New_Face(library, tmp_filename.to_cstring(), 0, &face);
     if (ft_error != 0) {
         logg("Could not create face for \"%s\", error: %s\n", filename, FT_Error_String(ft_error));
         return nullptr;
@@ -226,7 +227,7 @@ void Font_Renderer::finish_atlas()
 
     auto& predef = rendering_core.predefined;
     font_mesh = rendering_core_query_mesh(
-        "font_mesh for fixed size text rendering",
+        string_make("font_mesh for fixed size text rendering"),
         vertex_description_create({
             predef.position2D,
             predef.texture_coordinates,
@@ -250,7 +251,7 @@ void Font_Renderer::add_draw_call(Render_Pass* pass)
 
     render_pass_draw_count(
         pass,
-        rendering_core_query_shader("core/raster_font_new.glsl"),
+        rendering_core_query_shader(string_make("core/raster_font_new.glsl")),
         font_mesh,
         Mesh_Topology::TRIANGLES,
         { uniform_make("sampler", texture, sampling_mode_nearest()) },
@@ -260,7 +261,7 @@ void Font_Renderer::add_draw_call(Render_Pass* pass)
     batch_start = batch_end;
 }
 
-void Raster_Font::push_line(ivec2 pos, DynString text, vec3 color)
+void Raster_Font::push_line(ivec2 pos, String text, vec3 color)
 {
     if (text.size == 0) {
         return;

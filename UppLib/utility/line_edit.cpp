@@ -2,6 +2,7 @@
 #include "character_info.hpp"
 
 #include "system_clipboard.hpp"
+#include "../datastructures/allocators.hpp"
 
 Line_Editor line_editor_make()
 {
@@ -16,6 +17,9 @@ bool line_editor_feed_key_message(Line_Editor& editor, DynString* text, Key_Mess
     if (!msg.key_down) {
         return false;
     }
+
+    SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+    DynString tmp_string = DynString::create(scratch_arena);
 
     // Sanitize positions
     auto& pos = editor.pos;
@@ -118,7 +122,7 @@ bool line_editor_feed_key_message(Line_Editor& editor, DynString* text, Key_Mess
             int end = math_maximum(pos, select_start);
             if (start == end) return false;
 
-            DynString substring = string_create_substring_static(text, start, end);
+            String substring = string_make_substring(text->to_string(), start, end);
             clipboard_store_text(substring);
             return false;
         }
@@ -128,7 +132,7 @@ bool line_editor_feed_key_message(Line_Editor& editor, DynString* text, Key_Mess
 
             int start = math_minimum(pos, select_start);
             int end = math_maximum(pos, select_start);
-            DynString substring = string_create_substring_static(text, start, end);
+            String substring = string_make_substring(text->to_string(), start, end);
             clipboard_store_text(substring);
             dynstring_remove_substring(text, start, end);
             pos = start;
@@ -148,13 +152,11 @@ bool line_editor_feed_key_message(Line_Editor& editor, DynString* text, Key_Mess
                 select_start = start;
                 changed = true;
             }
-            DynString clipboard = dynstring_create();
-            SCOPE_EXIT(string_destroy(&clipboard));
 
-            bool success = clipboard_load_text(&clipboard);
-            if (success && clipboard.size != 0) {
-                string_insert_string(text, &clipboard, editor.pos);
-                editor.pos += clipboard.size;
+            bool success = clipboard_load_text(tmp_string.reset());
+            if (success && tmp_string.size != 0) {
+                dynstring_insert(text, tmp_string.to_string(), editor.pos);
+                editor.pos += tmp_string.size;
                 editor.select_start = editor.pos;
                 changed = true;
             }
@@ -207,7 +209,7 @@ bool line_editor_feed_key_message(Line_Editor& editor, DynString* text, Key_Mess
         bool changed = false;
         if (select_start == pos) {
             if (pos > 0) {
-                string_remove_character(text, pos - 1);
+                dynstring_remove_character(text, pos - 1);
                 pos -= 1;
                 select_start -= 1;
                 changed = true;
@@ -238,10 +240,10 @@ bool line_editor_feed_key_message(Line_Editor& editor, DynString* text, Key_Mess
             changed = true;
         }
         if (msg.character == '\t') {
-            string_insert_character_before(text, ' ', pos);
-            string_insert_character_before(text, ' ', pos);
-            string_insert_character_before(text, ' ', pos);
-            string_insert_character_before(text, ' ', pos);
+            dynstring_insert(text, string_make(" "), pos);
+            dynstring_insert(text, string_make(" "), pos);
+            dynstring_insert(text, string_make(" "), pos);
+            dynstring_insert(text, string_make(" "), pos);
             pos += 4;
             select_start += 4;
             changed = true;
@@ -251,7 +253,7 @@ bool line_editor_feed_key_message(Line_Editor& editor, DynString* text, Key_Mess
             return false;
         }
 
-        string_insert_character_before(text, msg.character, pos);
+        dynstring_insert(text, string_make((char*)& msg.character, 1), pos);
         changed = true;
         pos += 1;
         select_start += 1;

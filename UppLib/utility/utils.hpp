@@ -97,3 +97,11 @@ void memory_zero(T* ptr) {
 }
 
 
+
+// Common Enums
+enum class Order_Comparison_Result
+{
+    LESS,
+    EQUAL,
+    GREATER
+};

@@ -135,7 +135,7 @@ struct IR_Register
 {
     Datatype* type;
     bool has_definition_instruction;
-    Optional<DynString*> name; // If it's a variable
+    Optional<Identifier> name; // If it's a variable
 };
 
 struct IR_Code_Block

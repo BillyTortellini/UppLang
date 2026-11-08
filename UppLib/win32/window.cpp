@@ -389,44 +389,45 @@ void APIENTRY opengl_debug_callback(GLenum source, GLenum type, GLuint id, GLenu
     // Ignore performance warnings and unnecessary stuff
     // if (id == 131169 || id == 131185 || id == 131218 || id == 131204) return;
     // if (id == 131185 || id == 131218) return;
-    DynString formatted_message = dynstring_create(1024);
+    SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+    DynString string = dynstring_create(scratch_arena);
 
     switch (source)
     {
-    case GL_DEBUG_SOURCE_API:             string_append(&formatted_message, "Source: API"); break;
-    case GL_DEBUG_SOURCE_WINDOW_SYSTEM:   string_append(&formatted_message, "Source: Window System"); break;
-    case GL_DEBUG_SOURCE_SHADER_COMPILER: string_append(&formatted_message, "Source: Shader Compiler"); break;
-    case GL_DEBUG_SOURCE_THIRD_PARTY:     string_append(&formatted_message, "Source: Third Party"); break;
-    case GL_DEBUG_SOURCE_APPLICATION:     string_append(&formatted_message, "Source: Application"); break;
-    case GL_DEBUG_SOURCE_OTHER:           string_append(&formatted_message, "Source: Other"); break;
+    case GL_DEBUG_SOURCE_API:             string.append("Source: API"); break;
+    case GL_DEBUG_SOURCE_WINDOW_SYSTEM:   string.append("Source: Window System"); break;
+    case GL_DEBUG_SOURCE_SHADER_COMPILER: string.append("Source: Shader Compiler"); break;
+    case GL_DEBUG_SOURCE_THIRD_PARTY:     string.append("Source: Third Party"); break;
+    case GL_DEBUG_SOURCE_APPLICATION:     string.append("Source: Application"); break;
+    case GL_DEBUG_SOURCE_OTHER:           string.append("Source: Other"); break;
     }
-    string_append(&formatted_message, ", ");
+    string.append(", ");
 
     switch (type)
     {
-    case GL_DEBUG_TYPE_ERROR:               string_append(&formatted_message, "Type: Error"); break;
-    case GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR: string_append(&formatted_message, "Type: Deprecated Behaviour"); break;
-    case GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR:  string_append(&formatted_message, "Type: Undefined Behaviour"); break;
-    case GL_DEBUG_TYPE_PORTABILITY:         string_append(&formatted_message, "Type: Portability"); break;
-    case GL_DEBUG_TYPE_PERFORMANCE:         string_append(&formatted_message, "Type: Performance"); break;
-    case GL_DEBUG_TYPE_MARKER:              string_append(&formatted_message, "Type: Marker"); break;
-    case GL_DEBUG_TYPE_PUSH_GROUP:          string_append(&formatted_message, "Type: Push Group"); break;
-    case GL_DEBUG_TYPE_POP_GROUP:           string_append(&formatted_message, "Type: Pop Group"); break;
-    case GL_DEBUG_TYPE_OTHER:               string_append(&formatted_message, "Type: Other"); break;
+    case GL_DEBUG_TYPE_ERROR:               string.append("Type: Error"); break;
+    case GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR: string.append("Type: Deprecated Behaviour"); break;
+    case GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR:  string.append("Type: Undefined Behaviour"); break;
+    case GL_DEBUG_TYPE_PORTABILITY:         string.append("Type: Portability"); break;
+    case GL_DEBUG_TYPE_PERFORMANCE:         string.append("Type: Performance"); break;
+    case GL_DEBUG_TYPE_MARKER:              string.append("Type: Marker"); break;
+    case GL_DEBUG_TYPE_PUSH_GROUP:          string.append("Type: Push Group"); break;
+    case GL_DEBUG_TYPE_POP_GROUP:           string.append("Type: Pop Group"); break;
+    case GL_DEBUG_TYPE_OTHER:               string.append("Type: Other"); break;
     }
-    string_append(&formatted_message, ", ");
+    string.append(", ");
 
     switch (severity)
     {
-    case GL_DEBUG_SEVERITY_HIGH:         string_append(&formatted_message, "Severity: high"); break;
-    case GL_DEBUG_SEVERITY_MEDIUM:       string_append(&formatted_message, "Severity: medium"); break;
-    case GL_DEBUG_SEVERITY_LOW:          string_append(&formatted_message, "Severity: low"); break;
-    case GL_DEBUG_SEVERITY_NOTIFICATION: string_append(&formatted_message, "Severity: notification"); break;
+    case GL_DEBUG_SEVERITY_HIGH:         string.append("Severity: high"); break;
+    case GL_DEBUG_SEVERITY_MEDIUM:       string.append("Severity: medium"); break;
+    case GL_DEBUG_SEVERITY_LOW:          string.append("Severity: low"); break;
+    case GL_DEBUG_SEVERITY_NOTIFICATION: string.append("Severity: notification"); break;
     }
-    string_append(&formatted_message, ", message: ");
-    string_append(&formatted_message, message);
+    string.append(", message: ");
+    string.append(message);
 
-    logg("OpenglError (#%d): %s\n", id, formatted_message.characters);
+    logg("OpenglError (#%d): %s\n", id, string.to_cstring());
 }
 
 
@@ -596,7 +597,7 @@ void window_initialize_system()
 }
 
 // Position, visible, fullscreen, decoration, opengl version, framebuffer stuff
-Window* window_create(const char* window_title, int multisample_count)
+Window* window_create(String window_title, int multisample_count)
 {
     window_initialize_system();
     HINSTANCE hinstance = (HINSTANCE)GetModuleHandle(NULL);
@@ -606,11 +607,13 @@ Window* window_create(const char* window_title, int multisample_count)
     Window* window = new Window();
     window->input = input_create();
     {
+        SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+        DynString tmp_str = DynString::create(scratch_arena);
         // Create Window
         HWND hwnd = CreateWindowEx(
             WS_EX_APPWINDOW,
             WINDOW_CLASS_NAME,
-            window_title,
+            tmp_str.reset()->append(window_title)->to_cstring(),
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
             0, 0,
@@ -1142,10 +1145,10 @@ struct Window_Saved_Position
     RECT console_rect;
 };
 
-void window_load_position(Window* window, const char* filename)
+void window_load_position(Window* window, String string)
 {
     SCRATCH_ARENA_MAKE_SCOPED(nullptr);
-    auto result = file_io_load_binary_file(string_create_static(filename), scratch_arena);
+    auto result = file_io_load_binary_file(string, scratch_arena);
     if (result.available)
     {
         assert(result.value.size == sizeof(Window_Saved_Position), "Hey");
@@ -1172,7 +1175,7 @@ void window_load_position(Window* window, const char* filename)
     }
 }
 
-void window_save_position(Window* window, const char* filename)
+void window_save_position(Window* window, String filename)
 {
     Window_Saved_Position pos;
     memory_zero(&pos);
@@ -1186,7 +1189,7 @@ void window_save_position(Window* window, const char* filename)
     }
 
     auto data = array_create_static_as_bytes(&pos, 1);
-    file_io_write_binary_file(string_create_static(filename), data);
+    file_io_write_binary_file(filename, data);
 }
 
 IDXGIOutput* g_output = 0;
@@ -1194,14 +1197,19 @@ bool initialized = false;
 
 void window_initialize_dxgi_output()
 {
-    if (!initialized) {
+    if (!initialized) 
+    {
+        SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+        DynString tmp_string = DynString::create(scratch_arena);
+
         IDXGIFactory* pFactory;
         HRESULT hr = CreateDXGIFactory(__uuidof(IDXGIFactory), (void**)(&pFactory));
 
         UINT i = 0;
         IDXGIAdapter* pAdapter;
         std::vector<IDXGIAdapter*> vAdapters;
-        while (pFactory->EnumAdapters(i, &pAdapter) != DXGI_ERROR_NOT_FOUND) {
+        while (pFactory->EnumAdapters(i, &pAdapter) != DXGI_ERROR_NOT_FOUND) 
+        {
             vAdapters.push_back(pAdapter);
             UINT j = 0;
             DXGI_ADAPTER_DESC desc;
@@ -1213,12 +1221,12 @@ void window_initialize_dxgi_output()
                 DXGI_OUTPUT_DESC desc;
                 output->GetDesc(&desc);
                 int len = lstrlenW(desc.DeviceName);
-                auto tmp = dynstring_create(64);
-                SCOPE_EXIT(string_destroy(&tmp));
+                tmp_string.reset();
+                tmp_string.reserve(64);
                 size_t converted_size;
-                wcstombs_s(&converted_size, tmp.characters, 32, desc.DeviceName, 64);
-                tmp.size = (int) strlen(tmp.characters);
-                logg("Import output: %s\n", tmp.characters);
+                wcstombs_s(&converted_size, tmp_string.characters, 32, desc.DeviceName, 64);
+                tmp_string.size = strlen(tmp_string.characters);
+                logg("Import output: %s\n", tmp_string.to_cstring());
 
                 break;
                 j++;

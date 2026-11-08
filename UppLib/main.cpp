@@ -2,7 +2,6 @@
 #include "programs/c_importer/import_gui.hpp"
 #include "programs/imgui_test/imgui_test.hpp"
 #include "programs/console_debugger/console_debugger.hpp"
-#include "programs/test/test.hpp"
 #include "programs/rendering_rework/rendering_rework.hpp"
 
 #include "programs/upp_lang/compilation_data.hpp"
@@ -23,8 +22,7 @@ void syntax_renaming()
 {
     SCRATCH_ARENA_MAKE_SCOPED(nullptr);
 
-    DynString input_line = dynstring_create(1024);
-    SCOPE_EXIT(string_destroy(&input_line));
+    DynString input_line = dynstring_create(scratch_arena);
 
     Directory_Crawler* crawler = directory_crawler_create();
     SCOPE_EXIT(directory_crawler_destroy(crawler));
@@ -37,12 +35,11 @@ void syntax_renaming()
         input_line.characters[input_line.size - 1] = '\0';
         input_line.size -= 1;
     }
-    string_replace_character(&input_line, '\\', '/');
+    dynstring_replace_character(&input_line, '\\', '/');
 
-    directory_crawler_set_path(crawler, input_line);
+    directory_crawler_set_path(crawler, input_line.to_string());
     Array<Directory_Item> files = directory_crawler_get_content(crawler);
-    DynString filepath = dynstring_create(0);
-    SCOPE_EXIT(string_destroy(&filepath));
+    DynString filepath = dynstring_create(scratch_arena);
     for (int i = 0; i < files.size; i++)
     {
         // Load file
@@ -50,49 +47,45 @@ void syntax_renaming()
         if (file.is_directory) continue;
         printf("Editing file %.*s\n", file.filename.size, file.filename.characters);
         
-        dynstring_reset(&filepath);
-        string_append_string(&filepath, &input_line);
-        if (!cstring_ends_with(filepath.characters, "/")) {
-            string_append_character(&filepath, '/');
+        filepath.reset()->append(input_line);
+        if (!string_ends_with(filepath.to_string(), string_make("/"))) {
+            filepath.append('/');
         }
-        string_append_string(&filepath, &file.filename);
+        filepath.append(file.filename);
 
-        Optional<DynString> text_opt = file_io_load_text_file(filepath, scratch_arena);
-        if (!text_opt.available) {
+        DynString text = DynString::create(scratch_arena);
+        bool file_loaded = file_io_load_text_file(filepath.to_string(), &text);
+        if (!file_loaded) {
             printf("    File not available, skipping!\n");
             continue;
         }
 
-        DynString text = text_opt.value;
-        auto lines = string_split(text, '\n');
-        SCOPE_EXIT(string_split_destroy(lines));
-        DynString result_text = dynstring_create(text.size);
-        SCOPE_EXIT(string_destroy(&result_text));
+        auto lines = string_split(text.to_string(), '\n', scratch_arena);
+        DynString result_text = dynstring_create(scratch_arena);
 
         // Replace assert with ~assert
-        DynString replace_text = string_create_static("Upp~");
-        DynString replace_with = string_create_static("~");
+        String replace_text = string_make("Upp~");
+        String replace_with = string_make("~");
         for (int line_index = 0; line_index < lines.size; line_index += 1)
         {
-            DynString line = lines[line_index];
-            DynString new_line = dynstring_copy(line);
-            SCOPE_EXIT(string_destroy(&new_line));
-            int replace_index = string_contains_substring(line, 0, replace_text);
+            String line = lines[line_index];
+            DynString new_line = DynString::create_copy(line, scratch_arena);
+            int replace_index = string_contains_substring(line, replace_text);
             if (replace_index != -1) 
             {
                 printf("Found assert line: \n");
                 printf("----%s\n", new_line.characters);
                 dynstring_remove_substring(&new_line, replace_index, replace_index + replace_text.size);
-                string_insert_string(&new_line, &replace_with, replace_index);
+                dynstring_insert(&new_line, replace_with, replace_index);
                 printf("----%s\n", new_line.characters);
             }
-            string_append_string(&result_text, &new_line);
+            result_text.append(new_line);
             if (line_index != lines.size - 1) {
-                string_append_character(&result_text, '\n');
+                result_text.append('\n');
             }
         }
         // Write back new file
-        file_io_write_text_file(filepath, result_text);
+        file_io_write_text_file(filepath.to_string(), result_text.to_string());
     }
 
     printf("Enter to exit");
@@ -210,13 +203,15 @@ void next_test()
     arena.destroy();
 }
 
+
+/*
 struct File_Line_Info
 {
-    DynString filename;
+    String filename;
     int line_count;
 };
 
-File_Line_Info file_line_info_make(DynString full_path, int line_count) 
+File_Line_Info file_line_info_make(String full_path, int line_count) 
 {
     File_Line_Info result;
     result.line_count = line_count;
@@ -230,7 +225,7 @@ File_Line_Info file_line_info_make(DynString full_path, int line_count)
         }
     }
     if (dir_index != -1) {
-        result.filename = string_create_substring_static(&result.filename, dir_index + 1, result.filename.size);
+        result.filename = string_make_substring(full_path, dir_index + 1, result.filename.size);
     }
     return result;
 }
@@ -344,6 +339,7 @@ int count_lines_of_code()
 
     return 0;
 }
+*/
 
 void performance_test()
 {
@@ -356,7 +352,7 @@ void performance_test()
     for (int i = 0; i < RUN_COUNT; i++)
     {
         Compilation_Data* compilation_data = compilation_data_create(fiber_pool);
-        Compilation_Unit* unit = compilation_data_add_compilation_unit_unique(compilation_data, string_create_static("upp_code/editor_text.upp"), true, false);
+        Compilation_Unit* unit = compilation_data_add_compilation_unit_unique(compilation_data, string_make("upp_code/editor_text.upp"), true, false);
         assert(unit != nullptr, "");
         compilation_data_compile(compilation_data, unit, Compile_Type::BUILD_CODE);
 

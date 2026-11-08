@@ -91,7 +91,7 @@ struct Poly_Header
     // Origin infos
     AST::Signature* signature_node;
     Symbol_Table* base_parameter_table;
-    DynString* name; // Either struct or function name, used for dot-calls auto id
+    Identifier name; // Either struct or function name, used for dot-calls auto id
     bool is_function;
     union {
         Upp_Struct*   upp_struct;
@@ -164,7 +164,7 @@ struct Upp_Function
 {
     Call_Signature* signature; // Note: Signature is nullptr until function-header is analysed
     int function_index; // Index in functions array
-    DynString* name; // Symbol name, or "bake_function"/"lambda_function"
+    Identifier name; // Symbol name, or "bake_function"/"lambda_function"
     Symbol* symbol; // May be nullptr if function is anonymous
     Optional<Function_Body> body_node;
     Analysis_Pass* body_pass; // Used later in ir-generator
@@ -223,7 +223,7 @@ struct Upp_Global
     void* memory;
 };
 
-Upp_Function* upp_function_create_empty(Call_Signature* signature, DynString* name, Compilation_Data* compilation_data);
+Upp_Function* upp_function_create_empty(Call_Signature* signature, Identifier name, Compilation_Data* compilation_data);
 
 
 
@@ -438,7 +438,7 @@ struct Parameter_Value
 struct Argument_Info
 {
 	AST::Expression* expression;
-	Optional<DynString*> name;
+	Optional<Identifier> name;
 	int parameter_index; // -1 if no matching parameter was found
 };
 
@@ -802,14 +802,14 @@ struct Error_Information
             int expected;
             int given;
         } invalid_argument_count;
-        DynString* id;
+        Identifier id;
         Symbol* symbol;
         Exit_Code exit_code;
         Datatype* type;
         Datatype_Function_Pointer* function;
         struct {
             Datatype_Struct* struct_signature;
-            DynString* member_id;
+            Identifier member_id;
         } invalid_member;
         Workload_Base* cycle_workload;
         struct {

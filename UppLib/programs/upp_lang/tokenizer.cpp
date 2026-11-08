@@ -7,8 +7,9 @@
 // Tokenizer
 struct Tokenizer
 {
-    Hashtable<DynString, Token_Type> keyword_table;
-    Hashtable<DynString, Token_Type> operator_table;
+    Arena arena;
+    DynTable<String, Token_Type> keyword_table;
+    DynTable<String, Token_Type> operator_table;
 };
 
 static Tokenizer tokenizer;
@@ -187,14 +188,16 @@ Token_Type token_type_get_partner(Token_Type type)
 
 int tokenizer_initialize()
 {
+    tokenizer.arena = Arena::create();
+    Arena* arena = &tokenizer.arena;
+
     // Initialize keyword lookup table
     {
-        tokenizer.keyword_table = hashtable_create_empty<DynString, Token_Type>(1, hash_string, string_equals);
+        tokenizer.keyword_table = DynTable<String, Token_Type>::create(arena, string_hash_pointer, string_equals_pointers);
         auto insert_keyword_token = [](Token_Type token_type) {
-            DynString string = string_create_static(token_type_as_cstring(token_type));
-            bool worked = hashtable_insert_element(&tokenizer.keyword_table, string, token_type);
-            assert(worked, "all keywords must be unique!");
-            };
+            String string = string_make(token_type_as_cstring(token_type));
+            tokenizer.keyword_table.insert(string, token_type);
+        };
 
         for (int i = (int)Token_Type::_KEYWORDS_START_ + 1; i < (int)Token_Type::_KEYWORDS_END_; i++) {
             insert_keyword_token((Token_Type)i);
@@ -208,15 +211,9 @@ int tokenizer_initialize()
 
     // Initializer operator lookup table
     {
-        tokenizer.operator_table = hashtable_create_empty<DynString, Token_Type>(1, hash_string, string_equals);
-        for (int i = (int)Token_Type::_OPERATORS_START_ + 1; i < (int)Token_Type::_OPERATORS_END_; i++)
-        {
-            bool worked = hashtable_insert_element(
-                &tokenizer.operator_table,
-                string_create_static(token_type_as_cstring((Token_Type)i)),
-                (Token_Type)i
-            );
-            assert(worked, "operator strings must be unique");
+        tokenizer.operator_table = DynTable<String, Token_Type>::create(arena, string_hash_pointer, string_equals_pointers);
+        for (int i = (int)Token_Type::_OPERATORS_START_ + 1; i < (int)Token_Type::_OPERATORS_END_; i++) {
+            tokenizer.operator_table.insert(string_make(token_type_as_cstring((Token_Type)i)), (Token_Type)i);
         }
     }
 
@@ -234,8 +231,15 @@ Token token_make(Token_Type type, int start, int end, int line) {
     return token;
 }
 
+void tokenizer_tokenize_single_line(String_List string_list, DynArray<Token>* tokens, int line_index, bool remove_comments)
+{
+    SCRATCH_ARENA_MAKE_SCOPED(tokens->arena);
+    DynString string = DynString::create(scratch_arena);
+    string.append(string_list);
+    tokenizer_tokenize_single_line(string.to_string(), tokens, line_index, remove_comments);
+}
 
-void tokenizer_tokenize_single_line(DynString text, DynArray<Token>* tokens, int line_index, bool remove_comments)
+void tokenizer_tokenize_single_line(String text, DynArray<Token>* tokens, int line_index, bool remove_comments)
 {
     int index = 0;
     while (index < text.size)
@@ -252,14 +256,14 @@ void tokenizer_tokenize_single_line(DynString text, DynArray<Token>* tokens, int
                 index += 1;
             }
 
-            DynString substring = string_create_substring_static(&text, token.start, index);
-            Token_Type* keyword = hashtable_find_element(&tokenizer.keyword_table, substring);
+            String substring = string_make_substring(text, token.start, index);
+            Token_Type* keyword = tokenizer.keyword_table.find(substring);
             if (keyword != nullptr) {
                 token.type = *keyword;
             }
             else {
                 token.type = starts_with_hashtag ? Token_Type::INVALID : Token_Type::IDENTIFIER;
-                token.options.string_value = nullptr;
+                token.options.string_value.string = nullptr;
             }
         }
         // String literal start
@@ -282,7 +286,7 @@ void tokenizer_tokenize_single_line(DynString text, DynArray<Token>* tokens, int
             }
 
             token.type = found_valid_end ? Token_Type::LITERAL_STRING : Token_Type::INVALID;
-            token.options.string_value = nullptr;
+            token.options.string_value.string = nullptr;
         }
         // Whitespaces are currently skipped (This is handled by parser)
         else if (c == ' ' || c == '\t' || c == '\n' || c == '\r')
@@ -389,8 +393,8 @@ void tokenizer_tokenize_single_line(DynString text, DynArray<Token>* tokens, int
             for (int length = 1; length <= 3; length += 1) 
             {
                 if (index + length > text.size) break;
-                DynString str = string_create_substring_static(&text, index, index + length);
-                Token_Type* matching_op = hashtable_find_element(&tokenizer.operator_table, str);
+                String str = string_make_substring(text, index, index + length);
+                Token_Type* matching_op = tokenizer.operator_table.find(str);
                 if (matching_op != nullptr) {
                     token.type = *matching_op;
                     found_length = length;
@@ -408,7 +412,7 @@ void tokenizer_tokenize_single_line(DynString text, DynArray<Token>* tokens, int
     }
 }
 
-void tokenizer_parse_string_literal(DynString literal, DynString* append_to)
+void tokenizer_parse_string_literal(String literal, DynString* append_to)
 {
     // Note: We expect the literal to contain " and ", so we start at 1
 	for (int i = 1; i < literal.size - 1; i++)
@@ -420,22 +424,22 @@ void tokenizer_parse_string_literal(DynString literal, DynString* append_to)
 			switch (next)
 			{
 			case 'n':
-				string_append_character(append_to, '\n');
+				append_to->append('\n');
 				break;
 			case 'r':
-				string_append_character(append_to, '\r');
+				append_to->append('\r');
 				break;
 			case 't':
-				string_append_character(append_to, '\t');
+				append_to->append('\t');
 				break;
 			case '\\':
-				string_append_character(append_to, '\\');
+				append_to->append('\\');
 				break;
 			case '\'':
-				string_append_character(append_to, '\'');
+				append_to->append('\'');
 				break;
 			case '\"':
-				string_append_character(append_to, '\"');
+				append_to->append('\"');
 				break;
 			case '\n':
 				break;
@@ -450,23 +454,23 @@ void tokenizer_parse_string_literal(DynString literal, DynString* append_to)
             continue;
 		}
 
-		string_append_character(append_to, c);
+		dynstring_append_character(append_to, c);
 	}
 }
 
-bool source_line_tokens_may_connect(Source_Code* code, int first_line_index, Arena* arena, int& nearby_bundle_index)
+bool source_line_tokens_may_connect(Source_Code* code, int first_line_index)
 {
-    if (first_line_index < 0 || first_line_index + 1 >= code->line_count) return false;
+    if (first_line_index < 0 || first_line_index + 1 >= code->line_count()) return false;
 
-    auto checkpoint = arena->make_checkpoint();
-    SCOPE_EXIT(checkpoint.rewind());
-    DynArray<Token> prev_tokens = DynArray<Token>::create(arena);
-    DynArray<Token> curr_tokens = DynArray<Token>::create(arena);
+    SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+    DynString tmp_string = DynString::create(scratch_arena);
+    DynArray<Token> prev_tokens = DynArray<Token>::create(scratch_arena);
+    DynArray<Token> curr_tokens = DynArray<Token>::create(scratch_arena);
 
-    Source_Line* prev_line = source_code_get_line(code, first_line_index, nearby_bundle_index);
-    Source_Line* curr_line = source_code_get_line(code, first_line_index + 1, nearby_bundle_index);
-    tokenizer_tokenize_single_line(prev_line->text, &prev_tokens, first_line_index, true);
-    tokenizer_tokenize_single_line(curr_line->text, &curr_tokens, first_line_index + 1, true);
+    source_code_line_append_to_string(code, first_line_index, tmp_string.reset());
+    tokenizer_tokenize_single_line(tmp_string.to_string(), &prev_tokens, first_line_index, true);
+    source_code_line_append_to_string(code, first_line_index + 1, tmp_string.reset());
+    tokenizer_tokenize_single_line(tmp_string.to_string(), &curr_tokens, first_line_index + 1, true);
     if (prev_tokens.size == 0 || curr_tokens.size == 0) { // Empty lines don't connect
         return false;
     }
@@ -483,13 +487,14 @@ bool source_line_tokens_may_connect(Source_Code* code, int first_line_index, Are
     return false;
 }
 
-DynArray<Token> tokenize_partial_code(
-    Source_Code* code, Text_Index index, Arena* arena, int& token_index, bool handle_line_continuations, bool remove_comments)
+void tokenize_partial_code(
+    Source_Code* code, DynArray<Token>* append_to, Text_Index index, int& token_index, bool handle_line_continuations, bool remove_comments)
 {
-    int nearby_bundle_index = 0;
-	DynArray<Token> tokens = DynArray<Token>::create(arena);
+    SCRATCH_ARENA_MAKE_SCOPED(append_to->arena);
+    DynString tmp_string = DynString::create(scratch_arena);
+
 	token_index = 0;
-	if (index.line < 0 || index.line >= code->line_count) return tokens;
+	if (index.line < 0 || index.line >= code->line_count()) return;
 
     // Handle line-continuations
     int line_start_index = index.line;
@@ -497,11 +502,11 @@ DynArray<Token> tokenize_partial_code(
     if (handle_line_continuations)
     {
         // Got backwards while lines connect
-        while (line_start_index > 0 && source_line_tokens_may_connect(code, line_start_index - 1, arena, nearby_bundle_index)) {
+        while (line_start_index > 0 && source_line_tokens_may_connect(code, line_start_index - 1)) {
             line_start_index -= 1;
         }
         // Go forwards while lines connect
-        while (line_end_index + 1 < code->line_count && source_line_tokens_may_connect(code, line_end_index, arena, nearby_bundle_index)) {
+        while (line_end_index + 1 < code->line_count() && source_line_tokens_may_connect(code, line_end_index)) {
             line_end_index += 1;
         }
     }
@@ -509,14 +514,18 @@ DynArray<Token> tokenize_partial_code(
     // Tokenize all relevant lines
     for (int i = line_start_index; i <= line_end_index; i += 1)
     {
-        int line_token_start = tokens.size;
-	    tokenizer_tokenize_single_line(source_code_get_line(code, i)->text, &tokens, i, remove_comments);
+        int line_token_start = append_to->size;
+        source_code_line_append_to_string(code, i, tmp_string.reset());
+	    tokenizer_tokenize_single_line(
+            tmp_string.to_string(),
+            append_to, i, remove_comments
+        );
 
         if (i == index.line) 
         {
-	        token_index = math_maximum(0, (int)tokens.size - 1);
-	        for (int i = line_token_start; i < tokens.size; i++) {
-	        	Token& token = tokens[i];
+	        token_index = math_maximum(0, (int)append_to->size - 1);
+	        for (int i = line_token_start; i < append_to->size; i++) {
+	        	Token& token = (*append_to)[i];
 	        	if (token.start <= index.character) {
 	        		token_index = i;
 	        	}
@@ -527,15 +536,11 @@ DynArray<Token> tokenize_partial_code(
         }
 
     }
-	return tokens;
 }
 
 // Returns start/end index (Inclusive), -1 if not found
-ivec2 tokens_get_parenthesis_range(DynArray<Token> tokens, int start, Token_Type type, Arena* arena)
+ivec2 tokens_get_parenthesis_range(DynArray<Token> tokens, int start, Token_Type type)
 {
-	auto checkpoint = arena->make_checkpoint();
-	SCOPE_EXIT(checkpoint.rewind());
-
     Token_Type start_type = Token_Type::INVALID;
     Token_Type end_type = Token_Type::INVALID;
 	Token_Class token_class = token_type_get_class(type);

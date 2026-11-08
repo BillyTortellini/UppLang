@@ -1,4 +1,66 @@
 
+String.equals should probably be replaced with == and !=
+string.characters maybe just string.data (For people who know, also check for null-termination now)
+dynstring_append should probably be rewritten into string.reset()->append() calls;
+
+Every size should be an i64, so we don't have to worry about sizes.
+Maybe all things (strings, dyn_array, arena should have sizes as normal ints, so we dont have to worry about shit)
+
+
+Check where syntax_editor.arena is used
+Sorting should not be done in the way i'm currently doing it. There should be a less funciton, and if that's wrong, then swap
+string list set should be set_text() or set_string
+Probably seperate solution into UppLib and other projects (e.g. UppLib + UppLang)
+    So I can make breaking changes without having to fix all old stuff (e.g. importer)
+
+
+
+Missing Files:
+ - Type_System
+ - Semantic Analyser
+ - IR-Code
+ - Bytecode-Generator/Interpreter
+ - C-Backend
+ - Syntax_Editor
+ - Upp_Lang
+
+Memory allocation tactics:
+ - RAII (Object constructor/destructor)
+ - initialize and destroy methods
+ - defer
+ - Arenas/Allocators
+ - Garbage collected
+ - reference counting (smart-pointers)
+ - rust lifetimes (Compiler checked things)
+
+
+General Plan for Language/Game:
+-------------------------------
+ - Rework C++ Base-Library
+    * Rework Strings/DynString/String_List for everything
+    * Rework Rendering-Core
+    * New 2D Rendering Stuff (Lines, Rectangles (Rounded, with corners), Text)
+    * New UI-System (Based on Casey Muratori + Old shit)
+        - Replace Old UI Systems
+ - Fix all Testcases in Language --> Everything should work again
+    * Fix open language problems (casting, others?)
+ - Switch to arena-based memory allocations for whole Compiler
+ - Switch Editor-Suggestions to just text-based, compile/analyse on demand (For more editor-infos)
+
+Things to do afterwards (Order unclear):
+----------------------------------------
+ - Language Features
+ - Editor Features
+ - Debugger Features
+ - Writing Upp-Code
+    * Base-Library
+    * Game
+ - Incremental Compilation and Hot-Code reloading (Not sure when I want to add this?)
+    * Rework AST for better Analysis-Infos (Not in hashtable)
+    * Incremental Parsing
+    * Workload-Executer cycle handling could be done in deterministic way
+
+
 String Rework:
 --------------
  - Rename String to DynString
@@ -11,7 +73,6 @@ DynString won't be compatible with String
 
 
 
-
 TODO:
 -----
  X Fix Bugs from file_io
@@ -21,9 +82,11 @@ TODO:
  - Rewrite String to DynString, use String for other shit
     DynString can not be static? Maybe I'll add it, with capacity 0
     DynString needs an arena? Probably
- - Add String_List
+
+
 
 Base-Library:
+-------------
  - Allocators
     * Allocator_Base
     * Arena
@@ -50,20 +113,27 @@ Base-Library:
     * Scalar functions (min, max, lerp, whatever)
     * Trigonometry
 
+
+
 Stuff ontop of Base-Library:
  - File-IO
  - Window System with Input
- - Rendering-Core
- - 2D-Rendering (Roundend Rectangles, Text, Lines)
+ - Rendering_Layer
+    * Drawcalls
+    * Pipeline State
+    * GPU_Buffers
+    * Shaders
+    * Textures
+    * Framebuffers
+    * Cameras
+ - Basic 2D Rendering
+    * Rectangles, Lines, Text, Textures
  - GUI
 
 
-Sub-Tasks:
-----------
 
-
-TODO:
------
+Rendering_Layer Rework TODO:
+----------------------------
  - Allocator Update:
     * Allocator_Base with allocate, reallocate, free functionality
     * Free_List datastructure
@@ -86,22 +156,10 @@ TODO:
     * Framebuffers
     * Textures
 
-Rendering Core Rework:
-----------------------
-Create new project maybe/probably/very likely
-
-TODO:
- - Write a shader that creates 3 vertices and draws a triangle, hardcoded
-   ? Loading files/Filewatcher?
-
-DONE:
- - Reading OpenGL procedure loading
- - OpenGL extensions
 
 
-
-
-TODO:
+Language TODO:
+--------------
  - cast_any add option for reference
  - Implement a cast_auto function 
     cast_pointer
@@ -230,10 +288,9 @@ struct vs structure vs record vs class
 
     
 
-Current Task:
+Testcases TODO:
+---------------
  - Re-implement all Testcases, probably add new ones...
-
-TODO:
  - Open all files up to some number
  - Delete testcases that aren't up to date anymore
  - Fix syntax
@@ -275,7 +332,8 @@ TODO:
  - Tab system like notepad, with empty buffers and schtuff
  - Compiler-Infos, Errors and general editing mode should be re-though with new code-completion (Word based) design
 
-Open Tasks:
+Language features:
+-----------------------
  - Overwriting parameters by-redefining them would be cool (For permutability...)
     e.g. shadowing to have mutable parameters...
  - Base-Library: Hashtable/Hashset
@@ -294,7 +352,12 @@ Open Tasks:
     * Asdf :: struct($T) #pack_smallest, #pack_ordered
     * Types: Pack ordered, pack smallest, pack unaligned?
  - Macros?
+ - Hardcoded ~enum_type_possible_values() --> Returns slice of all possible values (e.g. enum value array)
 
+
+
+Editor/Debugger features:
+-------------------------
  - Some folds may not be stored correctly when closing the window
  - Debugger for bytecode, could maybe even call C-Things of some Dll's with library...
  - Comment/Uncomment command
@@ -303,7 +366,6 @@ Open Tasks:
  - Visual mode should support all normal mode commands (camera and stuff), and do extra things on delete and other...
  - Multi-Cursor support?
  - Show shortcuts for menus in F1 menu as text
- - Hardcoded ~enum_type_possible_values() --> Returns slice of all possible values (e.g. enum value array)
 
 
 

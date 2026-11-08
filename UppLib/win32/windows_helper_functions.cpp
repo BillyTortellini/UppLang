@@ -3,6 +3,7 @@
 #include <Windows.h>
 
 #include "../utility/utils.hpp"
+#include "../datastructures/string.hpp"
 
 void helper_print_last_error()
 {

@@ -178,6 +178,8 @@ void gui_node_destroy(GUI_Node& node) {
 
 struct GUI
 {
+    Arena arena;
+    Free_List string_free_list;
     Dynamic_Array<GUI_Node> nodes;
     GUI_Matching_Checkpoint active_checkpoint;
     Cursor_Icon_Type cursor_type;
@@ -199,6 +201,8 @@ void gui_initialize(Text_Renderer* text_renderer, Window* window)
 {
     auto& pre = rendering_core.predefined;
 
+    gui.arena = Arena::create();
+    gui.string_free_list = Free_List::create<String_List_Node>(gui.arena.upcast());
     gui.text_renderer = text_renderer;
     gui.nodes = dynamic_array_create<GUI_Node>(1);
     gui.window = window;
@@ -241,6 +245,7 @@ void gui_destroy() {
         gui_node_destroy(gui.nodes[i]);
     }
     dynamic_array_destroy(&gui.nodes);
+    gui.arena.destroy();
 }
 
 
@@ -910,7 +915,7 @@ void gui_append_to_string(DynString* append_to, int indentation_level, int node_
         }
     }
 
-    string_append(append_to, "\n");
+    append_to->append("\n");
     {
         int child_index = node.index_first_child;
         while (child_index != -1) {
@@ -1018,6 +1023,9 @@ void gui_update_and_render(Render_Pass* render_pass)
     auto& info = core.render_information;
     auto& nodes = gui.nodes;
     auto input = gui.input;
+
+    SCRATCH_ARENA_MAKE_SCOPED(&core.arena);
+    DynString tmp_string = DynString::create(scratch_arena);
 
     gui.active_checkpoint.type = GUI_Matching_Checkpoint_Type::NONE;
 
@@ -1214,12 +1222,12 @@ void gui_update_and_render(Render_Pass* render_pass)
 
         // Query render primitives
         auto& pre = rendering_core.predefined;
-        auto posSizeCombined = vertex_attribute_make<vec4>("PosSize2D");
-        auto clippedBoundingBox = vertex_attribute_make<vec4>("ClippedBoundingBox");
-        auto borderThicknessEdgeRadius = vertex_attribute_make<vec2>("BorderThicknessEdgeRadius");
-        auto borderColor = vertex_attribute_make<vec4>("BorderColor");
+        auto posSizeCombined = vertex_attribute_make<vec4>(string_make("PosSize2D"));
+        auto clippedBoundingBox = vertex_attribute_make<vec4>(string_make("ClippedBoundingBox"));
+        auto borderThicknessEdgeRadius = vertex_attribute_make<vec2>(string_make("BorderThicknessEdgeRadius"));
+        auto borderColor = vertex_attribute_make<vec4>(string_make("BorderColor"));
         auto rectangle_mesh = rendering_core_query_mesh(
-            "gui_rectangle_mesh",
+            string_make("gui_rectangle_mesh"),
             vertex_description_create({
                 posSizeCombined,
                 clippedBoundingBox,
@@ -1229,7 +1237,7 @@ void gui_update_and_render(Render_Pass* render_pass)
                 }),
             true
         );
-        auto rectangle_shader = rendering_core_query_shader("gui_rect.glsl");
+        auto rectangle_shader = rendering_core_query_shader(string_make("gui_rect.glsl"));
 
         static int skip_batches = 0;
         // if (input->key_pressed[(int)Key_Code::O] && gui.focused_node == 0) {
@@ -1271,7 +1279,8 @@ void gui_update_and_render(Render_Pass* render_pass)
                     auto bb = node.bounding_box.as_bounding_box();
                     vec4 c = node.drawable.color;
                     text_renderer_add_text(
-                        gui.text_renderer, node.drawable.text, bb.min, Anchor::BOTTOM_LEFT, node.drawable.char_size, vec3(c.x, c.y, c.z),
+                        gui.text_renderer, tmp_string.reset()->append(node.drawable.text)->to_string(), 
+                        bb.min, Anchor::BOTTOM_LEFT, node.drawable.char_size, vec3(c.x, c.y, c.z),
                         optional_make_success(node.clipped_box.value.as_bounding_box())
                     );
                     break;
@@ -1310,23 +1319,32 @@ void gui_update_and_render(Render_Pass* render_pass)
 
 
 
-DynString* gui_store_string(GUI_Handle parent_handle, const char* initial_string) {
+struct Stored_String
+{
+    DynString string;
+    Arena arena;
+};
+
+DynString* gui_store_string(GUI_Handle parent_handle, const char* initial_string) 
+{
     auto node_handle = gui_add_node(parent_handle, gui_size_make_fixed(0.0f), gui_size_make_fixed(0.0f), gui_drawable_make_none());
     gui_node_hide(node_handle);
-    if (node_handle.userdata == 0) {
-        DynString* string = new DynString;
-        *string = dynstring_create(initial_string);
+    if (node_handle.userdata == 0) 
+    {
+        Stored_String* stored_string = new Stored_String;
+        stored_string->arena = Arena::create();
+        stored_string->string = DynString::create(&stored_string->arena);
         gui_node_set_userdata(
-            node_handle, (void*)string,
+            node_handle, (void*)stored_string,
             [](void* data) -> void {
-                DynString* str = (DynString*)data;
-                string_destroy(str);
-                delete str;
+                Stored_String* stored_string = (Stored_String*)data;
+                stored_string->arena.destroy();
+                delete stored_string;
             }
         );
-        return string;
+        return &stored_string->string;
     }
-    return (DynString*)node_handle.userdata;
+    return &((Stored_String*)node_handle.userdata)->string;
 }
 
 GUI_Handle gui_root_handle() {
@@ -1536,15 +1554,15 @@ GUI_Drawable gui_drawable_make_none() {
     GUI_Drawable drawable;
     drawable.type = GUI_Drawable_Type::NONE;
     drawable.color = vec4(0.0f);
-    drawable.text = string_create_static("");
+    drawable.text = String_List::create_empty(gui.string_free_list.upcast());
     return drawable;
 }
 
-GUI_Drawable gui_drawable_make_text(DynString text, vec2 char_size, vec4 color) {
+GUI_Drawable gui_drawable_make_text(String text, vec2 char_size, vec4 color) {
     GUI_Drawable drawable;
     drawable.type = GUI_Drawable_Type::TEXT;
     drawable.color = color;
-    drawable.text = dynstring_copy(text);
+    drawable.text = String_List::create(gui.string_free_list.upcast(), text);
     drawable.char_size = char_size;
     return drawable;
 }
@@ -1553,7 +1571,7 @@ GUI_Drawable gui_drawable_make_rect(vec4 color, int border_thickness, vec4 borde
     GUI_Drawable drawable;
     drawable.type = GUI_Drawable_Type::RECTANGLE;
     drawable.color = color;
-    drawable.text = string_create_static("");
+    drawable.text = String_List::create_empty(gui.string_free_list.upcast());
     drawable.border_color = border_color;
     drawable.edge_radius = edge_radius;
     drawable.border_thickness = border_thickness;
@@ -1562,14 +1580,14 @@ GUI_Drawable gui_drawable_make_rect(vec4 color, int border_thickness, vec4 borde
 
 void gui_drawable_destroy(GUI_Drawable& drawable) {
     if (drawable.type == GUI_Drawable_Type::TEXT) {
-        string_destroy(&drawable.text);
+        drawable.text.destroy();
     }
 }
 
 
 
 // GUI PREDEFINED OBJECTS
-GUI_Handle gui_push_text(GUI_Handle parent_handle, DynString text, vec4 color)
+GUI_Handle gui_push_text(GUI_Handle parent_handle, String text, vec4 color)
 {
     auto char_size = gui.default_text_size;
     return gui_add_node(
@@ -1580,7 +1598,7 @@ GUI_Handle gui_push_text(GUI_Handle parent_handle, DynString text, vec4 color)
     );
 }
 
-GUI_Handle gui_push_text_with_size(GUI_Handle parent_handle, DynString text, vec2 char_size, vec4 color)
+GUI_Handle gui_push_text_with_size(GUI_Handle parent_handle, String text, vec2 char_size, vec4 color)
 {
     return gui_add_node(
         parent_handle,
@@ -1843,7 +1861,7 @@ GUI_Handle gui_push_scroll_area(GUI_Handle parent_handle, GUI_Size size_x, GUI_S
     return client_area;
 }
 
-GUI_Handle gui_push_window(GUI_Handle parent_handle, const char* name)
+GUI_Handle gui_push_window(GUI_Handle parent_handle, String name)
 {
     // Create gui nodes
     auto window_handle = gui_add_node(parent_handle, gui_size_make_fixed(100), gui_size_make_fixed(100), gui_drawable_make_rect(vec4(1), 1, vec4(0, 0, 0, 1)));
@@ -1856,7 +1874,7 @@ GUI_Handle gui_push_window(GUI_Handle parent_handle, const char* name)
     gui_drag_data_apply_to_node(*drag_data, window_handle);
     gui_node_set_padding(window_handle, 1, 1);
     gui_node_set_padding(header_handle, 1, 1);
-    gui_push_text_with_size(header_handle, string_create_static(name), text_renderer_get_aligned_char_size(gui.text_renderer, convertHeight(.43f, Unit::CENTIMETER)));
+    gui_push_text_with_size(header_handle, name, text_renderer_get_aligned_char_size(gui.text_renderer, convertHeight(.43f, Unit::CENTIMETER)));
 
     // Handle focusing of windows (e.g. window order)
     if (window_handle.first_time_created || ((window_handle.mouse_hovers_child || window_handle.mouse_hover) && gui.input->mouse_pressed[(int)Mouse_Key_Code::LEFT])) {
@@ -1869,7 +1887,7 @@ GUI_Handle gui_push_window(GUI_Handle parent_handle, const char* name)
     return gui_push_scroll_area(window_handle, gui_size_make_fill(false), gui_size_make_fill(false));
 }
 
-bool gui_push_button(GUI_Handle parent_handle, DynString text)
+bool gui_push_button(GUI_Handle parent_handle, String text)
 {
     const vec4 border_color = vec4(vec3(0.2f), 1.0f); // Some shade of gray
     const vec4 normal_color = vec4(vec3(0.8f), 1.0f); // Some shade of gray
@@ -1961,7 +1979,7 @@ Text_Edit_Input gui_push_text_edit(GUI_Handle parent_handle, DynString* string, 
     // Add text box
     auto text = gui_add_node(
         container, gui_size_make_fixed(string->size * char_size.x), gui_size_make_fixed(char_size.y), 
-        gui_drawable_make_text(*string, char_size)
+        gui_drawable_make_text(string->to_string(), char_size)
     );
     if (gui_node_has_focus(container)) { // Add cursor
         auto cursor = gui_add_node(container, gui_size_make_fixed(2), gui_size_make_fill(), gui_drawable_make_rect(vec4(0, 0, 0, 1)));
@@ -1994,17 +2012,17 @@ bool gui_push_toggle(GUI_Handle parent_handle, bool* value)
         *value = !*value;
     }
     if (*value) {
-        auto text = gui_push_text(center, string_create_static("x"), vec4(1.0f, 0.0f, 0.0f, 1.0f));
+        auto text = gui_push_text(center, string_make("x"), vec4(1.0f, 0.0f, 0.0f, 1.0f));
         gui_node_set_alignment(text, GUI_Alignment::CENTER);
     }
     return pressed;
 }
 
-GUI_Handle gui_push_text_description(GUI_Handle parent_handle, const char* text)
+GUI_Handle gui_push_text_description(GUI_Handle parent_handle, String text)
 {
     auto main_container = gui_add_node(parent_handle, gui_size_make_fill(), gui_size_make_fit(), gui_drawable_make_none());
     gui_node_set_layout(main_container, GUI_Stack_Direction::LEFT_TO_RIGHT);
-    gui_push_text(main_container, string_create_static(text));
+    gui_push_text(main_container, text);
 
     auto container = gui_add_node(main_container, gui_size_make_fill(), gui_size_make_fit(), gui_drawable_make_none());
     gui_node_set_layout(container, GUI_Stack_Direction::RIGHT_TO_LEFT);
@@ -2043,10 +2061,10 @@ void gui_push_example_gui()
     static bool padding_test = false;
     static bool preferred_test = false;
 
-    auto window = gui_push_window(gui_root_handle(), "Test");
+    auto window = gui_push_window(gui_root_handle(), string_make("Test"));
     DynString* str = gui_store_string(window, "");
     gui_push_text_edit(window, str, gui.default_text_size);
-    if (gui_push_button(window, string_create_static("Test me!"))) {
+    if (gui_push_button(window, string_make("Test me!"))) {
         logg("%s\n", str->characters);
     }
     auto time = rendering_core.render_information.current_time_in_seconds;
@@ -2064,21 +2082,21 @@ void gui_push_example_gui()
 
     if (show_config_gui) {
         gui_matching_add_checkpoint_name("Config GUI");
-        auto window = gui_push_window(gui_root_handle(), "Config_Window");
+        auto window = gui_push_window(gui_root_handle(), string_make("Config_Window"));
 
-        gui_push_toggle(gui_push_text_description(window, "Input hover"), &input_hover);
-        gui_push_toggle(gui_push_text_description(window, "Z-Test"), &z_test);
-        gui_push_toggle(gui_push_text_description(window, "Empty"), &empty_window);
-        gui_push_toggle(gui_push_text_description(window, "Stacking"), &stacking);
-        gui_push_toggle(gui_push_text_description(window, "Toggle-Thing"), &toggle_thing);
-        gui_push_toggle(gui_push_text_description(window, "Layout"), &layout_window);
-        gui_push_toggle(gui_push_text_description(window, "Padding"), &padding_test);
-        gui_push_toggle(gui_push_text_description(window, "Preferred"), &preferred_test);
+        gui_push_toggle(gui_push_text_description(window, string_make("Input hover")), &input_hover);
+        gui_push_toggle(gui_push_text_description(window, string_make("Z-Test")), &z_test);
+        gui_push_toggle(gui_push_text_description(window, string_make("Empty")), &empty_window);
+        gui_push_toggle(gui_push_text_description(window, string_make("Stacking")), &stacking);
+        gui_push_toggle(gui_push_text_description(window, string_make("Toggle-Thing")), &toggle_thing);
+        gui_push_toggle(gui_push_text_description(window, string_make("Layout")), &layout_window);
+        gui_push_toggle(gui_push_text_description(window, string_make("Padding")), &padding_test);
+        gui_push_toggle(gui_push_text_description(window, string_make("Preferred")), &preferred_test);
     }
 
     if (preferred_test) {
         gui_matching_add_checkpoint_name("Preferred GUI");
-        auto window = gui_push_window(gui_root_handle(), "Preferred");
+        auto window = gui_push_window(gui_root_handle(), string_make("Preferred"));
         auto container = gui_add_node(window, gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_rect(white));
         gui_node_set_layout(container, GUI_Stack_Direction::LEFT_TO_RIGHT);
         gui_node_set_padding(container, 4, 4, true);
@@ -2172,7 +2190,7 @@ void gui_push_example_gui()
     if (empty_window)
     {
         gui_matching_add_checkpoint_name("Empty window");
-        auto window = gui_push_window(gui_root_handle(), "Test");
+        auto window = gui_push_window(gui_root_handle(), string_make("Test"));
         // gui_push_text(window, string_create_static("Text"), 2.0f);
         // gui_push_text(window, string_create_static("Take 2"), 2.0f);
     }
@@ -2224,7 +2242,7 @@ void gui_push_example_gui()
         gui_node_set_position_fixed(window, mouse_pos - vec2(30, 30), Anchor::BOTTOM_LEFT);
 
         auto bar = gui_add_node(window, gui_size_make_fill(), gui_size_make_fixed(30.0f), gui_drawable_make_rect(vec4(0.3f, 0.3f, 1.0f, 1.0f)));
-        gui_push_text(bar, string_create_static("HEllo!"));
+        gui_push_text(bar, string_make("HEllo!"));
     }
 
     if (layout_window)
@@ -2234,7 +2252,7 @@ void gui_push_example_gui()
         int pixel_width = 100;
         int pixel_height = 100;
 
-        auto window = gui_push_window(gui_root_handle(), "Test window");
+        auto window = gui_push_window(gui_root_handle(), string_make("Test window"));
 
         // Add number couter with userdata
         auto space = gui_add_node(window, gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_rect(cyan));
@@ -2251,19 +2269,20 @@ void gui_push_example_gui()
             }
             else
             {
-                bool pressed = gui_push_button(toggle_area, string_create_static("Press me!"));
+                bool pressed = gui_push_button(toggle_area, string_make("Press me!"));
                 int* value = gui_store_primitive<int>(toggle_area, 0);
                 if (pressed) {
                     *value += 1;
                 }
-                DynString tmp = dynstring_create();
-                SCOPE_EXIT(string_destroy(&tmp));
+                Arena arena = Arena::create();
+                SCOPE_EXIT(arena.destroy());
+                DynString tmp = dynstring_create(&arena);
                 tmp.append_formated("%d", *value);
-                gui_push_text(toggle_area, tmp);
+                gui_push_text(toggle_area, tmp.to_string());
             }
         }
 
-        auto right = gui_push_text(window, string_create_static("Right"));
+        auto right = gui_push_text(window, string_make("Right"));
         gui_node_set_alignment(right, GUI_Alignment::MAX);
 
         auto horizontal = gui_add_node(window, gui_size_make_fill(true), gui_size_make_fill(true), gui_drawable_make_none());
@@ -2274,11 +2293,11 @@ void gui_push_example_gui()
         gui_add_node(horizontal2, gui_size_make_fill(true), gui_size_make_fill(true), gui_drawable_make_rect(yellow));
         gui_add_node(horizontal2, gui_size_make_fill(true), gui_size_make_fill(true), gui_drawable_make_rect(green));
 
-        auto center = gui_push_text(window, string_create_static("Center with very long name that you shouldn't forget!"));
+        auto center = gui_push_text(window, string_make("Center with very long name that you shouldn't forget!"));
         gui_node_set_alignment(center, GUI_Alignment::CENTER);
 
         gui_add_node(window, gui_size_make_fill(true), gui_size_make_fill(true), gui_drawable_make_rect(magenta));
-        gui_push_text(window, string_create_static("LEFT"));
+        gui_push_text(window, string_make("LEFT"));
     }
 }
 

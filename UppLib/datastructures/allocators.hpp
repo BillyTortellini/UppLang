@@ -142,11 +142,14 @@ void scratch_arena_set_arenas(Scratch_Arena_Pair scratch_arenas);
 Scratch_Arena_Pair scratch_arena_get_arenas_in_use();
 Arena* scratch_arena_retrieve(Arena* arena_to_avoid);
 
-#define SCRATCH_ARENA_MAKE_SCOPED(permanent_arena) \
-	Arena* scratch_arena = scratch_arena_retrieve(permanent_arena); \
+#define SCRATCH_ARENA_MAKE_SCOPED(arena_to_avoid) \
+	Arena* scratch_arena = scratch_arena_retrieve(arena_to_avoid); \
 	Arena_Checkpoint _scratch_arena_checkpoint = scratch_arena->make_checkpoint(); \
 	SCOPE_EXIT(_scratch_arena_checkpoint.rewind());
 
+#define ARENA_MAKE_SCOPED_CHECKPOINT(arena) \
+	Arena_Checkpoint _scoped_checkpoint_ = (arena)->make_checkpoint(); \
+	SCOPE_EXIT(_scoped_checkpoint_.rewind());
 
 
 // Free_List
@@ -197,8 +200,9 @@ struct DynArray
 		return result;
 	}
 
-	void reset() {
+	DynArray<T>* reset() {
 		size = 0;
+		return this;
 	}
 
 	void reserve(uint requested_size) 
@@ -242,15 +246,38 @@ struct DynArray
 		buffer[insert_before_index] = value;
 	}
 
+	void insert_array(Array<T> values, int insert_index)
+	{
+		if (values.size == 0) return;
+		if (insert_index < 0) {
+			insert_index = 0;
+		}
+
+		reserve(size + values.size);
+		if (insert_index < size) {
+			memory_copy_overlapping(&buffer.data[insert_index + values.size], &buffer.data[insert_index], (size - insert_index) * sizeof(T));
+		}
+		else {
+			insert_index = size;
+		}
+
+		memory_copy_overlapping(&buffer.data[insert_index], values.data, values.size * sizeof(T));
+		size += values.size;
+	}
+
+	void append_array(Array<T> values)
+	{
+		if (values.size == 0) return;
+		this->insert_array(values, size);
+	}
+
 	void remove_range_ordered(int start, int count)
 	{
 		assert(start >= 0 && start <= size, "");
 		count = math_minimum(count, (int)size - start);
 		if (count <= 0) return;
 
-		for (int i = start + count; i < size; i++) {
-			buffer[i - count] = buffer[i];
-		}
+		memory_copy_overlapping(&buffer[start], &buffer[start + count], size - (start + count));
 		size -= count;
 	}
 
@@ -278,6 +305,11 @@ struct DynArray
 	T& last() {
 		assert(size > 0, "");
 		return buffer[size - 1];
+	}
+
+	T& at(int index) {
+		assert(index < size && index >= 0, "");
+		return buffer.data[index];
 	}
 
 	T& operator[](int index) {
@@ -464,7 +496,7 @@ struct DynSet
 		return false;
 	}
 
-	// Returns true if value was inserted, false if it already exists?
+	// Returns true if value was inserted, false if it already exists
 	bool insert(T& value) {
 		return insert_with_hash(value, hash_function(&value));
 	}
@@ -512,16 +544,72 @@ struct DynSet
 		}
 		return false;
 	}
+
+	Array<T*> copy_to_array(Arena* arena)
+	{
+		Array<T*> result = arena->allocate_array<T*>(element_count);
+		if (element_count == 0) {
+			return result;
+		}
+
+		int next_index = 0;
+		for (int i = 0; i < entries.size; i++) 
+		{
+			DynSet_Entry<T>* entry = &entries[i];
+			if (entry->state == DynSet_Entry_State::OCCUPIED) {
+				result[next_index] = &entry->value;
+				next_index += 1;
+			}
+		}
+
+		assert(next_index == element_count, "");
+		return result;
+	}
 };
 
 
 
 // DynTable
+template<typename K, typename V>
+struct Key_Value_Pointer_Pair
+{
+	K* key;
+	V* value;
+};
+
+template<typename K, typename V>
+struct DynTable;
+
+template<typename K, typename V>
 struct DynTable_Query_Result
 {
+	DynTable<K, V>* table;
+	K query_key;
 	u64 hash;
 	int index; // If value is in table, then this is the entry-index, otherwise it's the sonding index for insert
 	bool value_is_in_table;
+
+	K get_key() {
+		return *table->query_to_key(*this);
+	}
+	V get_value() {
+		return *table->query_to_value(*this);
+	}
+	K* get_key_pointer() {
+		return table->query_to_key(*this);
+	}
+	V* get_value_pointer() {
+		return table->query_to_value(*this);
+	}
+	void remove_entry() {
+		table->remove_with_query(*this);
+	}
+	void insert_value(V value) {
+		table->insert_with_query(*this, query_key, value);
+	}
+	void insert_key_value(K key, V value) {
+		table->insert_with_query(*this, key, value);
+	}
 };
 
 template<typename K, typename V>
@@ -641,12 +729,14 @@ struct DynTable
 		return (hash_pos + sonding_index * sonding_increment) % entries.size;
 	}
 
-	DynTable_Query_Result query_with_hash(K key, u64 hash, bool query_for_insert = true)
+	DynTable_Query_Result<K, V> query_with_hash(K key, u64 hash, bool query_for_insert = true)
 	{
-		DynTable_Query_Result result;
+		DynTable_Query_Result<K, V> result;
+		result.table = this;
 		result.hash = hash;
 		result.index = query_for_insert ? -1 : -2;
 		result.value_is_in_table = false;
+		result.query_key = key;
 
 		if (query_for_insert) {
 			reserve(element_count + 1);
@@ -702,11 +792,11 @@ struct DynTable
 		return result;
 	}
 
-	DynTable_Query_Result query(K key, bool query_for_insert = true) {
+	DynTable_Query_Result<K, V> query(K key, bool query_for_insert = true) {
 		return query_with_hash(key, hash_function(&key), query_for_insert);
 	}
 
-	void insert_with_query(DynTable_Query_Result result, const K& key, const V& value)
+	void insert_with_query(DynTable_Query_Result<K, V>& result, const K& key, const V& value)
 	{
 		// Find entry to insert
 		DynTable_Entry<K, V>* entry = nullptr;
@@ -741,7 +831,7 @@ struct DynTable
 		entry->state = DynSet_Entry_State::OCCUPIED;
 	}
 
-	void remove_with_query(DynTable_Query_Result result)
+	void remove_with_query(DynTable_Query_Result<K, V>& result)
 	{
 		if (!result.value_is_in_table) return;
 		element_count -= 1;
@@ -749,12 +839,12 @@ struct DynTable
 		entries[result.index].state = DynSet_Entry_State::FREE_AGAIN;
 	}
 
-	K* query_to_key(DynTable_Query_Result result) {
+	K* query_to_key(DynTable_Query_Result<K, V>& result) {
 		assert(result.value_is_in_table, "");
 		return &entries[result.index].key;
 	}
 
-	V* query_to_value(DynTable_Query_Result result) {
+	V* query_to_value(DynTable_Query_Result<K, V>& result) {
 		assert(result.value_is_in_table, "");
 		return &entries[result.index].value;
 	}
@@ -767,6 +857,16 @@ struct DynTable
 		auto result = query(key);
 		assert(!result.value_is_in_table, "");
 		insert_with_query(result, key, value);
+	}
+
+	bool try_insert(const K& key, const V& value)
+	{
+		auto result = query(key);
+		if (result.value_is_in_table) {
+			return false;
+		}
+		result.insert_key_value(key, value);
+		return true;
 	}
 
 	// Returns true if value was in table
@@ -793,6 +893,53 @@ struct DynTable
 			sum_sonding_counts += entry.sonding_index + 1;
 		}
 		return sum_sonding_counts / (float)element_count;
+	}
+
+	Array<Key_Value_Pointer_Pair<K, V>> copy_to_array(Arena* arena)
+	{
+		Array<Key_Value_Pointer_Pair<K, V>> result = arena->allocate_array<Key_Value_Pointer_Pair<K, V>>(element_count);
+		if (element_count == 0) {
+			return result;
+		}
+
+		int next_index = 0;
+		for (int i = 0; i < entries.size; i++) 
+		{
+			DynTable_Entry<K, V>* entry = &entries[i];
+			if (entry->state == DynSet_Entry_State::OCCUPIED) 
+			{
+				Key_Value_Pointer_Pair<K, V> pair;
+				pair.key = &entry->key;
+				pair.value = &entry->value;
+				result[next_index] = pair;
+				next_index += 1;
+			}
+		}
+
+		assert(next_index == element_count, "");
+		return result;
+	}
+
+	Array<V> copy_values_to_array(Arena* arena)
+	{
+		Array<V> result = arena->allocate_array<V>(element_count);
+		if (element_count == 0) {
+			return result;
+		}
+
+		int next_index = 0;
+		for (int i = 0; i < entries.size; i++) 
+		{
+			DynTable_Entry<K, V>* entry = &entries[i];
+			if (entry->state == DynSet_Entry_State::OCCUPIED) 
+			{
+				result[next_index] = entry->value;
+				next_index += 1;
+			}
+		}
+
+		assert(next_index == element_count, "");
+		return result;
 	}
 };
 
@@ -829,11 +976,16 @@ struct List
 	{
 		while (head != nullptr) {
 			List_Node<T>* next = head->next;
-			allocator->deallocate(head, sizeof(List_Node<T>));
+			allocator->deallocate_raw(head, sizeof(List_Node<T>));
 			head = next;
 		}
 		tail = nullptr;
 		element_count = 0;
+	}
+
+	void deallocate()
+	{
+		reset();
 	}
 
 	void destroy() 
@@ -908,7 +1060,7 @@ struct List
 			next->prev = prev;
 		}
 
-		allocator->deallocate(node, sizeof(List_Node<T>));
+		allocator->deallocate_raw(node, sizeof(List_Node<T>));
 	}
 
 	void remove_item(T* item) {

@@ -2,7 +2,6 @@
 
 #include <cstdint>
 
-typedef unsigned char byte;
 typedef int8_t int8;
 typedef uint8_t uint8;
 typedef int16_t int16;
@@ -20,6 +19,8 @@ typedef uint8  u8;
 typedef uint16 u16;
 typedef uint32 u32;
 typedef uint64 u64;
+
+typedef u8 byte;
 
 // This will always be u64, doesnt matter if we compile for 32bit
 typedef u64 uint;

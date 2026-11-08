@@ -2,9 +2,16 @@
 
 #include <Windows.h>
 #include "windows_helper_functions.hpp"
+#include "../datastructures/allocators.hpp"
 
-Optional<Process_Result> process_start(DynString command)
+Process_Result process_start(String command, bool wait_for_exit, DynString* output_string)
 {
+    Process_Result result;
+    result.process_started = false;
+    result.exit_code = 0;
+
+    SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+
     HANDLE handle_stdout_read = 0;
     HANDLE handle_stdout_write = 0;
     HANDLE handle_stdin_read = 0;
@@ -13,6 +20,7 @@ Optional<Process_Result> process_start(DynString command)
     SCOPE_EXIT(if (handle_stdout_write != 0) { CloseHandle(handle_stdout_write); handle_stdout_write = 0; });
     SCOPE_EXIT(if (handle_stdin_read != 0) { CloseHandle(handle_stdin_read); handle_stdin_read = 0; });
     SCOPE_EXIT(if (handle_stdin_write != 0) { CloseHandle(handle_stdin_write); handle_stdin_write = 0; });
+    if (output_string != nullptr)
     {
         SECURITY_ATTRIBUTES security_attributes;
         security_attributes.nLength = sizeof(security_attributes);
@@ -38,24 +46,29 @@ Optional<Process_Result> process_start(DynString command)
         }
         if (!success) {
             logg("Pipe problem was detected");
-            return optional_make_failure<Process_Result>();
+            return result;
         }
     }
+
+    DynString null_terminated_command = dynstring_create_copy(command, scratch_arena);
+    dynstring_add_null_terminator(&null_terminated_command);
 
     STARTUPINFO start_info;
     ZeroMemory(&start_info, sizeof(start_info));
     start_info.cb = sizeof(start_info);
-    start_info.dwFlags |= STARTF_USESTDHANDLES;
-    start_info.hStdError = handle_stdout_write;
-    start_info.hStdOutput = handle_stdout_write;
-    start_info.hStdInput = handle_stdin_read;
+    if (output_string != nullptr) {
+        start_info.dwFlags |= STARTF_USESTDHANDLES; // If not set, the next members are ignored
+        start_info.hStdError = handle_stdout_write;
+        start_info.hStdOutput = handle_stdout_write;
+        start_info.hStdInput = handle_stdin_read;
+    }
 
     PROCESS_INFORMATION process_info;
     ZeroMemory(&process_info, sizeof(process_info));
 
     bool success = CreateProcessA(
         0,
-        command.characters,
+        null_terminated_command.characters,
         NULL, // Security Stuff
         NULL, // Primary thread security stuff
         TRUE, // Inherit handles
@@ -67,15 +80,16 @@ Optional<Process_Result> process_start(DynString command)
     );
     if (!success) {
         helper_print_last_error();
-        return optional_make_failure<Process_Result>();
+        return result;
     }
+    result.process_started = true;
 
     SCOPE_EXIT(
         CloseHandle(process_info.hProcess);
-    CloseHandle(process_info.hThread);
+        CloseHandle(process_info.hThread);
     );
 
-    // Close child pipes
+    // Close child pipes (Do this explicitly I guess? even though we have scope-exit for this)
     CloseHandle(handle_stdout_write);
     handle_stdout_write = 0;
     CloseHandle(handle_stdin_read);
@@ -85,85 +99,38 @@ Optional<Process_Result> process_start(DynString command)
     handle_stdin_write = 0;
 
     // Read from child
-    Process_Result result;
-    result.output = dynstring_create(1024);
-    char buffer[1024];
-    DWORD read_bytes = 0;
-    while (true)
+    if (output_string != nullptr)
     {
-        success = ReadFile(handle_stdout_read, buffer, 1024, &read_bytes, NULL);
-        if (!success || read_bytes == 0) break;
-        string_append_character_array(&result.output, array_create_static(buffer, read_bytes));
+        char buffer[1024];
+        DWORD read_bytes = 0;
+        while (true)
+        {
+            success = ReadFile(handle_stdout_read, buffer, 1024, &read_bytes, NULL);
+            if (!success || read_bytes == 0) break;
+            output_string->append(string_make(&buffer[0], read_bytes));
+        }
     }
     CloseHandle(handle_stdout_read);
     handle_stdout_read = 0;
 
-    success = true;
-    WaitForSingleObject(process_info.hProcess, INFINITE);
-    DWORD exit_code = 0;
-    if (GetExitCodeProcess(process_info.hProcess, &exit_code) == FALSE) {
-        success = false;
-        logg("Could not get exit code?\n");
-        result.exit_code = 1;
-    }
-    else {
-        result.exit_code = exit_code;
-    }
-
-    return optional_make_success(result);
-}
-
-int process_start_no_pipes(DynString command, bool wait_for_exit)
-{
-    STARTUPINFO start_info;
-    ZeroMemory(&start_info, sizeof(start_info));
-    start_info.cb = sizeof(start_info);
-
-    PROCESS_INFORMATION process_info;
-    ZeroMemory(&process_info, sizeof(process_info));
-
-    bool success = CreateProcessA(
-        0,
-        command.characters,
-        NULL, // Security Stuff
-        NULL, // Primary thread security stuff
-        FALSE, // Inherit handles
-        0, // Creation flags
-        0, // Use Parents environment (But it may just be copied)
-        0, // Use Parents directory
-        &start_info,
-        &process_info
-    );
-    if (!success) {
-        helper_print_last_error();
-        return 1;
-    }
-
-    DWORD exit_code = 0;
-    if (wait_for_exit) 
+    if (wait_for_exit)
     {
+        success = true;
         WaitForSingleObject(process_info.hProcess, INFINITE);
+        DWORD exit_code = 0;
         if (GetExitCodeProcess(process_info.hProcess, &exit_code) == FALSE) {
             success = false;
             logg("Could not get exit code?\n");
-            exit_code = 1;
+            result.exit_code = -1;
         }
         else {
-            exit_code = exit_code;
+            result.exit_code = exit_code;
         }
     }
-    CloseHandle(process_info.hProcess);
-    CloseHandle(process_info.hThread);
-    
-    return exit_code;
+
+    return result;
 }
 
-void process_result_destroy(Optional<Process_Result>* result)
-{
-    if (result->available) {
-        string_destroy(&result->value.output);
-    }
-}
 
 
 static thread_local bool converted_to_fiber = false;

@@ -2,7 +2,6 @@
 
 #include "compilation_data.hpp"
 #include "semantic_analyser.hpp"
-#include "compilation_data.hpp"
 
 bool deduplication_info_is_equal(Deduplication_Info* a, Deduplication_Info* b) {
     if (!types_are_equal(a->type, b->type) || a->memory.size != b->memory.size) return false;
@@ -46,7 +45,7 @@ Constant_Pool* constant_pool_create(Compilation_Data* compilation_data)
             predef.bool_false = add_result.options.constant;
         }
 
-        predef.empty_string = result->add_string_assume_valid(string_create_static(""));
+        predef.empty_string = result->add_string(string_make(""));
         predef.i32_zero = result->add_i32(0);
         predef.i32_one = result->add_i32(1);
         predef.u64_zero = result->add_u64(0);
@@ -226,7 +225,7 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(
             }
 
             // Create c_string value pointing to identifier pool (Always null terminated)
-            auto id = identifier_pool_add(&compilation_data->identifier_pool, string_create_static((const char*)string.data));
+            auto id = identifier_pool_add(&compilation_data->identifier_pool, string_make((char*)string.data, string.size));
             memory_set_bytes(&string, sizeof(Upp_String), 0);
             *(Upp_String*)memory = upp_string_from_id(id);;
             return;
@@ -440,12 +439,20 @@ Upp_Constant Constant_Pool::add_upp_string_assume_valid(Upp_String string)
     return result.options.constant;
 }
 
-Upp_Constant Constant_Pool::add_string_assume_valid(DynString id)
+Upp_Constant Constant_Pool::add_string(String string)
 {
-    Upp_String string;
-    string.data = id.characters;
-    string.size = id.size;
-    return add_upp_string_assume_valid(string);
+    Upp_String upp_string;
+    upp_string.data = (void*)string.characters;
+    upp_string.size = string.size;
+    return add_upp_string_assume_valid(upp_string);
+}
+
+Upp_Constant Constant_Pool::add_identifier(Identifier id)
+{
+    Upp_String upp_string;
+    upp_string.data = (void*)id.string->characters;
+    upp_string.size = id.string->size;
+    return add_upp_string_assume_valid(upp_string);
 }
 
 Upp_Constant Constant_Pool::add_bool(bool value)

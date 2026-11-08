@@ -1,7 +1,5 @@
 #pragma once
 
-#include "../../datastructures/dynamic_array.hpp"
-#include "../../datastructures/array.hpp"
 #include "compiler_misc.hpp"
 #include "semantic_analyser.hpp"
 #include "source_code.hpp"
@@ -33,8 +31,11 @@ struct Analysis_Pass;
 struct Call_Info;
 struct Symbol;
 struct IR_Generator;
-struct C_Generator;
 struct Compilation_Unit;
+struct Upp_Function;
+struct IR_Code_Block;
+struct Datatype;
+struct C_Program_Translation;
 
 namespace AST
 {
@@ -46,9 +47,84 @@ namespace AST
 extern bool compiler_enable_c_generation;
 extern bool compiler_execute_binary;
 
+struct Predefined_IDs
+{
+	// Other
+	Identifier main;
+	Identifier id_struct;
+	Identifier empty_string;
+	Identifier root_module;
+	Identifier invalid_symbol_name;
+	Identifier byte;
+	Identifier value;
+	Identifier is_available;
+	Identifier uninitialized_token; // _
+	Identifier return_type_name; // !return_type
+	Identifier operators;
+	Identifier dot_calls;
+
+	Identifier hashtag_instanciate;
+	Identifier hashtag_bake;
+	Identifier hashtag_get_overload;
+	Identifier hashtag_get_overload_poly;
+
+	Identifier custom_operator_function_names[(int)Custom_Operator_Type::MAX_ENUM_VALUE];
+
+	Identifier defer_restore;
+	Identifier cast;
+	Identifier defer;
+	Identifier from;
+	Identifier to;
+
+	Identifier lambda_function;
+	Identifier bake_function;
+
+	Identifier function;
+	Identifier create_fn;
+	Identifier next_fn;
+	Identifier has_next_fn;
+	Identifier value_fn;
+	Identifier name;
+	Identifier as_member_access;
+	Identifier commutative;
+	Identifier binop;
+	Identifier unop;
+	Identifier global;
+	Identifier option;
+	Identifier lib;
+	Identifier lib_dir;
+	Identifier source;
+	Identifier header;
+	Identifier header_dir;
+	Identifier definition;
+
+	// Hardcoded functions
+	Identifier type_of;
+	Identifier type_info;
+
+	// Members
+	Identifier type; // Any.type
+	Identifier data;
+	Identifier size;
+	Identifier tag;
+	Identifier anon_struct;
+	Identifier anon_enum;
+	Identifier c_string;
+	Identifier string;
+	Identifier allocator;
+	Identifier bytes;
+	Identifier transitive;
+	Identifier symbols;
+	Identifier all;
+};
+
+
+
+
+
 struct Code_Error
 {
-    const char* msg;
+    String msg;
     Compilation_Unit* unit;
     DynArray<Error_Information> infos;
     DynArray<Text_Range> ranges;
@@ -57,9 +133,8 @@ struct Code_Error
 // COMPILATION_DATA
 struct Compilation_Unit
 {
-    DynString filepath; // For deduplication, full-filepath, owned by this structure
-
-    // All data may be nullptr until loaded...
+    String filepath; // For deduplication, full-filepath
+    // All data are nullptr until loaded/parsed/analysed
     Source_Code* code; // Nullptr if file does not exist?
     AST::Root_Node* root;
     Upp_Module* upp_module;
@@ -77,6 +152,8 @@ struct Compilation_Data
     Dynamic_Array<Upp_Function*> functions;
     Dynamic_Array<Upp_Global*> globals;
     DynArray<Bytecode_Instruction> bytecode;
+    C_Program_Translation* c_program_translation;
+    bool c_program_was_compiled;
 
     // Known functions
     Upp_Function* main_function;
@@ -85,6 +162,7 @@ struct Compilation_Data
     // Resources
     Fiber_Pool* fiber_pool; // Reference, non-owning
     Identifier_Pool identifier_pool;
+    Predefined_IDs predefined_ids;
     Constant_Pool* constant_pool;
     Type_System* type_system;
     Extern_Sources extern_sources;
@@ -92,7 +170,6 @@ struct Compilation_Data
     // Stages
     Workload_Executer* workload_executer;
     IR_Generator* ir_generator;
-    C_Generator* c_generator;
 
     // Semantic-Analysis information
     Symbol_Table* root_symbol_table; // Contains int, float, bool and all basic symbols (e.g. size_of)
@@ -143,12 +220,12 @@ struct Compilation_Data
 Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool);
 void compilation_data_destroy(Compilation_Data* data);
 
-Compilation_Unit* compilation_data_add_compilation_unit_unique(Compilation_Data* compilation_data, DynString filepath, bool load_file_if_new, bool parse_ast);
+Compilation_Unit* compilation_data_add_compilation_unit_unique(Compilation_Data* compilation_data, String filepath, bool load_file_if_new, bool parse_ast);
 void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Unit* main_unit, Compile_Type compile_type);
 void compilation_data_update_source_code_information(Compilation_Data* compilation_data);
 Exit_Code compiler_execute(Compilation_Data* compilation_data);
 
-void compilation_data_add_code_error_code_section(Compilation_Data* compilation_data, const char* msg, AST::Node* node, Node_Section section);
+void compilation_data_add_code_error_code_section(Compilation_Data* compilation_data, String msg, AST::Node* node, Node_Section section);
 bool compilation_data_is_configured_for_c_compilation(Compilation_Data* compilation_data);
 bool compilation_data_errors_occured(Compilation_Data* compilation_data);
 Compilation_Unit* ast_node_to_compilation_unit(AST::Node* base);
@@ -230,7 +307,7 @@ Call_Signature* call_signature_create_empty();
 void call_signature_destroy(Call_Signature* signature);
 // Note: Returned pointer is invalidated if another parameter is added
 Call_Parameter* call_signature_add_parameter(
-    Call_Signature* signature, DynString* name, Datatype* datatype, 
+    Call_Signature* signature, Identifier name, Datatype* datatype, 
     bool required, bool requires_named_addressing, bool must_not_be_set);
 
 Call_Parameter* call_signature_add_return_type(Call_Signature* signature, Datatype* datatype, Compilation_Data* compilation_data);

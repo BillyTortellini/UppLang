@@ -14,9 +14,9 @@ void console_debugger_entry()
 
     bool started = debugger_start_process(
         debugger,
-        "P:/Martin/Projects/UppLib/backend/test/main.exe",
-        "P:/Martin/Projects/UppLib/backend/test/main.pdb",
-        "P:/Martin/Projects/UppLib/backend/test/main.obj",
+        string_make("P:/Martin/Projects/UppLib/backend/test/main.exe"),
+        string_make("P:/Martin/Projects/UppLib/backend/test/main.pdb"),
+        string_make("P:/Martin/Projects/UppLib/backend/test/main.obj"),
         nullptr
     );
     if (!started) {

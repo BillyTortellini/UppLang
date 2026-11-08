@@ -102,13 +102,13 @@ struct Closest_Symbol_Info
 {
     int pe_index;
     int section_index;
-    DynString section_name;
-    DynString pe_name;
+    String section_name;
+    String pe_name;
 
     int exception_handling_index; // -1 if not found
     bool found_symbol;
     u64 distance;
-    DynString symbol_name; // Name from pdb or PE export table
+    String symbol_name; // Name from pdb or PE export table
 };
 
 struct Assembly_Source_Information
@@ -145,9 +145,9 @@ enum class Halt_Type
 
 enum class Debug_Process_State
 {
+    NO_ACTIVE_PROCESS = 0,
     RUNNING,
-    HALTED,
-    NO_ACTIVE_PROCESS
+    HALTED
 };
 
 struct Debugger_State
@@ -162,7 +162,7 @@ struct Source_Breakpoint
 {
     int line_index;
     Compilation_Unit* compilation_unit;
-    Dynamic_Array<u64> addresses; // May be empty
+    DynArray<u64> addresses; // May be empty
     int active_reference_count; // Active if greater 0
 };
 
@@ -170,15 +170,15 @@ struct Debugger_Value_Read
 {
     bool success;
     Datatype* result_type;
-    const char* error_msg;
+    String error_msg;
 };
 
-Debugger* debugger_create();
-void debugger_destroy(Debugger* debugger);
+Debugger* debugger_create(); // Note: Debugger needs shutdown, as it contains handles
 void debugger_reset(Debugger* debugger);
+void debugger_destroy(Debugger* debugger);
 
 bool debugger_start_process(
-    Debugger* debugger, const char* exe_filename, const char* pdb_filename, const char* main_obj_filepath, Compilation_Data* compilation_data
+    Debugger* debugger, String exe_filename, String pdb_filename, String main_obj_filepath, Compilation_Data* compilation_data
 );
 
 void debugger_resume_until_next_halt_or_exit(Debugger* debugger);
@@ -191,16 +191,10 @@ Closest_Symbol_Info debugger_find_closest_symbol_name(Debugger* debugger, u64 ad
 void closest_symbol_info_append_to_string(Debugger* debugger, Closest_Symbol_Info symbol_info, DynString* string);
 void debugger_wait_for_console_command(Debugger* debugger);
 Debugger_Value_Read debugger_read_variable_value(
-    Debugger* debugger, DynString variable_name, Dynamic_Array<u8>* value_buffer, int stack_frame_start, int max_frame_depth);
+    Debugger* debugger, String variable_name, DynArray<u8>* value_buffer, int stack_frame_start, int max_frame_depth);
 
 Source_Breakpoint* debugger_add_source_breakpoint(Debugger* debugger, int line_index, Compilation_Unit* unit);
 void debugger_remove_source_breakpoint(Debugger* debugger, Source_Breakpoint* breakpoint);
 Array<Stack_Frame> debugger_get_stack_frames(Debugger* debugger);
 
 void debugger_print_line_translation(Debugger* debugger, Compilation_Unit* compilation_unit, int line_index, Compilation_Data* compilation_data);
-
-
-
-
-
-

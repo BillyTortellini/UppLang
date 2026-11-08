@@ -1092,9 +1092,9 @@ void bytecode_generator_append_bytecode_to_string(Compilation_Data* compilation_
     for (int i = 0; i < compilation_data->functions.size; i++)
     {
         Upp_Function* function = compilation_data->functions[i];
-        dynstring_append_formated(string, "Function #%d: \"%s\" \n", i, function->name->characters);
+        string->append_formated("Function #%d ", i)->append_in_quotation(function->name.to_string())->append('\n');
         if (function->bytecode_start_instruction == -1) {
-            string_append(string, "NO instructions generated!\n");
+            string->append("NO instructions generated!\n");
             continue;
         }
 

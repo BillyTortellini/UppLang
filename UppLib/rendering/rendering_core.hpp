@@ -4,6 +4,7 @@
 #include "../datastructures/dynamic_array.hpp"
 #include "../datastructures/hashtable.hpp"
 #include "../datastructures/string.hpp"
+#include "../datastructures/allocators.hpp"
 #include "../math/umath.hpp"
 #include "gpu_buffers.hpp"
 #include "cameras.hpp"
@@ -13,23 +14,24 @@ struct File_Listener;
 struct Watched_File;
 struct Texture;
 struct Framebuffer;
+struct Rendering_Core;
 
 
 
 // SHADER
-struct Uniform_Info
+struct Shader_Uniform
 {
     Shader_Datatype type;
-    DynString uniform_name;
+    String_List name;
     int array_size; 
     int location;
 };
 
 struct Vertex_Attribute_Base;
-struct Shader_Input_Info
+struct Shader_Input
 {
     Vertex_Attribute_Base* attribute; 
-    DynString variable_name;
+    String_List name;
     int location;
 };
 
@@ -46,23 +48,20 @@ struct Shader
 {
     GLuint program_id;
     bool compiled;
-    Dynamic_Array<Shader_Input_Info> input_layout;
-    Dynamic_Array<Uniform_Info> uniform_infos;
-    Dynamic_Array<DynString> allocated_strings;
+
+    // Infos about shader
+    DynArray<Shader_Input> inputs;
+    DynArray<Shader_Uniform> uniforms;
+
+    // Hot-reload things
+    Watched_File* watched_file;
+    String filename;
 };
 
 Shader* shader_create_empty();
-void shader_destroy(Shader* shader);
 void shader_reset(Shader* shader);
-void shader_add_shader_stage(Shader* shader, Shader_Stage stage, DynString source_code);
+void shader_add_shader_stage(Shader* shader, Shader_Stage stage, String source_code);
 bool shader_compile(Shader* shader);
-
-struct Hotreload_Shader
-{
-    Shader* shader;
-    Watched_File* watched_file;
-    const char* filename;
-};
 
 
 
@@ -70,7 +69,7 @@ struct Hotreload_Shader
 struct Vertex_Attribute_Base
 {
     Shader_Datatype type;
-    DynString name; // Static string
+    String name; // String allocated in arena, but this stays until the end
     u32 binding_location;
 };
 
@@ -82,9 +81,9 @@ struct Vertex_Description
     Array<Vertex_Attribute_Base*> attributes;
 };
 
-Vertex_Attribute_Base* vertex_attribute_make_base(Shader_Datatype type, const char* name);
+Vertex_Attribute_Base* vertex_attribute_make_base(Shader_Datatype type, String name);
 template<typename T>
-Vertex_Attribute<T>* vertex_attribute_make(const char* name) {
+Vertex_Attribute<T>* vertex_attribute_make(String name) {
     return (Vertex_Attribute<T>*) vertex_attribute_make_base(shader_datatype_of<T>(), name);
 }
 Vertex_Description* vertex_description_create(std::initializer_list<Vertex_Attribute_Base*> attributes);
@@ -96,7 +95,7 @@ struct Mesh;
 
 struct Attribute_Buffer
 {
-    Dynamic_Array<byte> attribute_data;
+    DynArray<byte> attribute_data;
     GPU_Buffer gpu_buffer;
     int element_byte_size;
     Mesh* mesh;
@@ -142,12 +141,13 @@ void attribute_buffer_push_value(Attribute_Buffer* buffer, T value) {
 }
 
 template<typename T>
-Array<T> attribute_buffer_allocate_slice(Attribute_Buffer* buffer, int element_count) {
+Array<T> attribute_buffer_allocate_slice(Attribute_Buffer* buffer, int element_count) 
+{
     assert(sizeof(T) == buffer->element_byte_size, "Otherwise we push invalid datatype!");
-    dynamic_array_reserve(&buffer->attribute_data, buffer->attribute_data.size + element_count * sizeof(T));
+    buffer->attribute_data.reserve(buffer->attribute_data.size + element_count * sizeof(T));
 
     Array<T> result;
-    result.data = (T*) &buffer->attribute_data.data[buffer->attribute_data.size];
+    result.data = (T*) &buffer->attribute_data.buffer.data[buffer->attribute_data.size];
     result.size = element_count;
     buffer->attribute_data.size += sizeof(T) * element_count;
     attribute_buffer_report_change_to_mesh(buffer);
@@ -252,14 +252,14 @@ struct Render_Pass_Command
 
 struct Render_Pass
 {
-    Dynamic_Array<Render_Pass_Command> commands;
-    Dynamic_Array<Render_Pass*> dependents;
+    DynArray<Render_Pass_Command> commands;
+    DynArray<Render_Pass*> dependents;
     int dependency_count;
 
     Pipeline_State pipeline_state;
     Framebuffer* output_buffer; // If null this is the default framebuffer
     bool queried_this_frame;
-    const char* name;
+    String name;
 };
 
 void render_pass_set_uniforms(Render_Pass* pass, Shader* shader, std::initializer_list<Uniform_Value> uniforms);
@@ -321,20 +321,23 @@ struct Render_Event_Listener
 
 struct Rendering_Core
 {
+    Arena arena;
+    Free_List free_list_strings;
+
     Pipeline_State pipeline_state;
     OpenGL_State opengl_state;
     File_Listener* file_listener;
     Render_Information render_information;
     GPU_Buffer ubo_render_information; // Binding 0
     GPU_Buffer ubo_camera_data;        // Binding 1
-    Dynamic_Array<Render_Event_Listener> render_event_listeners;
+    DynArray<Render_Event_Listener> render_event_listeners;
 
-    Dynamic_Array<Vertex_Attribute_Base*> vertex_attributes;
-    Dynamic_Array<Vertex_Description*> vertex_descriptions;
-    Hashtable<DynString, Mesh*> meshes;
-    Hashtable<DynString, Hotreload_Shader> shaders;
-    Hashtable<DynString, Render_Pass*> render_passes;
-    Hashtable<DynString, Framebuffer*> framebuffers;
+    DynArray<Vertex_Attribute_Base*> vertex_attributes;
+    DynArray<Vertex_Description*> vertex_descriptions;
+    DynTable<String, Mesh*> meshes;
+    DynTable<String, Shader*> shaders;
+    DynTable<String, Render_Pass*> render_passes;
+    DynTable<String, Framebuffer*> framebuffers;
 
     Predefined_Objects predefined;
 };
@@ -353,9 +356,9 @@ void rendering_core_clear_bound_framebuffer(Framebuffer_Clear_Type clear_type);
 void rendering_core_add_render_event_listener(Render_Event event, render_event_callback_fn callback, void* userdata);
 void rendering_core_remove_render_event_listener(Render_Event event, render_event_callback_fn callback, void* userdata);
 
-Mesh* rendering_core_query_mesh(const char* name, Vertex_Description* description, bool reset_every_frame);
-Shader* rendering_core_query_shader(const char* filename);
-Render_Pass* rendering_core_query_renderpass(const char* name, Pipeline_State pipeline_state, Framebuffer* output);
-Framebuffer* rendering_core_query_framebuffer_fullscreen(const char* name, Texture_Type type, Depth_Type depth);
-Framebuffer* rendering_core_query_framebuffer(const char* name, Texture_Type type, Depth_Type depth, int width, int height);
+Mesh* rendering_core_query_mesh(String name, Vertex_Description* description, bool reset_every_frame);
+Shader* rendering_core_query_shader(String filepath);
+Render_Pass* rendering_core_query_renderpass(String name, Pipeline_State pipeline_state, Framebuffer* output);
+Framebuffer* rendering_core_query_framebuffer_fullscreen(String name, Texture_Type type, Depth_Type depth);
+Framebuffer* rendering_core_query_framebuffer(String name, Texture_Type type, Depth_Type depth, int width, int height);
 

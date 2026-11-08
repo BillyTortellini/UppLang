@@ -4,6 +4,7 @@
 #include "../math/scalars.hpp"
 #include "../math/vectors.hpp"
 #include "../datastructures/string.hpp"
+#include "../datastructures/allocators.hpp"
 
 Texture_Bitmap texture_bitmap_create_from_data(int width, int height, int channel_count, byte* data) 
 {
@@ -374,8 +375,8 @@ Array<float> texture_bitmap_create_distance_field_bad(Texture_Bitmap* source)
 
 void texture_bitmap_print_distance_field(Array<float> data, int width)
 {
-    DynString result = dynstring_create(1024);
-    SCOPE_EXIT(string_destroy(&result));
+    SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+    DynString result = dynstring_create(scratch_arena);
     dynstring_append_formated(&result, "\nPrinting bitmap, width = %d\n", width);
     for (int y = 0; y < width; y++)
     {
@@ -387,6 +388,6 @@ void texture_bitmap_print_distance_field(Array<float> data, int width)
         }
         dynstring_append_formated(&result, "\n");
     }
-    logg("\n%s\n", result.characters);
+    logg("\n%s\n", result.to_cstring());
 }
 

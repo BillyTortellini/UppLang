@@ -505,7 +505,7 @@ void glyph_atlas_rasterize_font(Glyph_Atlas_* glyph_atlas, Bitmap_Atlas_Writer* 
 
 
 
-void mesh_push_text(Mesh* mesh, Glyph_Atlas_* atlas, DynString text, ivec2 position)
+void mesh_push_text(Mesh* mesh, Glyph_Atlas_* atlas, String text, ivec2 position)
 {
 	vec2 screen_size = vec2(rendering_core.render_information.backbuffer_width, rendering_core.render_information.backbuffer_height);
 	vec2 bitmap_size = vec2(atlas->bitmap_atlas_size.x, atlas->bitmap_atlas_size.y);
@@ -558,7 +558,7 @@ void mesh_push_text(Mesh* mesh, Glyph_Atlas_* atlas, DynString text, ivec2 posit
 	}
 }
 
-void mesh_push_text_clipped(Mesh* mesh, Glyph_Atlas_* atlas, DynString text, ivec2 position, BBox clipping_box)
+void mesh_push_text_clipped(Mesh* mesh, Glyph_Atlas_* atlas, String text, ivec2 position, BBox clipping_box)
 {
 	if (text.size == 0) return;
 	BBox text_box = BBox(position, position + atlas->char_box_size * ivec2(text.size, 1));
@@ -1072,6 +1072,8 @@ enum class Drag_Status
 
 struct UI_System
 {
+	Arena arena;
+
 	// Data-Structures
 	Dynamic_Array<UI_Window> windows;
 	Dynamic_Array<int> window_z_sorting; // From smallest to largest z
@@ -1135,6 +1137,8 @@ Container_Layout container_layout_make_default();
 
 void ui_system_initialize()
 {
+	ui_system.arena = Arena::create();
+
 	// Create rendering objects
 	{
 		ui_system.atlas_bitmap = bitmap_create(ivec2(256));
@@ -1310,15 +1314,15 @@ void ui_system_initialize()
 
 		auto& predef = rendering_core.predefined;
 		Vertex_Description* vertex_desc = vertex_description_create({ predef.position2D, predef.texture_coordinates, predef.color4, predef.index });
-		ui_system.mesh = rendering_core_query_mesh("UI_Render_Mesh", vertex_desc, true);
-		ui_system.shader = rendering_core_query_shader("mono_texture.glsl");
+		ui_system.mesh = rendering_core_query_mesh(string_make("UI_Render_Mesh"), vertex_desc, true);
+		ui_system.shader = rendering_core_query_shader(string_make("mono_texture.glsl"));
 	}
 
 	ui_system.windows = dynamic_array_create<UI_Window>();
 	ui_system.window_z_sorting = dynamic_array_create<int>();
 	ui_system.containers = dynamic_array_create<Widget_Container>();
 	ui_system.widgets = dynamic_array_create<Widget>();
-	ui_system.string_buffer = dynstring_create();
+	ui_system.string_buffer = dynstring_create(&ui_system.arena);
 	ui_system.container_stack = dynamic_array_create<Container_Handle>();
 
 	ui_system.max_window_z_index = 0;
@@ -1332,7 +1336,7 @@ void ui_system_initialize()
 	ui_system.last_cursor_icon_type = Cursor_Icon_Type::ARROW;
 
 	ui_system.line_editor = line_editor_make();
-	ui_system.input_string = dynstring_create();
+	ui_system.input_string = dynstring_create(&ui_system.arena);
 }
 
 void ui_system_shutdown()
@@ -1346,26 +1350,24 @@ void ui_system_shutdown()
 	dynamic_array_destroy(&ui_system.containers);
 	dynamic_array_destroy(&ui_system.widgets);
 	dynamic_array_destroy(&ui_system.container_stack);
-	string_destroy(&ui_system.string_buffer);
-	string_destroy(&ui_system.input_string);
 
 	bitmap_destroy(ui_system.atlas_bitmap);
 	texture_destroy(ui_system.texture);
 	glyph_atlas_destroy(&ui_system.glyph_atlas);
+	ui_system.arena.destroy();
 }
 
-UI_String ui_system_add_string(DynString string)
+UI_String ui_system_add_string(String string)
 {
 	UI_String result;
 	result.start_index = ui_system.string_buffer.size;
 	result.length = string.size;
-	string_append_string(&ui_system.string_buffer, &string);
+	ui_system.string_buffer.append(string);
 	return result;
 }
 
-DynString ui_string_to_string(UI_String string) {
-	DynString result;
-	result.capacity = 0;
+String ui_string_to_string(UI_String string) {
+	String result;
 	result.characters = &ui_system.string_buffer[string.start_index];
 	result.size = string.length;
 	return result;
@@ -1606,7 +1608,7 @@ Window_Handle window_handle_create_from_index(int index) {
 }
 
 void ui_system_draw_text_with_clipping_indicator(
-	Mesh* mesh, Glyph_Atlas_* glyph_atlas, ivec2 position, DynString text, Text_Alignment alignment, BBox clipping_box)
+	Mesh* mesh, Glyph_Atlas_* glyph_atlas, ivec2 position, String text, Text_Alignment alignment, BBox clipping_box)
 {
 	if (text.size == 0) return;
 
@@ -1661,7 +1663,7 @@ void ui_system_draw_text_with_clipping_indicator(
 			mesh, dot_pos, ui_system.atlas_box_text_clipping, glyph_atlas->bitmap_atlas_size, clipping_box, Icon_Rotation::NONE, vec4(1.0f));
 	}
 
-	DynString substring = string_create_substring_static(&text, start_draw_char, end_draw_char);
+	String substring = string_make_substring(text, start_draw_char, end_draw_char);
 	mesh_push_text_clipped(mesh, glyph_atlas, substring, text_pos, clipping_box);
 }
 
@@ -2210,12 +2212,12 @@ void container_element_render(
 	const int LINE_ITEM_HEIGHT = PAD_TOP + PAD_BOT + 2 * BORDER_SPACE + char_size.y;
 	const int TEXT_BORDER_SPACE = BORDER_SPACE * 2 + PAD_LEFT_RIGHT * 2;
 
-	auto box_draw_label = [&](BBox box, DynString text, BBox clipping_box) {
+	auto box_draw_label = [&](BBox box, String text, BBox clipping_box) {
 		ui_system_draw_text_with_clipping_indicator(
 			mesh, glyph_atlas, box.min + ivec2(0, BORDER_SPACE + PAD_BOT), text, Text_Alignment::LEFT, clipping_box
 		);
 		};
-	auto box_draw_text_in_box = [&](BBox box, DynString text, Text_Alignment alignment, BBox clipping_area, vec4 BG_COLOR, vec4 BORDER_COLOR)
+	auto box_draw_text_in_box = [&](BBox box, String text, Text_Alignment alignment, BBox clipping_area, vec4 BG_COLOR, vec4 BORDER_COLOR)
 		{
 			// Draw Background
 			mesh_push_box_with_border_clipped(mesh, box, clipping_area, BG_COLOR, BORDER_SPACE, BORDER_COLOR);
@@ -2341,7 +2343,7 @@ void container_element_render(
 			}
 
 			// Draw Text
-			mesh_push_text_clipped(mesh, glyph_atlas, ui_system.input_string, text_area.min + ivec2(x_offset, 0), text_clip_box);
+			mesh_push_text_clipped(mesh, glyph_atlas, ui_system.input_string.to_string(), text_area.min + ivec2(x_offset, 0), text_clip_box);
 
 			// Draw cursor 
 			ivec2 cursor_pos = text_area.min + ivec2(line_editor.pos * ui_system.char_size.x + x_offset, 0);
@@ -2735,8 +2737,8 @@ UI_Input_Info ui_system_start_frame(Input* input)
 		{
 			ui_system.focused_widget_index = ui_system.mouse_hover_widget_index;
 			dynstring_reset(&ui_system.input_string);
-			DynString text = ui_string_to_string(widget.style.text_display);
-			string_append_string(&ui_system.input_string, &text);
+			String text = ui_string_to_string(widget.style.text_display);
+			ui_system.input_string.append(text);
 			ui_system.line_editor = line_editor_make();
 			ui_system.line_editor.select_start = 0;
 			ui_system.line_editor.pos = ui_system.input_string.size;
@@ -2758,7 +2760,7 @@ UI_Input_Info ui_system_start_frame(Input* input)
 			auto msg = input->key_messages[i];
 			if (msg.key_down && msg.key_code == Key_Code::RETURN) {
 				ui_system.text_changed_widget_index = ui_system.focused_widget_index;
-				ui_system.changed_text = ui_system_add_string(ui_system.input_string);
+				ui_system.changed_text = ui_system_add_string(ui_system.input_string.to_string());
 				ui_system.focused_widget_index = -1;
 				break;
 			}
@@ -3176,7 +3178,7 @@ Widget_Style widget_style_make_empty()
 	return style;
 }
 
-Widget_Style widget_style_make_text_in_box(DynString text, vec4 bg_color, vec4 hover_color, vec4 border_color, Text_Alignment text_alignment)
+Widget_Style widget_style_make_text_in_box(String text, vec4 bg_color, vec4 hover_color, vec4 border_color, Text_Alignment text_alignment)
 {
 	Widget_Style style = widget_style_make_empty();
 	style.draw_background = true;
@@ -3191,11 +3193,11 @@ Widget_Style widget_style_make_text_in_box(DynString text, vec4 bg_color, vec4 h
 	return style;
 }
 
-Window_Style window_style_make_floating(const char* title)
+Window_Style window_style_make_floating(String title)
 {
 	Window_Style result;
 	result.has_title_bar = true;
-	result.title = ui_system_add_string(string_create_static(title));
+	result.title = ui_system_add_string(title);
 	result.layout = Window_Layout::FLOAT;
 	result.min_size = ivec2(60, 40);
 	result.bg_color = COLOR_WINDOW_BG;
@@ -3203,11 +3205,11 @@ Window_Style window_style_make_floating(const char* title)
 	return result;
 }
 
-Window_Style window_style_make_anchored(const char* title)
+Window_Style window_style_make_anchored(String title)
 {
 	Window_Style result;
 	result.has_title_bar = true;
-	result.title = ui_system_add_string(string_create_static(title));
+	result.title = ui_system_add_string(title);
 	result.layout = Window_Layout::ANCHOR_RIGHT;
 	result.min_size = ivec2(60, 40);
 	result.bg_color = COLOR_WINDOW_BG;
@@ -3272,10 +3274,10 @@ Container_Layout container_layout_make_list(int min_lines_to_display)
 
 
 
-Button_Input ui_system_push_button(const char* label_text)
+Button_Input ui_system_push_button(String label_text)
 {
 	Widget_Style style = widget_style_make_text_in_box(
-		string_create_static(label_text), COLOR_BUTTON_BG, COLOR_BUTTON_BG_HOVER, COLOR_BUTTON_BORDER, Text_Alignment::CENTER
+		label_text, COLOR_BUTTON_BG, COLOR_BUTTON_BG_HOVER, COLOR_BUTTON_BORDER, Text_Alignment::CENTER
 	);
 	style.is_clickable = true;
 	style.min_width = BUTTON_MIN_CHAR_COUNT * ui_system.char_size.x + TEXT_BORDER_SPACE;
@@ -3288,7 +3290,7 @@ Button_Input ui_system_push_button(const char* label_text)
 	return result;
 }
 
-Widget_Handle ui_system_push_label(DynString text, bool restrain_label_size)
+Widget_Handle ui_system_push_label(String text, bool restrain_label_size)
 {
 	Widget_Style style = widget_style_make_empty();
 	style.text_display = ui_system_add_string(text);
@@ -3307,11 +3309,7 @@ Widget_Handle ui_system_push_label(DynString text, bool restrain_label_size)
 	return ui_system_add_widget(style);
 }
 
-Widget_Handle ui_system_push_label(const char* text, bool restrain_label_size) {
-	return ui_system_push_label(string_create_static(text), restrain_label_size);
-}
-
-Text_Input_State ui_system_push_text_input(DynString text)
+Text_Input_State ui_system_push_text_input(String text)
 {
 	Widget_Style style = widget_style_make_text_in_box(text, COLOR_INPUT_BG, COLOR_INPUT_BG_HOVER, COLOR_INPUT_BORDER, Text_Alignment::LEFT);
 
@@ -3328,21 +3326,22 @@ Text_Input_State ui_system_push_text_input(DynString text)
 
 	Text_Input_State result;
 	result.text_was_changed = handle.widget_index == ui_system.text_changed_widget_index;
-	result.new_text = string_create_static("");
+	result.new_text = string_make("");
 	result.handle = handle;
 	if (result.text_was_changed) {
-		result.new_text = ui_system.input_string;
-		widget.style.text_display = ui_system_add_string(ui_system.input_string);
+		result.new_text = ui_system.input_string.to_string();
+		widget.style.text_display = ui_system_add_string(ui_system.input_string.to_string());
 	}
 	return result;
 }
 
 int ui_system_push_int_input(int value)
 {
-	DynString tmp = dynstring_create();
-	SCOPE_EXIT(string_destroy(&tmp));
+	SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+	DynString tmp = dynstring_create(scratch_arena);
+
 	dynstring_append_formated(&tmp, "%d", value);
-	Text_Input_State update_state = ui_system_push_text_input(tmp);
+	Text_Input_State update_state = ui_system_push_text_input(tmp.to_string());
 
 	Widget& widget = ui_system.widgets[update_state.handle.widget_index];
 	widget.style.text_input_type = Text_Input_Type::INT;
@@ -3350,15 +3349,15 @@ int ui_system_push_int_input(int value)
 	widget.style.background_color = COLOR_INPUT_BG_NUMBER;
 	if (update_state.text_was_changed)
 	{
-		DynString text = update_state.new_text;
-		Optional<int> parsed_value = string_parse_int(&text);
+		String text = update_state.new_text;
+		Optional<int> parsed_value = string_parse_int(text);
 		if (parsed_value.available) {
 			value = parsed_value.value;
 			dynstring_reset(&tmp);
 			dynstring_append_formated(&tmp, "%d", value);
 		}
 
-		widget.style.text_display = ui_system_add_string(tmp);
+		widget.style.text_display = ui_system_add_string(tmp.to_string());
 	}
 
 	return value;
@@ -3366,18 +3365,18 @@ int ui_system_push_int_input(int value)
 
 float ui_system_push_float_input(float value)
 {
-	DynString tmp = dynstring_create();
-	SCOPE_EXIT(string_destroy(&tmp));
+	SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+	DynString tmp = dynstring_create(scratch_arena);
 	dynstring_append_formated(&tmp, "%.3f", value);
-	Text_Input_State update_state = ui_system_push_text_input(tmp);
+	Text_Input_State update_state = ui_system_push_text_input(tmp.to_string());
 
 	Widget& widget = ui_system.widgets[update_state.handle.widget_index];
 	widget.style.text_input_type = Text_Input_Type::FLOAT;
 	widget.style.background_color = COLOR_INPUT_BG_NUMBER;
 	if (update_state.text_was_changed)
 	{
-		DynString text = update_state.new_text;
-		Optional<float> parsed_value = string_parse_float(&text);
+		String text = update_state.new_text;
+		Optional<float> parsed_value = string_parse_float(text);
 		if (parsed_value.available) {
 			value = parsed_value.value;
 			dynstring_reset(&tmp);
@@ -3385,17 +3384,17 @@ float ui_system_push_float_input(float value)
 		}
 
 		// Don't show non-parsable text
-		widget.style.text_display = ui_system_add_string(tmp);
+		widget.style.text_display = ui_system_add_string(tmp.to_string());
 	}
 
 	return value;
 }
 
-void ui_system_push_next_component_label(const char* label_text)
+void ui_system_push_next_component_label(String label_text)
 {
 	Container_Handle container_handle = ui_system_add_container(container_layout_make_horizontal(true));
 	ui_system_push_active_container(container_handle, true);
-	ui_system_push_label(string_create_static(label_text), true);
+	ui_system_push_label(label_text, true);
 	ui_system_push_active_container(container_handle, true);
 }
 
@@ -3446,10 +3445,10 @@ bool ui_system_push_checkbox(bool enabled)
 	);
 }
 
-UI_Subsection_Info ui_system_push_subsection(bool enabled, const char* section_name, bool own_scrollbar)
+UI_Subsection_Info ui_system_push_subsection(bool enabled, String section_name, bool own_scrollbar)
 {
 	Widget_Style style = widget_style_make_text_in_box(
-		string_create_static(section_name), COLOR_BUTTON_BG, COLOR_BUTTON_BG_HOVER, COLOR_BUTTON_BORDER, Text_Alignment::LEFT
+		section_name, COLOR_BUTTON_BG, COLOR_BUTTON_BG_HOVER, COLOR_BUTTON_BORDER, Text_Alignment::LEFT
 	);
 	style.draw_icon = true;
 	style.icon = ui_icon_make(Icon_Type::TRIANGLE_LEFT_SMALL, enabled ? Icon_Rotation::ROT_90 : Icon_Rotation::NONE, vec3(1.0f));
@@ -3478,11 +3477,11 @@ UI_Subsection_Info ui_system_push_subsection(bool enabled, const char* section_n
 	return subsection;
 }
 
-void ui_system_push_dropdown(Dropdown_State& state, Array<DynString> possible_values)
+void ui_system_push_dropdown(Dropdown_State& state, Array<String> possible_values)
 {
 	state.value_was_changed = false;
 	state.value = math_clamp(state.value, 0, (int)possible_values.size);
-	DynString text =  possible_values.size == 0 ? string_create_static("NO_OPTIONS_PROVIDED!") : possible_values[state.value];
+	String text =  possible_values.size == 0 ? string_make("NO_OPTIONS_PROVIDED!") : possible_values[state.value];
 
 	Widget_Style style = widget_style_make_text_in_box(text, COLOR_DROPDOWN_BG, COLOR_DROPDOWN_HOVER, COLOR_INPUT_BORDER, Text_Alignment::LEFT);
 	style.is_clickable = true;
@@ -3513,7 +3512,7 @@ void ui_system_push_dropdown(Dropdown_State& state, Array<DynString> possible_va
 		int pressed_label_index = -1;
 		for (int i = 0; i < possible_values.size; i++)
 		{
-			DynString text = possible_values[i];
+			String text = possible_values[i];
 			Widget_Style style = widget_style_make_text_in_box(text, COLOR_DROPDOWN_BG, COLOR_DROPDOWN_HOVER, COLOR_INPUT_BORDER, Text_Alignment::LEFT);
 			style.has_border = false;
 			style.is_clickable = true;
@@ -3563,18 +3562,21 @@ Container_Handle ui_system_push_indented_container(int indent_count, bool draw_b
 void ui_system_push_test_windows()
 {
 	static bool test_initialized = false;
+	static Arena texts_arena;
 	static DynString texts[3];
 	if (!test_initialized)
 	{
 		test_initialized = true;
+		texts_arena = Arena::create();
 
 		for (int i = 0; i < 3; i++) {
-			const char* initial[3] = {
-				"Something that you soundlt ",
-				"Dont you carrera about me",
-				"Wellerman",
+			String initial[3] = {
+				string_make("Something that you soundlt "),
+				string_make("Dont you carrera about me"),
+				string_make("Wellerman"),
 			};
-			texts[i] = dynstring_create(initial[i % 3]);
+			texts[i] = dynstring_create(&texts_arena);
+			texts[i].append(initial[i % 3]);
 		}
 	}
 
@@ -3588,7 +3590,7 @@ void ui_system_push_test_windows()
 
 	if (false)
 	{
-		Window_Handle handle = ui_system_add_window(window_style_make_anchored("Debugger_Info"));
+		Window_Handle handle = ui_system_add_window(window_style_make_anchored(string_make("Debugger_Info")));
 		ui_system_push_active_container(handle.container, false);
 		SCOPE_EXIT(ui_system_pop_active_container());
 
@@ -3603,59 +3605,59 @@ void ui_system_push_test_windows()
 		ui_system_push_active_container(ui_system_push_line_container(), false);
 		SCOPE_EXIT(ui_system_pop_active_container());
 
-		ui_system_push_button("Frick dis");
+		ui_system_push_button(string_make("Frick dis"));
 		ui_system_push_icon_button(ui_icon_make(Icon_Type::X_MARK, Icon_Rotation::NONE, vec3(1.0f)), true);
-		ui_system_push_label("Henlo", false);
+		ui_system_push_label(string_make("Henlo"), false);
 
 		return;
 	}
 
 
-	Window_Handle window_handle = ui_system_add_window(window_style_make_anchored("Test-Window"));
+	Window_Handle window_handle = ui_system_add_window(window_style_make_anchored(string_make("Test-Window")));
 	ui_system_push_active_container(window_handle.container, false);
 
-	UI_Subsection_Info info = ui_system_push_subsection(subsection_status, "Status", false);
+	UI_Subsection_Info info = ui_system_push_subsection(subsection_status, string_make("Status"), false);
 	subsection_status = info.enabled;
 	if (subsection_status) {
 		ui_system_push_active_container(info.container, false);
 		SCOPE_EXIT(ui_system_pop_active_container());
-		ui_system_push_next_component_label("Stack:");
-		ui_system_push_text_input(string_create_static("upp_main"));
+		ui_system_push_next_component_label(string_make("Stack:"));
+		ui_system_push_text_input(string_make("upp_main"));
 	}
 
-	info = ui_system_push_subsection(subsection_breakpoints, "Breakpoints", true);
+	info = ui_system_push_subsection(subsection_breakpoints, string_make("Breakpoints"), true);
 	subsection_breakpoints = info.enabled;
 	if (subsection_breakpoints) {
 		ui_system_push_active_container(info.container, false);
 		SCOPE_EXIT(ui_system_pop_active_container());
 
-		ui_system_push_label(string_create_static("Bp 1 at line #15"), false);
-		ui_system_push_label(string_create_static("Bp 2 at line #105"), false);
-		ui_system_push_label(string_create_static("Bp 3 at line #1"), false);
-		ui_system_push_label(string_create_static("Bp 4 at line #32"), false);
-		ui_system_push_label(string_create_static("Bp 5 at line #23"), false);
-		ui_system_push_label(string_create_static("Bp 5 at line #23"), false);
-		ui_system_push_label(string_create_static("Bp 5 at line #23"), false);
-		ui_system_push_label(string_create_static("Bp 9 at line #1027"), false);
+		ui_system_push_label(string_make("Bp 1 at line #15"), false);
+		ui_system_push_label(string_make("Bp 2 at line #105"), false);
+		ui_system_push_label(string_make("Bp 3 at line #1"), false);
+		ui_system_push_label(string_make("Bp 4 at line #32"), false);
+		ui_system_push_label(string_make("Bp 5 at line #23"), false);
+		ui_system_push_label(string_make("Bp 5 at line #23"), false);
+		ui_system_push_label(string_make("Bp 5 at line #23"), false);
+		ui_system_push_label(string_make("Bp 9 at line #1027"), false);
 	}
 
-	info = ui_system_push_subsection(subsection_watch_values, "Watch-Values", true);
+	info = ui_system_push_subsection(subsection_watch_values, string_make("Watch-Values"), true);
 	subsection_watch_values = info.enabled;
 	if (subsection_watch_values) {
 		ui_system_push_active_container(info.container, false);
 		SCOPE_EXIT(ui_system_pop_active_container());
 
 		ui_system_push_active_container(ui_system_push_line_container(), false);
-		ui_system_push_text_input(string_create_static(""));
-		ui_system_push_label("Hello there", true);
+		ui_system_push_text_input(string_make(""));
+		ui_system_push_label(string_make("Hello there"), true);
 		ui_system_pop_active_container();
 	}
-	ui_system_push_button("Test, lol");
+	ui_system_push_button(string_make("Test, lol"));
 
-	ui_system_push_label(string_create_static("Hello IMGUI world!"), false);
-	ui_system_push_label(string_create_static("Test label to check if render works"), false);
-	ui_system_push_next_component_label("Click for test");
-	ui_system_push_button("Click me!");
+	ui_system_push_label(string_make("Hello IMGUI world!"), false);
+	ui_system_push_label(string_make("Test label to check if render works"), false);
+	ui_system_push_next_component_label(string_make("Click for test"));
+	ui_system_push_button(string_make("Click me!"));
 	for (int i = 0; i < 4; i++)
 	{
 		const char* labels[3] = {
@@ -3663,19 +3665,18 @@ void ui_system_push_test_windows()
 			"Surname",
 			"Address",
 		};
-		ui_system_push_next_component_label(labels[i % 3]);
+		ui_system_push_next_component_label(string_make(labels[i % 3]));
 		DynString& text = texts[i % 3];
-		auto update = ui_system_push_text_input(text);
+		auto update = ui_system_push_text_input(text.to_string());
 		if (update.text_was_changed) {
-			dynstring_reset(&text);
-			string_append_string(&text, &update.new_text);
+			text.reset()->append(update.new_text);
 		}
 	}
-	bool pressed = ui_system_push_button("Frick me").was_pressed;
+	bool pressed = ui_system_push_button(string_make("Frick me")).was_pressed;
 	if (pressed) {
 		printf("Frick me was pressed!\n");
 	}
-	pressed = ui_system_push_button("Frick me").was_pressed;
+	pressed = ui_system_push_button(string_make("Frick me")).was_pressed;
 	if (pressed) {
 		printf("Another one was pressed!\n");
 	}
@@ -3691,13 +3692,13 @@ void ui_system_push_test_windows()
 
 	ui_system_pop_active_container();
 
-	Window_Handle new_window = ui_system_add_window(window_style_make_floating("Dropdown parent window"));
+	Window_Handle new_window = ui_system_add_window(window_style_make_floating(string_make("Dropdown parent window")));
 	ui_system_push_active_container(new_window.container, false);
 
-	DynString values[] = {
-		string_create_static("Hello"),
-		string_create_static("There"),
-		string_create_static("Another one")
+	String values[] = {
+		string_make("Hello"),
+		string_make("There"),
+		string_make("Another one")
 	};
 	static Dropdown_State dropdown_state;
 	ui_system_push_dropdown(dropdown_state, array_create_static(&values[0], 3));

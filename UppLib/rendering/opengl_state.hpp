@@ -275,13 +275,13 @@ enum class Shader_Datatype
     TEXTURE_2D_BINDING
 };
 
-DynString shader_datatype_as_string(Shader_Datatype type);
+String shader_datatype_as_string(Shader_Datatype type);
 
 struct Shader_Datatype_Info
 {
     GLenum uniformType; // Type reported by glGetUniform
     GLenum vertexAttribType; // Type for vertex-attribute setup (glVertexAttribPointer)
-    const char* name; // Plain text base_name, as a variable type in glsl
+    String name; // Plain text base_name, as a variable type in glsl
     u32 byte_size; // Size in bytes
 };
 

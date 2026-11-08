@@ -10,9 +10,9 @@ struct Directory_Crawler;
 Directory_Crawler* directory_crawler_create();
 void directory_crawler_destroy(Directory_Crawler* directory_crawler);
 
-DynString directory_crawler_get_path(Directory_Crawler* crawler);
-void directory_crawler_set_path(Directory_Crawler* crawler, DynString path);
-void directory_crawler_set_path_to_file_dir(Directory_Crawler* crawler, DynString file_path);
+String directory_crawler_get_path(Directory_Crawler* crawler);
+void directory_crawler_set_path(Directory_Crawler* crawler, String path);
+void directory_crawler_set_path_to_file_dir(Directory_Crawler* crawler, String file_path);
 void directory_crawler_set_to_working_directory(Directory_Crawler* crawler);
 
 Array<Directory_Item> directory_crawler_get_content(Directory_Crawler* crawler);

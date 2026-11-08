@@ -2,6 +2,7 @@
 
 #include <Windows.h>
 
+#include <cstdio>
 #include "../utility/datatypes.hpp"
 #include "../utility/utils.hpp"
 #include "windows_helper_functions.hpp"

@@ -1,6 +1,7 @@
 #include "memory_source.hpp"
 
 #include <Windows.h>
+#include <strsafe.h>
 #include "../../datastructures/string.hpp"
 
 Page_Info Memory_Source::get_page_info(void* address, uint size) 
@@ -74,148 +75,146 @@ bool Memory_Source::write(void* destination, void* source, uint size)
 	return true;
 }
 
-void Memory_Source::read_as_much_as_possible(void* address, Dynamic_Array<u8>* out_bytes, uint read_size) 
+uint Memory_Source::query_max_readable_size(void* address) 
 {
-	dynamic_array_reset(out_bytes);
-    if (address == nullptr || read_size == 0) {
-        return;
+    if (address == nullptr) {
+		return 0;
     }
 
 	// Query memory to check how much we are allowed to read
 	MEMORY_BASIC_INFORMATION memory_info = { 0 };
 	if (process_handle == nullptr) {
 		DWORD success = VirtualQuery(address, &memory_info, sizeof(memory_info));
-		if (success == 0) return;
+		if (success == 0) return 0;
 	}
 	else {
 		HANDLE handle = process_handle;
 		DWORD success = VirtualQueryEx(handle, address, &memory_info, sizeof(memory_info));
-		if (success == 0) return;
+		if (success == 0) return 0;
 	}
+	assert(address >= memory_info.BaseAddress && (uint)address < (uint)memory_info.BaseAddress + memory_info.RegionSize, "Should be true with VirtualQuery");
 
 	// Check that we are allowed to read
 	{
 		if (memory_info.State != MEM_COMMIT) {
-		    return;
+		    return 0;
 		}
 		if (memory_info.Protect & (PAGE_GUARD | PAGE_NOACCESS)) {
-			return;
+			return 0;
 		}
 		bool readable = (memory_info.Protect & (PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_READONLY | PAGE_READWRITE)) != 0;
 		if (!readable) {
-			return;
+			return 0;
 		}
 	}
 
 	// Figure out max-read size
-	assert(address >= memory_info.BaseAddress && (uint)address < (uint)memory_info.BaseAddress + memory_info.RegionSize, "Should be true with VirtualQuery");
-	uint max_read_size = (uint)memory_info.BaseAddress + memory_info.RegionSize - (uint)address;
-	read_size = math_minimum(max_read_size, read_size);
-
-	// Fill dynamic_array
-	dynamic_array_reserve(out_bytes, (int)read_size);
-	bool success = read(out_bytes->data, address, read_size);
-	assert(success, "Should work after checking memory");
-	out_bytes->size = (int)read_size;
+	return (uint)memory_info.BaseAddress + memory_info.RegionSize - (uint)address;
 }
 
-bool Memory_Source::read_null_terminated_string(
-	void* virtual_address, DynString* out_string, uint max_char_count, bool is_wide_char, Dynamic_Array<u8>* byte_buffer)
+bool Memory_Source::read_string_utf8_null_terminated(void* virtual_address, DynString* append_to, uint max_byte_size)
 {
-	dynstring_reset(out_string);
-	if (virtual_address == nullptr || max_char_count == 0) {
-		return false;
-	}
-	uint max_size = max_char_count + 1;
-	if (is_wide_char) {
-		max_size = 2 * max_char_count + 2; // + 2 just to be sure, if wide-chars use two 0 bytes
-	}
-
-	read_as_much_as_possible(virtual_address, byte_buffer, max_size);
-	if (byte_buffer->size == 0) {
+	if (virtual_address == nullptr || max_byte_size == 0) {
 		return false;
 	}
 
-	if (is_wide_char)
-	{
-		const wchar_t* char_ptr = (wchar_t*)byte_buffer->data;
-		int wchar_count = -1;
-		for (int i = 0; i < max_char_count; i++) {
-			if (char_ptr[i] == 0) {
-				wchar_count = i;
-				break;
-			}
-		}
-
-		// If string wasn't null-terminated, return false...
-		if (wchar_count == -1) {
-			return false;
-		}
-
-		// Otherwise convert to utf8
-		wide_string_to_utf8((wchar_t*)byte_buffer->data, out_string);
-	}
-	else 
-	{
-		// Find null-terminator
-		const char* char_ptr = (char*)byte_buffer->data;
-		int max_length = (int)max_size / 2;
-		int char_count = -1;
-		for (int i = 0; i < max_char_count; i++) {
-			if (char_ptr[i] == 0) {
-				char_count = i;
-				break;
-			}
-		}
-
-		// If string wasn't null-terminated, return false...
-		if (char_count == -1) {
-			return false;
-		}
-
-		// Otherwise copy to string
-		char_count += 1; // Include null-terminator in calculation
-		dynstring_reserve(out_string, char_count);
-		memory_copy(out_string->characters, byte_buffer->data, char_count);
-		out_string->size = char_count - 1;
+	// Check how much memory is readable at that location
+	uint read_size = math_minimum(query_max_readable_size(virtual_address), max_byte_size);
+	if (read_size == 0) {
+		return false;
 	}
 
+	// Try to read memory
+	SCRATCH_ARENA_MAKE_SCOPED(append_to->arena);
+	Array<byte> char_buffer = scratch_arena->allocate_array<byte>(read_size);
+	bool success = read(&char_buffer.data, virtual_address, read_size);
+	if (!success) return false;
+
+	// Try to find 0 terminator
+	int str_length = -1;
+	for (int i = 0; i < char_buffer.size; i++) {
+		if (char_buffer[i] == '\0') {
+			str_length = i;
+			break;
+		}
+	}
+	if (str_length == -1) {
+		return false;
+	}
+	append_to->append(string_make((char*) char_buffer.data, str_length));
 	return true;
 }
 
-void wide_string_from_utf8(Dynamic_Array<wchar_t>* character_buffer, const char* string)
+bool Memory_Source::read_string_utf16_null_terminated(void* virtual_address, DynString* append_to, uint max_byte_size)
 {
-    size_t length = strlen(string);
-    dynamic_array_reserve(character_buffer, (int)length * 4); // 4 byte for each char _must_ be enough for now (I don't know enough about UTF-16)
-    dynamic_array_reset(character_buffer);
+	if (virtual_address == nullptr || max_byte_size == 0) {
+		return false;
+	}
+
+	// Check how much memory is readable at that location
+	uint read_size = math_minimum(query_max_readable_size(virtual_address), max_byte_size);
+	if (read_size == 0) {
+		return false;
+	}
+
+	// Try to read memory
+	SCRATCH_ARENA_MAKE_SCOPED(append_to->arena);
+	Array<byte> char_buffer = scratch_arena->allocate_array<byte>(read_size);
+	bool read_success = read(&char_buffer.data, virtual_address, read_size);
+	if (!read_success) return false;
+
+
+	// Check if string has null-terminator
+	size_t out_size = 0;
+	HRESULT success = StringCchLengthW((STRSAFE_PCNZWCH)char_buffer.data, char_buffer.size, &out_size);
+	if (FAILED(success)) {
+		return false;
+	}
+
+	// Otherwise convert to utf8 (I assume this conversion works)
+	wide_string_to_utf8((wchar_t*) char_buffer.data, append_to);
+	return true;
+}
+
+bool Memory_Source::read_string_null_terminated_generic(void* virtual_address, DynString* append_to, uint max_byte_size, bool is_utf8) {
+	if (is_utf8) {
+		return this->read_string_utf8_null_terminated(virtual_address, append_to, max_byte_size);
+	}
+	else {
+		return this->read_string_utf16_null_terminated(virtual_address, append_to, max_byte_size);
+	}
+}
+
+wchar_t* wide_string_from_utf8(String string, Arena* arena)
+{
+	// Note: I think (string.size + 1) * sizeof(wchar_t) should be enough (+1 for null-terminator),
+	//   but the MultiByteToWideChar size parameter is in characters, and I don't know if microsoft
+	//   means 2 bytes for a wchar or possible 4 bytes (UTF16 extended chars)
+	Array<byte> buffer = arena->allocate_array<byte>((string.size + 1) * sizeof(wchar_t) * 2);
 
     // Early exit on length 0 as MultiByteToWodeChar uses 0 as error-code
-    if (length == 0) {
-        character_buffer->data[0] = '\0';
-        character_buffer->size = 0;
-        return;
+    if (string.size == 0) {
+		*((wchar_t*) buffer.data[0]) = (wchar_t) 0;
+        return (wchar_t*) buffer.data;
     }
 
-    int written_chars = MultiByteToWideChar(CP_UTF8, 0, string, (int)length + 1, character_buffer->data, character_buffer->capacity);
+    int written_chars = MultiByteToWideChar(CP_UTF8, NULL, string.characters, string.size, (LPWSTR) buffer.data, buffer.size / 2);
     if (written_chars == 0) {
-        character_buffer->data[0] = '\0';
-        character_buffer->size = 0;
-        return;
+		*((wchar_t*) &buffer.data[0]) = (wchar_t)0;
     }
-    character_buffer->size = written_chars;
+    return (wchar_t*) buffer.data;
 }
 
 void wide_string_to_utf8(const wchar_t* wide_string, DynString* string)
 {
-    dynstring_reset(string);
     int character_count = lstrlenW(wide_string) + 1;
-    dynstring_reserve(string, character_count * 4); // Max 4 bytes per char in UTF-8
-    int written_chars = WideCharToMultiByte(CP_UTF8, 0, wide_string, character_count, string->characters, string->capacity, 0, 0);
-    if (written_chars == 0) {
-        string->size = 0;
-        string->characters[0] = '\0';
-        return;
-    }
-    string->size = (int)strlen(string->characters);
+    dynstring_reserve(string, string->size + character_count * 4); // Max 4 bytes per char in UTF-8
+    int written_bytes = WideCharToMultiByte(CP_UTF8, 0, wide_string, character_count, &string->characters[string->size], string->capacity - string->size, 0, 0);
+	string->size += written_bytes;
+	
+	// I think WideCharToMultiByte writes null-terminator, so we remove that if bytes were written
+	if (written_bytes != 0 && string->characters[string->size - 1] == '\0') {
+		string->size -= 1;
+	}
 }
 

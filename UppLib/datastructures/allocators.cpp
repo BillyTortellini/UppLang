@@ -189,17 +189,20 @@ void Arena::reset(bool keep_largest_buffer)
 		curr = *(Arena_Buffer*)curr.data; // Skip deallocation of current
 		((Arena_Buffer*)buffer.data)->data = nullptr;
 		((Arena_Buffer*)buffer.data)->capacity = 0;
+		next = curr.data;
 	}
 	else {
 		buffer.data = nullptr;
 		buffer.capacity = 0;
+		next = nullptr;
 	}
 
+	// Deallocate buffers
 	while (curr.data != nullptr)
 	{
-		Arena_Buffer next = *(Arena_Buffer*)curr.data;
+		Arena_Buffer next_buffer = *(Arena_Buffer*)curr.data;
 		this->parent_allocator->deallocate_raw(curr.data, curr.capacity);
-		curr = next;
+		curr = next_buffer;
 	}
 }
 
@@ -293,21 +296,21 @@ Free_List Free_List::create_with_info(Allocator_Base* parent_allocator, uint ele
 	Free_List result;
 	result.base.allocate_fn = free_list_allocate_function;
 	result.parent_allocator = parent_allocator;
-	result.element_alignment = math_maximum(alignof(void*), element_alignment);
 	result.element_size = math_maximum(sizeof(void*), element_size);
+	result.element_alignment = math_maximum(alignof(void*), element_alignment);
 	result.next = nullptr;
 	return result;
 }
 
 void* Free_List::allocate_raw(uint size, uint alignment)
 {
-	assert(size == this->element_size || alignment == this->element_alignment, "");
+	assert(size <= this->element_size || alignment <= this->element_alignment, "");
 	if (next != nullptr) {
 		void* result = next;
 		next = *(void**)next;
 		return result;
 	}
-	return parent_allocator->allocate_raw(size, alignment);
+	return parent_allocator->allocate_raw(this->element_size, this->element_alignment);
 }
 
 void Free_List::deallocate_raw(void* data)

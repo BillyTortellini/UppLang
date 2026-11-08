@@ -36,16 +36,16 @@ struct Font_Information
 };
 
 Optional<Font_Information> glyph_atlas_create_from_font_file(
-    const char* font_filepath,
+    String font_filepath,
     int max_character_pixel_size,
     int atlas_size,
     int padding,
     int character_margin,
     bool render_antialiased
 );
-Optional<Font_Information> glyph_atlas_create_from_atlas_file(const char* altas_filepath);
+Optional<Font_Information> glyph_atlas_create_from_atlas_file(String atlas_filepath);
 
-void glyph_atlas_save_as_file(Font_Information* altas, const char* filepath);
+void glyph_atlas_save_as_file(Font_Information* altas, String filepath);
 void glyph_atlas_print_glyph_information(Font_Information* atlas);
 void glyph_atlas_destroy(Font_Information* atlas);
 

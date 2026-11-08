@@ -4,7 +4,7 @@
 #include "basic2D.hpp"
 #include "../utility/utils.hpp"
 
-Text_Renderer* text_renderer_create_from_font_atlas_file(const char* font_filepath)
+Text_Renderer* text_renderer_create_from_font_atlas_file(String font_filepath)
 {
     Text_Renderer* text_renderer = new Text_Renderer();
     text_renderer->glyph_atlas = optional_unwrap(glyph_atlas_create_from_atlas_file(font_filepath));
@@ -28,10 +28,10 @@ Text_Renderer* text_renderer_create_from_font_atlas_file(const char* font_filepa
         true
     );
 
-    text_renderer->attrib_pixel_size = vertex_attribute_make<float>("Pixel_Size");
+    text_renderer->attrib_pixel_size = vertex_attribute_make<float>(string_make("Pixel_Size"));
     auto& predef = rendering_core.predefined;
     text_renderer->text_mesh = rendering_core_query_mesh(
-        "text rendering mesh",
+        string_make("text rendering mesh"),
         vertex_description_create({
             predef.position2D,
             predef.texture_coordinates,
@@ -70,7 +70,7 @@ float text_renderer_get_char_width_to_height_ratio(Text_Renderer* renderer) {
     return atlas.cursor_advance / (float)(atlas.ascender - atlas.descender);
 }
 
-void text_renderer_add_text(Text_Renderer* renderer, DynString text, vec2 position, Anchor anchor, vec2 char_size, vec3 color, Optional<box2> clip_box)
+void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position, Anchor anchor, vec2 char_size, vec3 color, Optional<box2> clip_box)
 {
     if (text.size == 0) {
         return;
@@ -107,7 +107,7 @@ void text_renderer_add_text(Text_Renderer* renderer, DynString text, vec2 positi
         int char_start = math_maximum(0, (int)((clip_box.value.min.x - position.x) / char_size.x));
         int char_end = math_minimum(text.size, (int)((clip_box.value.max.x - position.x + char_size.x) / char_size.x));
         offset.x = offset.x + char_size_normalized.x * char_start;
-        text = string_create_substring_static(&text, char_start, char_end);
+        text = string_make_substring(text, char_start, char_end);
         if (char_start > char_end) {
             return;
         }
@@ -216,7 +216,7 @@ void text_renderer_add_text(Text_Renderer* renderer, DynString text, vec2 positi
     renderer->current_batch_end += text.size;
 }
 
-void text_renderer_add_text_int(Text_Renderer* renderer, DynString text, ivec2 top_left, ivec2 char_size, vec3 color)
+void text_renderer_add_text_int(Text_Renderer* renderer, String text, ivec2 top_left, ivec2 char_size, vec3 color)
 {
     if (text.size == 0) {
         return;
@@ -308,8 +308,8 @@ void text_renderer_draw(Text_Renderer* renderer, Render_Pass* render_pass)
 
     // Get shaders
     auto& core = rendering_core;
-    auto bitmap_shader = rendering_core_query_shader("core/font_bitmap.glsl");
-    auto sdf_shader = rendering_core_query_shader("core/font_sdf.glsl");
+    auto bitmap_shader = rendering_core_query_shader(string_make("core/font_bitmap.glsl"));
+    auto sdf_shader = rendering_core_query_shader(string_make("core/font_sdf.glsl"));
 
     // Render the last pushed indices
     render_pass_draw_count(

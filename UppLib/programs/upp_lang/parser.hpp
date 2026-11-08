@@ -42,5 +42,5 @@ namespace Parser
     void execute_clean(Compilation_Unit* unit, Compilation_Data* compilation_data);
 
     // Utility
-    DynArray<Text_Range> ast_base_get_section_token_range(Source_Code* code, AST::Node* base, Node_Section section, Arena* arena);
+    void ast_base_get_section_token_range(Source_Code* code, DynArray<Text_Range>* append_to, AST::Node* base, Node_Section section);
 }

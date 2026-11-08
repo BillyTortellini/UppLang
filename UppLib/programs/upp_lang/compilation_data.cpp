@@ -100,7 +100,7 @@ u64 hash_call_signature(Call_Signature** callable_p)
 	{
 		auto& param = signature->parameters[i];
 		hash = hash_combine(hash, hash_pointer(param.datatype));
-		hash = hash_combine(hash, hash_pointer(param.name));
+		hash = hash_combine(hash, identifier_hash(param.name));
 		hash = hash_bool(hash, param.required);
 		hash = hash_bool(hash, param.requires_named_addressing);
 		hash = hash_bool(hash, param.must_not_be_set);
@@ -134,28 +134,31 @@ bool equals_call_signature(Call_Signature** app, Call_Signature** bpp)
 
 Text_Range text_index_to_word_range(Text_Index pos, Source_Code* code)
 {
-    auto line = source_code_get_line(code, pos.line);
 	Text_Range error_range = text_range_make(pos, pos);
-	if (line == nullptr) return error_range;
-    auto text = line->text;
-	if (pos.character >= text.size) return error_range;
-	if (!char_is_valid_identifier(text[pos.character])) return error_range;
+	if (pos.line < 0 || pos.line >= code->lines.size) return error_range;
+
+	SCRATCH_ARENA_MAKE_SCOPED(&code->arena);
+	DynString line_text = DynString::create(scratch_arena);
+	source_code_line_append_to_string(code, pos.line, &line_text);
+
+	if (pos.character >= line_text.size) return error_range;
+	if (!char_is_valid_identifier(line_text[pos.character])) return error_range;
 
 	int start_index = pos.character;
 	int end_index = pos.character;
 
 	while (start_index > 0)
 	{
-		char prev = text[start_index - 1];
+		char prev = line_text[start_index - 1];
 		if (!char_is_valid_identifier(prev)) {
 			break;
 		}
 		start_index -= 1;
 	}
 
-	while (end_index < text.size)
+	while (end_index < line_text.size)
 	{
-		char curr = text[end_index];
+		char curr = line_text[end_index];
 		if (!char_is_valid_identifier(curr)) {
 			break;
 		}
@@ -180,10 +183,100 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 	result->root_semantic_context_scratch_arena = Arena::create();
 	result->fiber_pool = fiber_pool;
 
+	// Create Identifier_Pool and add Predefined_IDs
+	{
+		result->identifier_pool = identifier_pool_create(&result->arena);
+
+		auto& ids = result->predefined_ids;
+		auto add_id = [&](const char* id) -> Identifier {
+			return identifier_pool_add(&result->identifier_pool, string_make(id));
+		};
+
+		ids.size = add_id("size");
+		ids.data = add_id("data");
+		ids.type = add_id("type");
+		ids.tag = add_id("tag");
+		ids.anon_struct = add_id("Anonymous");
+		ids.anon_enum = add_id("Anon_Enum");
+		ids.main = add_id("main");
+		ids.type_of = add_id("type_of");
+		ids.type_info = add_id("type_info");
+		ids.empty_string = add_id("");
+		ids.root_module = add_id("_ROOT_");
+		ids.invalid_symbol_name = add_id("__INVALID_SYMBOL_NAME");
+		ids.id_struct = add_id("Struct");
+		ids.byte = add_id("byte");
+		ids.value = add_id("value");
+		ids.is_available = add_id("is_available");
+		ids.uninitialized_token = add_id("_");
+		ids.return_type_name = add_id("!return_type_name");
+		ids.operators = add_id("operators");
+		ids.dot_calls = add_id("dot_calls");
+		ids.c_string = add_id("c_string");
+		ids.string = add_id("string");
+		ids.allocator = add_id("Allocator");
+		ids.bytes = add_id("bytes");
+		ids.transitive = add_id("transitive");
+		ids.all = add_id("all");
+		ids.symbols = add_id("symbols");
+		ids.lambda_function = add_id("lambda_function");
+		ids.bake_function = add_id("bake_function");
+
+		ids.hashtag_instanciate = add_id("#instanciate");
+		ids.hashtag_bake = add_id("#bake");
+		ids.hashtag_get_overload = add_id("#get_overload");
+		ids.hashtag_get_overload_poly = add_id("#get_overload_poly");
+
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::ARRAY_ACCESS]      = add_id("add_array_access");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::AUTO_CAST]         = add_id("add_auto_cast");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::ITERATOR]          = add_id("add_iterator");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::DEFAULT_VALUE]     = add_id("add_default_value");
+
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_ADDITION]      = add_id("add_binop_addition");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_SUBTRACTION]   = add_id("add_binop_subtraction");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_MULTIPLY]      = add_id("add_binop_multiply");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_DIVIDE]        = add_id("add_binop_divide");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_MODULO]        = add_id("add_binop_modulo");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_EQUAL]         = add_id("add_binop_equal");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_NOT_EQUAL]     = add_id("add_binop_not_equal");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_LESS]          = add_id("add_binop_less");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_LESS_EQUAL]    = add_id("add_binop_less_equal");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_GREATER]       = add_id("add_binop_greater");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_GREATER_EQUAL] = add_id("add_binop_greater_equal");
+
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::UNOP_NOT]          = add_id("add_unop_not");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::UNOP_NEGATE]       = add_id("add_unop_negate");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::INVALID]           = add_id("!custom_op_invalid!");
+
+		ids.defer_restore = add_id("defer_restore");
+		ids.cast = add_id("cast");
+		ids.defer = add_id("defer");
+		ids.from = add_id("from");
+		ids.to = add_id("to");
+
+		ids.function = add_id("function");
+		ids.create_fn = add_id("create_fn");
+		ids.next_fn = add_id("next_fn");
+		ids.has_next_fn = add_id("has_next_fn");
+		ids.value_fn = add_id("value_fn");
+		ids.name = add_id("name");
+		ids.as_member_access = add_id("as_member_access");
+		ids.commutative = add_id("commutative");
+		ids.binop = add_id("binop");
+		ids.unop = add_id("unop");
+		ids.option = add_id("option");
+		ids.global = add_id("global");
+		ids.lib = add_id("lib");
+		ids.lib_dir = add_id("lib_dir");
+		ids.source = add_id("source");
+		ids.header = add_id("header");
+		ids.header_dir = add_id("header_dir");
+		ids.definition = add_id("definition");
+	}
+
 	// Create datastructures
 	{
 		result->code_errors = DynArray<Code_Error>::create(&result->arena);
-		result->identifier_pool = identifier_pool_create();
 
 		// Initialize Data
 		result->ast_to_pass_mapping = hashtable_create_pointer_empty<AST::Node*, Node_Passes>(16);
@@ -211,10 +304,10 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 		// Initialize stages
 		result->type_system = type_system_create(result);
 		result->constant_pool = constant_pool_create(result);
-		result->extern_sources = extern_sources_create();
+		result->extern_sources = extern_sources_create(&result->arena);
 		result->workload_executer = workload_executer_create(result); // Note: This also sets the root workload
-		result->c_generator = c_generator_create(result);
-		c_compiler_initialize(); // Initializiation is cached, so calling this multiple times doesn't matter
+		result->c_program_translation = nullptr;
+		result->c_program_was_compiled = false;
 	}
 
 	// Initialize default objects
@@ -238,25 +331,25 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 
 				// Define int, uint, float, bool, string
 				Symbol* result = symbol_table_define_symbol(
-					root_table, identifier_pool_add(id_pool, string_create_static("int")), Symbol_Type::DATATYPE, nullptr, Symbol_Access_Level::GLOBAL,
+					root_table, identifier_pool_add(id_pool, string_make("int")), Symbol_Type::DATATYPE, nullptr, Symbol_Access_Level::GLOBAL,
 					semantic_context, true
 				);
 				result->options.datatype = upcast(types.int_type);
 
 				result = symbol_table_define_symbol(
-					root_table, identifier_pool_add(id_pool, string_create_static("uint")), Symbol_Type::DATATYPE, nullptr, Symbol_Access_Level::GLOBAL,
+					root_table, identifier_pool_add(id_pool, string_make("uint")), Symbol_Type::DATATYPE, nullptr, Symbol_Access_Level::GLOBAL,
 					semantic_context, true
 				);
 				result->options.datatype = upcast(types.uint_type);
 
 				result = symbol_table_define_symbol(
-					root_table, identifier_pool_add(id_pool, string_create_static("float")), Symbol_Type::DATATYPE, nullptr, Symbol_Access_Level::GLOBAL,
+					root_table, identifier_pool_add(id_pool, string_make("float")), Symbol_Type::DATATYPE, nullptr, Symbol_Access_Level::GLOBAL,
 					semantic_context, true
 				);
 				result->options.datatype = upcast(types.f32_type);
 
 				result = symbol_table_define_symbol(
-					root_table, identifier_pool_add(id_pool, string_create_static("bool")), Symbol_Type::DATATYPE, nullptr, Symbol_Access_Level::GLOBAL,
+					root_table, identifier_pool_add(id_pool, string_make("bool")), Symbol_Type::DATATYPE, nullptr, Symbol_Access_Level::GLOBAL,
 					semantic_context, true
 				);
 				result->options.datatype = upcast(types.bool_type);
@@ -270,7 +363,7 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 
 				compilation_data->builtin_module_symbol = symbol_table_define_symbol(
 					compilation_data->root_symbol_table, 
-					identifier_pool_add(&compilation_data->identifier_pool, string_create_static("_BUILTIN_MODULE_")), 
+					identifier_pool_add(&compilation_data->identifier_pool, string_make("_BUILTIN_MODULE_")), 
 					Symbol_Type::MODULE, nullptr, Symbol_Access_Level::GLOBAL, semantic_context, true
 				);
 				compilation_data->builtin_module_symbol->options.upp_module = builtin_module;
@@ -282,7 +375,7 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 			auto define_type_symbol = [&](const char* name, Datatype* type) -> Symbol* {
 				Symbol* result = symbol_table_define_symbol(
 					compilation_data->root_symbol_table, 
-					identifier_pool_add(id_pool, string_create_static(name)), 
+					identifier_pool_add(id_pool, string_make(name)), 
 					Symbol_Type::DATATYPE, 0, Symbol_Access_Level::GLOBAL, semantic_context, true
 				);
 				result->options.datatype = type;
@@ -316,7 +409,7 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 				{
 					Symbol* symbol = symbol_table_define_symbol(
 						builtin_table,
-						identifier_pool_add(id_pool, string_create_static(name)),
+						identifier_pool_add(id_pool, string_make(name)),
 						Symbol_Type::COMPTIME_VALUE, 0, Symbol_Access_Level::GLOBAL, semantic_context, true
 					);
 					symbol->options.constant = constant;
@@ -356,7 +449,7 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 				Symbol_Table* symbol_table = 
 					info.type_class == Hardcoded_Type_Class::ESSENTIAL ? compilation_data->root_symbol_table : builtin_table;
 				Symbol* result = symbol_table_define_symbol(
-					symbol_table, identifier_pool_add(id_pool, string_create_static(info.symbol_name)), 
+					symbol_table, identifier_pool_add(id_pool, string_make(info.symbol_name)), 
 					Symbol_Type::HARDCODED_FUNCTION, nullptr, Symbol_Access_Level::GLOBAL,
 					semantic_context, true
 				);
@@ -376,9 +469,9 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 		{
 			auto& hardcoded_signatures = compilation_data->hardcoded_function_signatures;
 			auto& context_signatures   = compilation_data->context_change_type_signatures;
-			auto& ids = identifier_pool->predefined_ids;
-			auto make_id = [&](const char* name) -> DynString* {
-				return identifier_pool_add(id_pool, string_create_static(name));
+			auto& ids = compilation_data->predefined_ids;
+			auto make_id = [&](const char* name) -> Identifier {
+				return identifier_pool_add(id_pool, string_make(name));
 			};
 
 			Call_Signature* call_signature = call_signature_create_empty();
@@ -664,8 +757,6 @@ void compilation_data_destroy(Compilation_Data* data)
 	ir_generator_destroy(data->ir_generator);
 
 	constant_pool_destroy(data->constant_pool);
-	extern_sources_destroy(&data->extern_sources);
-	c_generator_destroy(data->c_generator);
 
 	for (int i = 0; i < data->functions.size; i++) {
 		Upp_Function* function = data->functions[i];
@@ -731,7 +822,6 @@ void compilation_data_destroy(Compilation_Data* data)
 		    source_code_destroy(unit->code);
 		    unit->code = nullptr;
 		}
-		string_destroy(&unit->filepath);
 		delete unit;
 	}
 	dynamic_array_destroy(&data->compilation_units);
@@ -739,16 +829,16 @@ void compilation_data_destroy(Compilation_Data* data)
 	delete data;
 }
 
-Compilation_Unit* compilation_data_add_compilation_unit_unique(Compilation_Data* compilation_data, DynString filepath, bool load_file_if_new, bool parse_ast)
+Compilation_Unit* compilation_data_add_compilation_unit_unique(Compilation_Data* compilation_data, String filepath, bool load_file_if_new, bool parse_ast)
 {
-    DynString full_file_path = dynstring_copy(filepath);
+	SCRATCH_ARENA_MAKE_SCOPED(&compilation_data->arena);
+    DynString full_file_path = DynString::create(scratch_arena);
     filepath_relative_to_absolute_path(&full_file_path);
-    SCOPE_EXIT(string_destroy(&full_file_path)); // On success capacity is set to 0, so this won't do anything
 
 	// Check if filename alreay exists
 	for (int i = 0; i < compilation_data->compilation_units.size; i++) {
 		auto other = compilation_data->compilation_units[i];
-		if (string_equals(&other->filepath, &full_file_path)) {
+		if (full_file_path.to_string() == other->filepath) {
 			if (parse_ast) {
 				compilation_unit_parse_ast(other, compilation_data);
 			}
@@ -759,7 +849,7 @@ Compilation_Unit* compilation_data_add_compilation_unit_unique(Compilation_Data*
 	Source_Code* source_code = nullptr;
 	if (load_file_if_new)
 	{
-		source_code = source_code_load_from_file(full_file_path);
+		source_code = source_code_load_from_file(full_file_path.to_string());
 		if (source_code == nullptr) {
 		    return nullptr;
 		}
@@ -767,7 +857,7 @@ Compilation_Unit* compilation_data_add_compilation_unit_unique(Compilation_Data*
 
 	// Otherwise create new compilation-unit
 	Compilation_Unit* unit = new Compilation_Unit;
-	unit->filepath = full_file_path;
+	unit->filepath = string_allocate_copy(full_file_path.to_string(), compilation_data->arena.upcast());;
 	full_file_path.capacity = 0;
 
 	unit->code = source_code;
@@ -784,6 +874,9 @@ Compilation_Unit* compilation_data_add_compilation_unit_unique(Compilation_Data*
 
 void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Unit* main_unit, Compile_Type compile_type)
 {
+	SCRATCH_ARENA_MAKE_SCOPED(&compilation_data->arena);
+	DynString tmp_string = DynString::create(scratch_arena);
+
     fiber_pool_set_current_fiber_to_main(compilation_data->fiber_pool);
     fiber_pool_check_all_handles_completed(compilation_data->fiber_pool);
 
@@ -848,10 +941,10 @@ void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Un
             }
         }
         if (do_c_generation) {
-            c_generator_generate(compilation_data->c_generator);
+			compilation_data->c_program_translation = c_backend_generate_program(compilation_data);
         }
         if (do_c_compilation) {
-            c_compiler_compile(compilation_data);
+			c_backend_compile_program(compilation_data);
         }
     }
 
@@ -874,10 +967,8 @@ void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Un
             if (do_analysis && output_root_table)
             {
                 logg("\n--------ROOT TABLE RESULT---------\n");
-                DynString root_table = dynstring_create(1024);
-                SCOPE_EXIT(string_destroy(&root_table));
-                symbol_table_append_to_string(&root_table, compilation_data->root_symbol_table, false);
-                logg("%s", root_table.characters);
+                symbol_table_append_to_string(tmp_string.reset(), compilation_data->root_symbol_table, false);
+                logg("%s", tmp_string.to_cstring());
             }
 
             if (error_free)
@@ -885,20 +976,16 @@ void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Un
                 if (do_ir_gen && output_ir)
                 {
                     logg("\n--------IR_PROGRAM---------\n");
-                    DynString tmp = dynstring_create(1024);
-                    SCOPE_EXIT(string_destroy(&tmp));
-                    ir_program_append_to_string(&tmp, false, compilation_data);
-                    string_style_remove_codes(&tmp);
-                    logg("%s", tmp.characters);
+                    ir_program_append_to_string(tmp_string.reset(), false, compilation_data);
+                    string_style_remove_codes(&tmp_string);
+                    logg("%s", tmp_string.to_cstring());
                 }
 
                 if (do_bytecode_gen && output_bytecode)
                 {
-                    DynString result_str = dynstring_create(32);
-                    SCOPE_EXIT(string_destroy(&result_str));
                     if (do_bytecode_gen && output_bytecode) {
-                        bytecode_generator_append_bytecode_to_string(compilation_data, &result_str);
-                        logg("\n----------------BYTECODE_GENERATOR RESULT---------------: \n%s\n", result_str.characters);
+                        bytecode_generator_append_bytecode_to_string(compilation_data, tmp_string.reset());
+                        logg("\n----------------BYTECODE_GENERATOR RESULT---------------: \n%s\n", tmp_string.to_cstring());
                     }
                 }
             }
@@ -952,14 +1039,14 @@ int add_code_analysis_item(Text_Range range, Source_Code* code, int tree_depth, 
 
     for (int i = range.start.line; i <= range.end.line; i++)
     {
-        auto line = source_code_get_line(code, i);
+		int line_size = source_code_line_get_size(code, i);
         int start_index = range.start.character;
         int end_index = range.end.character;
         if (i != range.start.line) {
             start_index = 0;
         }
         if (i != range.end.line) {
-            end_index = line->text.size;
+            end_index = line_size;
         }
 
         Editor_Info_Reference result;
@@ -970,7 +1057,7 @@ int add_code_analysis_item(Text_Range range, Source_Code* code, int tree_depth, 
 		result.editor_info_mapping_count = 0;
 		result.editor_info_mapping_start_index = -1;
 		result.item_index = analysis_item_index;
-        dynamic_array_push_back(&line->item_infos, result);
+		code->lines[i].item_infos.append(result);
     }
 
 	return analysis_item_index;
@@ -1044,7 +1131,7 @@ void find_editor_infos_recursive(
 				table_range.symbol_table = symbol_table;
 				table_range.tree_depth = tree_depth;
 				table_range.pass = pass;
-				dynamic_array_push_back(&code->symbol_table_ranges, table_range);
+				code->symbol_table_ranges.push_back(table_range);
 			}
 		}
 		break;
@@ -1063,7 +1150,7 @@ void find_editor_infos_recursive(
 			table_range.symbol_table = info->upp_module->symbol_table;
 			table_range.tree_depth = tree_depth;
 			table_range.pass = pass;
-			dynamic_array_push_back(&code->symbol_table_ranges, table_range);
+			code->symbol_table_ranges.push_back(table_range);
 		}
 		break;
 	}
@@ -1074,7 +1161,7 @@ void find_editor_infos_recursive(
 			Block_ID_Range id_range;
 			id_range.range = node->bounding_range;
 			id_range.block_id = block_node->block_id.value;
-			dynamic_array_push_back(&code->block_id_range, id_range);
+			code->block_id_range.push_back(id_range);
 		}
 
 		for (int i = 0; i < active_passes.size; i++)
@@ -1088,7 +1175,7 @@ void find_editor_infos_recursive(
 			table_range.symbol_table = block->symbol_table;
 			table_range.tree_depth = tree_depth;
 			table_range.pass = pass;
-			dynamic_array_push_back(&code->symbol_table_ranges, table_range);
+			code->symbol_table_ranges.push_back(table_range);
 		}
 		break;
 	}
@@ -1306,11 +1393,11 @@ void compilation_data_update_source_code_information(Compilation_Data* compilati
 		auto unit = compilation_data->compilation_units[i];
 
 		// Reset analysis data for unit
-		dynamic_array_reset(&unit->code->block_id_range);
-		dynamic_array_reset(&unit->code->symbol_table_ranges);
+		unit->code->block_id_range.reset();
+		unit->code->symbol_table_ranges.reset();
 		unit->code->root_table = nullptr;
-		for (int i = 0; i < unit->code->line_count; i++) {
-			dynamic_array_reset(&source_code_get_line(unit->code, i)->item_infos);
+		for (int i = 0; i < unit->code->lines.size; i++) {
+			unit->code->lines[i].item_infos.reset();
 		}
 
 		// Store nodes
@@ -1370,19 +1457,25 @@ void compilation_data_update_source_code_information(Compilation_Data* compilati
 		for (int i = 0; i < compilation_data->compilation_units.size; i++)
 		{
 			auto unit = compilation_data->compilation_units[i];
-			for (int j = 0; j < unit->code->line_count; j++) 
+			for (int j = 0; j < unit->code->lines.size; j++) 
 			{
-				auto& analysis_items = source_code_get_line(unit->code, j)->item_infos;
-				for (int k = 0; k < analysis_items.size; k++) 
+				auto& analysis_items = unit->code->lines[j].item_infos;
+				auto head = analysis_items.head;
+				while (head != nullptr) 
 				{
-					auto& item = analysis_items[k];
+					auto& item = head->value;
 					item.editor_info_mapping_start_index = item_info_start_indices[item.item_index];
 					item.editor_info_mapping_count = item_info_count[item.item_index];
+
 					// Remove item if mapping count is null (Not sure if this is wanted behavior)
 					if (item.editor_info_mapping_count == 0) {
-						dynamic_array_swap_remove(&analysis_items, k);
-						k -= 1;
+						auto node = head;
+						head = head->next;
+						analysis_items.remove_node(head);
+						continue;
 					}
+
+					head = head->next;
 				}
 			}
 		}
@@ -1408,7 +1501,7 @@ Exit_Code compiler_execute(Compilation_Data* compilation_data)
     if (!compilation_data_errors_occured(compilation_data) && do_execution)
     {
         if (compiler_execute_binary) {
-            return c_compiler_execute();
+            return c_backend_execute_program(compilation_data);
         }
         else
         {
@@ -1424,15 +1517,14 @@ Exit_Code compiler_execute(Compilation_Data* compilation_data)
     return exit_code_make(Exit_Code_Type::COMPILATION_FAILED);
 }
 
-void compilation_data_add_code_error_code_section(Compilation_Data* compilation_data, const char* msg, AST::Node* node, Node_Section section)
+void compilation_data_add_code_error_code_section(Compilation_Data* compilation_data, String msg, AST::Node* node, Node_Section section)
 {
 	Code_Error error;
 	error.msg = msg;
 	error.infos = DynArray<Error_Information>::create(&compilation_data->arena);
 	error.unit = ast_node_to_compilation_unit(node);
-	error.ranges = Parser::ast_base_get_section_token_range(
-		error.unit->code, node, section, &compilation_data->arena
-	);
+	error.ranges = DynArray<Text_Range>::create(&compilation_data->arena);
+	Parser::ast_base_get_section_token_range(error.unit->code, &error.ranges, node, section);
 	compilation_data->code_errors.push_back(error);
 }
 
@@ -1582,21 +1674,20 @@ void compiler_run_testcases(bool force_run)
     // Create testcases with expected result
     Directory_Crawler* crawler = directory_crawler_create();
     SCOPE_EXIT(directory_crawler_destroy(crawler));
-    directory_crawler_set_path(crawler, string_create_static("upp_code/testcases"));
+    directory_crawler_set_path(crawler, string_make("upp_code/testcases"));
     auto files = directory_crawler_get_content(crawler);
 
     bool errors_occured = false;
     int test_case_count = 0;
-    DynString result = dynstring_create(256);
-    SCOPE_EXIT(string_destroy(&result));
+    DynString result = dynstring_create(scratch_arena);
     for (int i = 0; i < files.size; i++)
     {
         const auto& file = files[i];
         if (file.is_directory) continue;
 
         auto name = files[i].filename;
-        bool case_should_succeed = string_contains_substring(name, 0, string_create_static("error")) == -1;
-        bool skip_file = string_contains_substring(name, 0, string_create_static("notest")) != -1;
+        bool case_should_succeed = string_contains_substring(name, string_make("error"), 0) == -1;
+        bool skip_file = string_contains_substring(name, string_make("notest"), 0) != -1;
         if (skip_file) {
             continue;
         }
@@ -1607,10 +1698,9 @@ void compiler_run_testcases(bool force_run)
         Compilation_Data* compilation_data = compilation_data_create(fiber_pool);
         SCOPE_EXIT(compilation_data_destroy(compilation_data));
 
-        DynString path = dynstring_create();
-        path.append_formated("upp_code/testcases/%s", name.characters);
-        SCOPE_EXIT(string_destroy(&path));
-        Compilation_Unit* main_unit = compilation_data_add_compilation_unit_unique(compilation_data, path, true, false);
+        DynString path = DynString::create(&compilation_data->arena);
+        path.reset()->append("upp_code/testcases/")->append(name);
+        Compilation_Unit* main_unit = compilation_data_add_compilation_unit_unique(compilation_data, path.to_string(), true, false);
         if (main_unit == nullptr) {
             dynstring_append_formated(&result, "ERROR:   Test %s could not load test file\n", name.characters);
             errors_occured = true;
@@ -1627,7 +1717,7 @@ void compiler_run_testcases(bool force_run)
             if (exit_code.type == Exit_Code_Type::COMPILATION_FAILED)
             {
                 compilation_data_append_code_errors_to_string(compilation_data, &result, 1);
-                string_append_character(&result, '\n');
+				result.append('\n');
             }
             errors_occured = true;
         }
@@ -1656,21 +1746,22 @@ void compiler_run_testcases(bool force_run)
     --------------------------
     Each character gets typed one by one, then the text is parsed and analysed
     */
-    Optional<DynString> text = file_io_load_text_file(string_create_static("upp_code/testcases/045_unions.upp"), scratch_arena);
-    if (!text.available) {
+	DynString text = DynString::create(scratch_arena);
+    bool file_loaded = file_io_load_text_file(string_make("upp_code/testcases/045_unions.upp"), &text);
+    if (!file_loaded) {
         logg("Couldn't execute stresstest, file not found\n");
         return;
     }
 
     double time_stress_start = timer_current_time_in_seconds();
 
-    DynString code = text.value;
+	DynString code = text;
     for (int i = 0; i < code.size; i++)
     {
-        DynString cut_code = dynstring_create(i + 10);
+        DynString cut_code = dynstring_create(scratch_arena);
         for (int j = 0; j < i; j++) {
             char c = code.characters[j];
-            string_append_character(&cut_code, c);
+			cut_code.append(c);
         }
 
         //logg("Cut code:\n-----------------------\n%s", cut_code.characters);
@@ -1681,12 +1772,11 @@ void compiler_run_testcases(bool force_run)
     }
 
     // Stress testing again but with correct parenthesis order
-    Dynamic_Array<char> stack_parenthesis = dynamic_array_create<char>(256);
-    SCOPE_EXIT(dynamic_array_destroy(&stack_parenthesis));
+    DynArray<char> stack_parenthesis = DynArray<char>::create(scratch_arena);
     for (int i = 0; i < code.size; i++)
     {
-        dynamic_array_reset(&stack_parenthesis);
-        DynString cut_code = dynstring_create(i + 10);
+		stack_parenthesis.reset();
+        DynString cut_code = dynstring_create(scratch_arena);
         for (int j = 0; j < i; j++)
         {
             char c = code.characters[j];
@@ -1706,22 +1796,21 @@ void compiler_run_testcases(bool force_run)
 
             char last_on_stack = '!';
             if (stack_parenthesis.size > 0) {
-                last_on_stack = stack_parenthesis.data[stack_parenthesis.size - 1];
+                last_on_stack = stack_parenthesis[stack_parenthesis.size - 1];
             }
 
             if (is_parenthesis)
             {
                 if (is_open)
                 {
-                    string_append_character(&cut_code, counter_type);
-                    string_append_character(&cut_code, c);
-                    dynamic_array_push_back(&stack_parenthesis, counter_type);
+                    cut_code.append(counter_type)->append(c);
+                    stack_parenthesis.push_back(counter_type);
                 }
                 else
                 {
                     assert(last_on_stack == c, "Wrong parenthesis order");
-                    string_append_character(&cut_code, c);
-                    dynamic_array_rollback_to_size(&stack_parenthesis, math_maximum(0, stack_parenthesis.size - 1));
+					cut_code.append(c);
+					stack_parenthesis.rollback_to_size(math_maximum(0, (int)stack_parenthesis.size - 1));
                 }
             }
         }
@@ -1750,7 +1839,7 @@ Call_Signature* call_signature_create_empty()
 }
 
 Call_Parameter* call_signature_add_parameter(
-	Call_Signature* signature, DynString* name, Datatype* datatype,
+	Call_Signature* signature, Identifier name, Datatype* datatype,
 	bool required, bool requires_named_addressing, bool must_not_be_set)
 {
 	assert(!signature->is_registered, "");
@@ -1769,7 +1858,7 @@ Call_Parameter* call_signature_add_parameter(
 
 Call_Parameter* call_signature_add_return_type(Call_Signature* signature, Datatype* datatype, Compilation_Data* compilation_data)
 {
-	auto& ids = compilation_data->identifier_pool.predefined_ids;
+	auto& ids = compilation_data->predefined_ids;
 	call_signature_add_parameter(signature, ids.return_type_name, datatype, false, false, true);
 	assert(signature->return_type_index == -1, "");
 	signature->return_type_index = signature->parameters.size - 1;

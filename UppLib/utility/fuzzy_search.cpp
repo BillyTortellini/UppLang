@@ -1,25 +1,29 @@
 #include "fuzzy_search.hpp"
 
 #include "character_info.hpp"
+#include "../datastructures/dynamic_array.hpp"
 
 struct Fuzzy_Searcher {
     Dynamic_Array<Fuzzy_Item> items;
     Dynamic_Array<bool> used_chars;
-    DynString search_term;
+    String search_term;
     int max_result_count;
 };
 
-static bool searcher_initialized = false;
-static Fuzzy_Searcher searcher;
-
-void fuzzy_search_start_search(DynString search_term, int max_result_count)
+static Fuzzy_Searcher fuzzy_searcher_create()
 {
-    if (!searcher_initialized) {
-        searcher.items = dynamic_array_create<Fuzzy_Item>();
-        searcher.used_chars = dynamic_array_create<bool>();
-        searcher_initialized = true;
-    }
+    Fuzzy_Searcher searcher;
+    searcher.items = dynamic_array_create<Fuzzy_Item>();
+    searcher.used_chars = dynamic_array_create<bool>();
+    searcher.search_term = string_make("");
+    searcher.max_result_count = 0;
+    return searcher;
+}
 
+static Fuzzy_Searcher searcher = fuzzy_searcher_create();
+
+void fuzzy_search_start_search(String search_term, int max_result_count)
+{
     dynamic_array_reserve(&searcher.items, max_result_count + 1);
     searcher.max_result_count = max_result_count;
     searcher.search_term = search_term;
@@ -55,7 +59,7 @@ bool fuzzy_item_compare(Fuzzy_Item& a, Fuzzy_Item& b)
     }
 
     // Otherwise we don't know, so just sort lexically
-    return !string_in_order(&a.item_name, &b.item_name);
+    return string_compare(a.item_name, b.item_name) == Order_Comparison_Result::LESS;
 }
 
 void fuzzy_search_insert_item_ordered(Fuzzy_Item& item)
@@ -86,13 +90,13 @@ void fuzzy_search_insert_item_ordered(Fuzzy_Item& item)
     }
 }
 
-void fuzzy_search_add_item(DynString item_name, int user_index)
+void fuzzy_search_add_item(String item_name, int user_index)
 {
     if (item_name.size == 0) {
         return;
     }
-    DynString option = item_name;
-    DynString typed = searcher.search_term;
+    String option = item_name;
+    String typed = searcher.search_term;
 
     Fuzzy_Item result;
     result.item_name = item_name;
@@ -133,8 +137,8 @@ void fuzzy_search_add_item(DynString item_name, int user_index)
             int missmatch_count = 0;
             while (start + length < option.size && typed_index + length < typed.size)
             {
-                auto char_o = option[start + length];
-                auto char_t = typed[typed_index + length];
+                auto char_o = option.characters[start + length];
+                auto char_t = typed.characters[typed_index + length];
                 bool used = used_chars[start + length];
                 if (used) {
                     break;
@@ -223,16 +227,16 @@ int fuzzy_search_get_item_count() {
     return searcher.items.size;
 }
 
-Dynamic_Array<Fuzzy_Item> fuzzy_search_get_results(bool allow_cutoff, int min_cutoff_length)
+Array<Fuzzy_Item> fuzzy_search_get_results(bool allow_cutoff, int min_cutoff_length)
 {
     // Exit if no suggestions are available
     if (searcher.items.size == 0) {
-        return searcher.items;
+        return dynamic_array_as_array(&searcher.items);
     }
 
     // Sort by ranking
     if (!allow_cutoff) {
-        return searcher.items;
+        return dynamic_array_as_array(&searcher.items);
     }
 
     // Cut off at appropriate point
@@ -251,9 +255,9 @@ Dynamic_Array<Fuzzy_Item> fuzzy_search_get_results(bool allow_cutoff, int min_cu
 
         if (valid_cutoff && i >= min_cutoff_length) {
             dynamic_array_rollback_to_size(&searcher.items, i);
-            return searcher.items;
+            return dynamic_array_as_array(&searcher.items);
         }
     }
 
-    return searcher.items;
+    return dynamic_array_as_array(&searcher.items);
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../datastructures/dynamic_array.hpp"
+#include "../datastructures/string.hpp"
 #include "../utility/utils.hpp"
 
 struct BinaryParser
@@ -11,10 +12,10 @@ struct BinaryParser
 
 BinaryParser binary_parser_create_empty(int capacity);
 BinaryParser binary_parser_create_from_bytes(Array<byte> data_to_read);
-Optional<BinaryParser> binary_parser_create_from_file(const char* filename);
+Optional<BinaryParser> binary_parser_create_from_file(String filename);
 void binary_parser_destroy(BinaryParser* parser);
 
-bool binary_parser_write_to_file(BinaryParser* parser, const char* filepath);
+bool binary_parser_write_to_file(BinaryParser* parser, String filepath);
 Array<byte> binary_parser_get_data(BinaryParser* parser);
 
 void binary_parser_write_bytes(BinaryParser* parser, Array<byte> data);

@@ -58,10 +58,6 @@ u64 hash_memory(Array<byte> memory) {
     return fasthash64(memory.data, memory.size, FAST_HASH_SEED);
 }
 
-u64 hash_string(DynString* string) {
-    return hash_memory(array_create_static((byte*)string->characters, string->size));
-}
-
 u64 hash_i32(i32* i) {
     return hash_memory(array_create_static<byte>((byte*)i, 4));
 }

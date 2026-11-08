@@ -4,6 +4,7 @@
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/allocators.hpp"
 #include "../../datastructures/hashtable.hpp"
+#include "../../utility/identifier_pool.hpp"
 #include "compiler_misc.hpp"
 
 struct Datatype;
@@ -81,7 +82,8 @@ struct Constant_Pool
     Upp_Constant add_f32(f32 value);
     Upp_Constant add_f64(f64 value);
     Upp_Constant add_upp_string_assume_valid(Upp_String string);
-    Upp_Constant add_string_assume_valid(DynString string);
+    Upp_Constant add_string(String string);
+    Upp_Constant add_identifier(Identifier id);
     Upp_Constant add_bool(bool value);
     Upp_Constant add_enum_value_assume_valid(Datatype_Enum* enum_type, int value);
     Upp_Constant add_type_handle_assume_valid(Upp_Type_Handle type_handle);

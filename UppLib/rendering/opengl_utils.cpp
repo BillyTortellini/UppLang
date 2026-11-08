@@ -12,6 +12,9 @@ bool opengl_utils_check_shader_compilation_status(GLuint shader_id)
         return false;
     }
 
+    SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+    DynString tmp_string = DynString::create(scratch_arena);
+
     // Check if compilation worked
     GLint isCompiled = 0;
     glGetShaderiv(shader_id, GL_COMPILE_STATUS, &isCompiled);
@@ -20,47 +23,47 @@ bool opengl_utils_check_shader_compilation_status(GLuint shader_id)
         GLint maxLength = 0;
         glGetShaderiv(shader_id, GL_INFO_LOG_LENGTH, &maxLength);
 
-        DynString error_message = dynstring_create(maxLength);
-        SCOPE_EXIT(string_destroy(&error_message));
+        tmp_string.reserve(maxLength + 1);
 
-        glGetShaderInfoLog(shader_id, maxLength, &maxLength, error_message.characters);
+        glGetShaderInfoLog(shader_id, maxLength, &maxLength, tmp_string.characters);
         logg("ERROR COMPILING SHADER:\n");
-        logg("Could not compile shader, error msg: \n %s\n", error_message.characters);
+        logg("Could not compile shader, error msg: \n %s\n", tmp_string.characters);
         return false;
     }
 
     return true;
 }
 
-GLuint opengl_utils_create_shader_from_file(const char* filepath)
+GLuint opengl_utils_create_shader_from_file(String filepath)
 {
     SCRATCH_ARENA_MAKE_SCOPED(nullptr);
 
     // Check extension 
     GLenum shaderType = 0;
-    if (cstring_ends_with(filepath, ".frag")) {
+    if (string_ends_with(filepath, string_make(".frag"))) {
         shaderType = GL_FRAGMENT_SHADER;
     }
-    else if (cstring_ends_with(filepath, ".vert")) {
+    else if (string_ends_with(filepath, string_make(".vert"))) {
         shaderType = GL_VERTEX_SHADER;
     }
-    else if (cstring_ends_with(filepath, ".geom")) {
+    else if (string_ends_with(filepath, string_make(".geom"))) {
         shaderType = GL_GEOMETRY_SHADER;
     }
-    else if (cstring_ends_with(filepath, ".tese")) {
+    else if (string_ends_with(filepath, string_make(".tese"))) {
         shaderType = GL_TESS_EVALUATION_SHADER;
     }
-    else if (cstring_ends_with(filepath, ".tesc")) {
+    else if (string_ends_with(filepath, string_make(".tesc"))) {
         shaderType = GL_TESS_CONTROL_SHADER;
     }
     else {
-        logg("CreateShaderFromFile: Could not determine shadertype from file extension of: \"%s\"\n", filepath);
+        logg("CreateShaderFromFile: Could not determine shadertype from file extension of: \"%.%s\"\n", filepath.size, filepath.characters);
         return 0;
     }
 
     // Load shader file
-    Optional<DynString> shader_file_content_optional = file_io_load_text_file(string_create_static(filepath), scratch_arena);
-    if (!shader_file_content_optional.available) {
+    DynString shader_file_content = DynString::create(scratch_arena);
+    bool file_loaded = file_io_load_text_file(filepath, &shader_file_content);
+    if (!file_loaded) {
         logg("Could not load file shaderfile \"%s\"\n", filepath);
         return 0;
     }
@@ -73,7 +76,8 @@ GLuint opengl_utils_create_shader_from_file(const char* filepath)
     }
 
     // Compile
-    glShaderSource(result, 1, &shader_file_content_optional.value.characters, NULL);
+    GLint length = shader_file_content.size;
+    glShaderSource(result, 1, &shader_file_content.characters, &length);
     glCompileShader(result);
 
     if (!opengl_utils_check_shader_compilation_status(result)) {
@@ -86,6 +90,8 @@ GLuint opengl_utils_create_shader_from_file(const char* filepath)
 
 bool opengl_utils_link_program_and_check_errors(GLuint program_id) 
 {
+    SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+
     // Link shaders to program and check if errors occured
     glLinkProgram(program_id);
     int isLinked = 0;
@@ -94,22 +100,21 @@ bool opengl_utils_link_program_and_check_errors(GLuint program_id)
     {
         GLint maxLength = 0;
         glGetProgramiv(program_id, GL_INFO_LOG_LENGTH, &maxLength);
+        Array<char> bytes = scratch_arena->allocate_array<char>(maxLength + 1);
 
-        DynString error_message = dynstring_create(maxLength);
-        SCOPE_EXIT(string_destroy(&error_message));
-        glGetProgramInfoLog(program_id, maxLength, &maxLength, (GLchar*)error_message.characters);
+        glGetProgramInfoLog(program_id, maxLength, &maxLength, (GLchar*)&bytes[0]);
         logg("PROGRAM LINKING FAILED!\n");
-        logg("Could not link program, error msg: \n %s\n", error_message.characters);
+        logg("Could not link program, error msg: \n %s\n", &bytes[0]);
         return false;
     }
     return true;
 }
 
-GLuint opengl_utils_create_program_from_single_file(const char* filepath)
+GLuint opengl_utils_create_program_from_single_file(String filepath)
 {
     SCRATCH_ARENA_MAKE_SCOPED(nullptr);
 
-    if (!cstring_ends_with(filepath, ".glsl")) {
+    if (!string_ends_with(filepath, string_make(".glsl"))) {
         return 0;
     }
 
@@ -123,21 +128,21 @@ GLuint opengl_utils_create_program_from_single_file(const char* filepath)
     SCOPE_EXIT(if (!success) glDeleteProgram(program_id));
 
     // Load file
-    Optional<DynString> file_content_optional = file_io_load_text_file(string_create_static(filepath), scratch_arena);
-    if (!file_content_optional.available) {
+    DynString file_content = DynString::create(scratch_arena);
+    bool file_loaded = file_io_load_text_file(filepath, &file_content);
+    if (!file_loaded) {
         logg("Could not load file %s\n", filepath);
         return 0;
     }
-    DynString file_content = file_content_optional.value;
 
     int possible_shader_defines_count = 6;
-    const char* possible_shader_defines[] = {
-        "VERTEX_SHADER", 
-        "FRAGMENT_SHADER",
-        "GEOMETRY_SHADER",
-        "COMPUTE_SHADER",
-        "TESSELATION_CONTROL_SHADER",
-        "TESSELATION_EVALUATION_SHADER",
+    String possible_shader_defines[] = {
+        string_make("VERTEX_SHADER"), 
+        string_make("FRAGMENT_SHADER"),
+        string_make("GEOMETRY_SHADER"),
+        string_make("COMPUTE_SHADER"),
+        string_make("TESSELATION_CONTROL_SHADER"),
+        string_make("TESSELATION_EVALUATION_SHADER"),
     };
     GLenum possible_shader_define_types[] = {
         GL_VERTEX_SHADER,
@@ -150,10 +155,10 @@ GLuint opengl_utils_create_program_from_single_file(const char* filepath)
 
     for (int i = 0; i < possible_shader_defines_count && success; i++)
     {
-        if (string_contains_substring(file_content, 0, string_create_static(possible_shader_defines[i])) != -1) 
+        if (string_test_substring(file_content.to_string(), 0, possible_shader_defines[i]))
         {
             GLint shader_id = glCreateShader(possible_shader_define_types[i]);
-            const char* sources[] = {"#version 430 core\n", "#define ", possible_shader_defines[i], "\n", file_content.characters};
+            const char* sources[] = {"#version 430 core\n", "#define ", possible_shader_defines[i].characters, "\n", file_content.characters};
             glShaderSource(shader_id, 5, sources, 0);
             glCompileShader(shader_id);
             
@@ -177,10 +182,10 @@ GLuint opengl_utils_create_program_from_single_file(const char* filepath)
     return program_id;
 }
 
-GLuint opengl_utils_create_program_from_filepaths(Array<const char*> filepaths)
+GLuint opengl_utils_create_program_from_filepaths(Array<String> filepaths)
 {
     if (filepaths.size == 1) {
-        if (cstring_ends_with(filepaths[0], ".glsl")) {
+        if (string_ends_with(filepaths[0], string_make(".glsl"))) {
             return opengl_utils_create_program_from_single_file(filepaths[0]);
         }
     }

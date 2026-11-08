@@ -9,46 +9,46 @@
 
 struct Directory_Crawler {
     DynString path;
-    Dynamic_Array<Directory_Item> file_infos;
+    Arena arena;
+    Arena directory_name_arena;
+    DynArray<Directory_Item> file_infos;
     bool path_changed;
 };
 
 Directory_Crawler* directory_crawler_create()
 {
     Directory_Crawler* result = new Directory_Crawler();
-    result->path = dynstring_create(".");
+    result->arena = Arena::create();
+    result->directory_name_arena = Arena::create();
+    result->path = dynstring_create(&result->arena);
+    result->path.append(".");
     result->path_changed = true;
-    result->file_infos = dynamic_array_create<Directory_Item>();
+    result->file_infos = DynArray<Directory_Item>::create(&result->arena);
     directory_crawler_set_to_working_directory(result);
     return result;
 }
 
 void directory_crawler_destroy(Directory_Crawler* crawler) {
-    string_destroy(&crawler->path);
-    for (int i = 0; i < crawler->file_infos.size; i++) {
-        string_destroy(&crawler->file_infos[i].filename);
-    }
-    dynamic_array_destroy(&crawler->file_infos);
+    crawler->arena.destroy();
+    crawler->directory_name_arena.destroy();
     delete crawler;
 }
 
-void directory_crawler_set_path(Directory_Crawler* crawler, DynString path)
+void directory_crawler_set_path(Directory_Crawler* crawler, String path)
 {
-    dynstring_reset(&crawler->path);
-    string_append_string(&crawler->path, &path);
+    crawler->path.reset()->append(path);
     filepath_relative_to_absolute_path(&crawler->path);
     crawler->path_changed = true;
 }
 
-void directory_crawler_set_path_to_file_dir(Directory_Crawler* crawler, DynString file_path) 
+void directory_crawler_set_path_to_file_dir(Directory_Crawler* crawler, String file_path) 
 {
     auto& path = crawler->path;
-    dynstring_reset(&path);
-    string_append_string(&path, &file_path);
+    path.reset()->append(file_path);
     int trim_pos = 0;
-    auto last_slash = string_find_character_index_reverse(&path, '/', path.size - 1);
+    auto last_slash = string_find_character_index_reverse(path.to_string(), '/', path.size - 1);
     if (!last_slash.available) {
-        last_slash = string_find_character_index_reverse(&path, '\\', path.size - 1);
+        last_slash = string_find_character_index_reverse(path.to_string(), '\\', path.size - 1);
     }
     if (last_slash.available) {
         trim_pos = last_slash.value;
@@ -60,20 +60,20 @@ void directory_crawler_set_path_to_file_dir(Directory_Crawler* crawler, DynStrin
 
 void directory_crawler_set_to_working_directory(Directory_Crawler* crawler) {
     int path_length = GetCurrentDirectory(0, 0);
-    DynString path = dynstring_create(path_length);
-    SCOPE_EXIT(string_destroy(&path));
-    int written_string_length = GetCurrentDirectory(path.capacity, path.characters);
-    string_replace_character(&path, '\\', '/');
-    directory_crawler_set_path(crawler, path);
+    crawler->path.reset()->reserve(path_length + 1);
+    int written_string_length = GetCurrentDirectory(crawler->path.capacity, crawler->path.characters);
+    crawler->path.size = strlen(crawler->path.characters);
+    crawler->path_changed = true;
+    filepath_relative_to_absolute_path(&crawler->path);
 }
 
-DynString directory_crawler_get_path(Directory_Crawler* crawler) {
-    return crawler->path;
+String directory_crawler_get_path(Directory_Crawler* crawler) {
+    return crawler->path.to_string();
 }
 
 bool directory_crawler_go_up_one_directory(Directory_Crawler* crawler) {
     DynString* path = &crawler->path;
-    Optional<int> last_pos = string_find_character_index_reverse(path, '/', path->size-1);
+    Optional<int> last_pos = string_find_character_index_reverse(path->to_string(), '/', path->size - 1);
     if (!last_pos.available) {
         return false;
     }
@@ -93,35 +93,30 @@ bool directory_crawler_go_down_one_directory(Directory_Crawler* crawler, int dir
 
 Array<Directory_Item> directory_crawler_get_content(Directory_Crawler* crawler)
 {
+    SCRATCH_ARENA_MAKE_SCOPED(&crawler->arena);
+    DynString tmp_string = DynString::create(scratch_arena);
+
     if (!crawler->path_changed) {
-        return dynamic_array_as_array(&crawler->file_infos);
+        return crawler->file_infos.as_array();
     }
+
     crawler->path_changed = false;
+    crawler->directory_name_arena.reset(true);
+    crawler->file_infos.reset();
 
-    for (int i = 0; i < crawler->file_infos.size; i++) {
-        string_destroy(&crawler->file_infos[i].filename);
-    }
-    dynamic_array_reset(&crawler->file_infos);
-
-    HANDLE search_handle;
     WIN32_FIND_DATA found_file_description;
-    {
-        DynString search_path = string_create_from_string_with_extra_capacity(&crawler->path, 3);
-        SCOPE_EXIT(string_destroy(&search_path));
-        string_append(&search_path, "/*");
-        search_handle = FindFirstFile(search_path.characters, &found_file_description);
-    }
+    HANDLE search_handle = FindFirstFile(tmp_string.reset()->append(crawler->path)->append("/*")->to_cstring(), &found_file_description);
     if (search_handle == INVALID_HANDLE_VALUE) {
-        return dynamic_array_as_array(&crawler->file_infos);
+        return crawler->file_infos.as_array();
     }
 
     // Loop over all found files
     do {
         Directory_Item info;
         info.is_directory = found_file_description.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY;
-        info.size = found_file_description.nFileSizeHigh * (((i64)MAXDWORD)+1) + found_file_description.nFileSizeLow;
-        info.filename = dynstring_create(found_file_description.cFileName);
-        dynamic_array_push_back(&crawler->file_infos, info);
+        info.size         = found_file_description.nFileSizeHigh * (((i64)MAXDWORD)+1) + found_file_description.nFileSizeLow;
+        info.filename     = string_allocate_copy(string_make(found_file_description.cFileName), crawler->directory_name_arena.upcast());
+        crawler->file_infos.push_back(info);
     } while (FindNextFile(search_handle, &found_file_description) != 0);
 
     // Check if errors appeared and close the search handle
@@ -131,7 +126,7 @@ Array<Directory_Item> directory_crawler_get_content(Directory_Crawler* crawler)
     }
     FindClose(search_handle);
 
-    return dynamic_array_as_array(&crawler->file_infos);
+    return crawler->file_infos.as_array();
 }
 
 void directory_crawler_print_all_files(Directory_Crawler* crawler) 
@@ -140,7 +135,7 @@ void directory_crawler_print_all_files(Directory_Crawler* crawler)
     logg("Directory: %s\n", crawler->path.characters);
     for (int i = 0; i < files.size; i++) {
         Directory_Item& file = files[i];
-        logg("    %s %s\n", files[i].filename.characters, file.is_directory ? "d" : "");
+        logg("    %.%s %s\n", files[i].filename.size, files[i].filename.characters, file.is_directory ? "d" : "");
     }
 }
     

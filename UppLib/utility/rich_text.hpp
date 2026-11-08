@@ -4,6 +4,7 @@
 #include "../programs/upp_lang/syntax_colors.hpp"
 #include "../datastructures/array.hpp"
 #include "../datastructures/allocators.hpp"
+#include "../datastructures/string.hpp"
 
 struct Raster_Font;
 struct Text_Renderer;
@@ -32,7 +33,7 @@ void string_style_push(DynString* str, Mark_Type type, Syntax_Color color);
 void string_style_pop(DynString* str);
 void string_style_remove_codes(DynString* str);
 // Note: line count is always >= 1
-ivec2 string_style_calculated_2D_size(DynString str);
+ivec2 string_style_calculated_2D_size(String str);
 
 
 
@@ -53,19 +54,19 @@ struct Rich_Text_Area
 
     static Rich_Text_Area create(Arena* arena, ivec2 size);
     void fill_from_string(
-        DynString string,
+        String string,
         Palette_Color default_text = Palette_Color::WHITE,
         Palette_Color default_bg = Palette_Color::NONE,
         Palette_Color default_underline = Palette_Color::NONE
     );
     void fill_from_string(
-        DynString string,
+        String string,
         Syntax_Color default_text,
         Syntax_Color default_bg = Syntax_Color::NONE,
         Syntax_Color default_underline = Syntax_Color::NONE
     );
     Rich_Char* get_char(ivec2 pos);
-    void set_text(ivec2 pos, DynString string);
+    void set_text(ivec2 pos, String string);
     void mark(ivec2 pos, int length, Mark_Type type, Palette_Color color);
     void mark(ivec2 pos, int length, Mark_Type type, Syntax_Color color);
     void render(ibox2 box, Raster_Font* font, Renderer_2D* renderer_2D, Render_Pass* render_pass);

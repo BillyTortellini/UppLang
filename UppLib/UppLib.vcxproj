@@ -36,7 +36,6 @@
     <ClInclude Include="programs\c_importer\import_gui.hpp" />
     <ClInclude Include="programs\imgui_test\imgui_test.hpp" />
     <ClInclude Include="programs\rendering_rework\rendering_rework.hpp" />
-    <ClInclude Include="programs\test\test.hpp" />
     <ClInclude Include="programs\upp_lang\ast.hpp" />
     <ClInclude Include="programs\upp_lang\bytecode_generator.hpp" />
     <ClInclude Include="programs\upp_lang\bytecode_interpreter.hpp" />
@@ -83,6 +82,7 @@
     <ClInclude Include="utility\fuzzy_search.hpp" />
     <ClInclude Include="utility\gui.hpp" />
     <ClInclude Include="utility\hash_functions.hpp" />
+    <ClInclude Include="utility\identifier_pool.hpp" />
     <ClInclude Include="utility\line_edit.hpp" />
     <ClInclude Include="utility\random.hpp" />
     <ClInclude Include="utility\rich_text.hpp" />
@@ -113,7 +113,6 @@
     <ClCompile Include="programs\c_importer\import_gui.cpp" />
     <ClCompile Include="programs\imgui_test\imgui_test.cpp" />
     <ClCompile Include="programs\rendering_rework\rendering_rework.cpp" />
-    <ClCompile Include="programs\test\test.cpp" />
     <ClCompile Include="programs\upp_lang\ast.cpp" />
     <ClCompile Include="programs\upp_lang\bytecode_generator.cpp" />
     <ClCompile Include="programs\upp_lang\bytecode_interpreter.cpp" />
@@ -158,6 +157,7 @@
     <ClCompile Include="utility\fuzzy_search.cpp" />
     <ClCompile Include="utility\gui.cpp" />
     <ClCompile Include="utility\hash_functions.cpp" />
+    <ClCompile Include="utility\identifier_pool.cpp" />
     <ClCompile Include="utility\line_edit.cpp" />
     <ClCompile Include="utility\random.cpp" />
     <ClCompile Include="utility\rich_text.cpp" />

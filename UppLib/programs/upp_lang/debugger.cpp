@@ -9,6 +9,7 @@
 #include "../../datastructures/string.hpp"
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/hashtable.hpp"
+#include "../../datastructures/allocators.hpp"
 #include <bddisasm.h>
 #include "compilation_data.hpp"
 #include "c_backend.hpp"
@@ -22,7 +23,7 @@ const bool DEBUG_OUTPUT_ENABLED = false;
 
 
 // Prototypes
-u64 debugger_find_address_of_function(Debugger* debugger, DynString name);
+u64 debugger_find_address_of_function(Debugger* debugger, String name);
 
 const char* x64_integer_register_to_name(X64_Integer_Register reg)
 {
@@ -107,7 +108,7 @@ namespace PDB_Analysis
 
     struct PDB_Variable_Info
     {
-        DynString name;
+        String name;
         PDB_Location location;
     };
 
@@ -115,7 +116,7 @@ namespace PDB_Analysis
     {
         PDB_Location_Static location;
         u64 length; // Size in bytes
-        Dynamic_Array<PDB_Variable_Info> variables;
+        DynArray<PDB_Variable_Info> variables;
         int source_info_index;
     };
 
@@ -134,80 +135,28 @@ namespace PDB_Analysis
         Optional<PDB_Location_Static> debug_start_location;
         Optional<PDB_Location_Static> debug_end_location;
 
-        Dynamic_Array<int> child_block_indices;
-        Dynamic_Array<PDB_Variable_Info> parameter_infos;
-        Dynamic_Array<PDB_Line_Info> line_infos;
+        DynArray<int> child_block_indices;
+        DynArray<PDB_Variable_Info> parameter_infos;
+        DynArray<PDB_Line_Info> line_infos;
     };
 
     struct PDB_Function
     {
-        DynString name;
+        String name;
         PDB_Location_Static location;
         u64 length; // Size in bytes
         int source_info_index; // -1 if not available, which should be for most functions in imported libraries
     };
 
-    struct PDB_Information
+    struct PDB_Info
     {
-        Dynamic_Array<PDB_Function_Source_Info> source_infos;
-        Dynamic_Array<PDB_Code_Block_Info> block_infos;
-        Dynamic_Array<PDB_Variable_Info> global_infos;
-        Dynamic_Array<PDB_Function> functions;
-        Hashtable<i32, DynString> source_file_paths;
+        Arena* arena; // Note: PDB-Info is never unloaded, so 
+        DynArray<PDB_Function_Source_Info> source_infos;
+        DynArray<PDB_Code_Block_Info> block_infos;
+        DynArray<PDB_Variable_Info> global_infos;
+        DynArray<PDB_Function> functions;
+        DynTable<i32, String> source_file_paths;
     };
-
-    PDB_Information* pdb_information_create()
-    {
-        PDB_Information* information = new PDB_Information;
-        information->source_infos = dynamic_array_create<PDB_Function_Source_Info>();
-        information->block_infos = dynamic_array_create<PDB_Code_Block_Info>();
-        information->global_infos = dynamic_array_create<PDB_Variable_Info>();
-        information->functions = dynamic_array_create<PDB_Function>();
-        information->source_file_paths = hashtable_create_empty<i32, DynString>(3, hash_i32, equals_i32);
-        return information;
-    }
-
-    void pdb_information_destroy(PDB_Information* information)
-    {
-        for (int i = 0; i < information->source_infos.size; i++) {
-            auto& fn = information->source_infos[i];
-            dynamic_array_destroy(&fn.line_infos);
-            dynamic_array_destroy(&fn.child_block_indices);
-
-            for (int j = 0; j < fn.parameter_infos.size; j++) {
-                string_destroy(&fn.parameter_infos[j].name);
-            }
-            dynamic_array_destroy(&fn.parameter_infos);
-        }
-        dynamic_array_destroy(&information->source_infos);
-
-        for (int i = 0; i < information->functions.size; i++) {
-            auto& fn = information->functions[i];
-            string_destroy(&fn.name);
-        }
-        dynamic_array_destroy(&information->functions);
-
-        for (int i = 0; i < information->block_infos.size; i++) {
-            auto& block = information->block_infos[i];
-            for (int j = 0; j < block.variables.size; j++) {
-                string_destroy(&block.variables[j].name);
-            }
-            dynamic_array_destroy(&block.variables);
-        }
-        dynamic_array_destroy(&information->block_infos);
-
-        for (auto iter = hashtable_iterator_create(&information->source_file_paths); hashtable_iterator_has_next(&iter); hashtable_iterator_next(&iter)) {
-            string_destroy(iter.value);
-        }
-        hashtable_destroy(&information->source_file_paths);
-
-        for (int i = 0; i < information->global_infos.size; i++) {
-            string_destroy(&information->global_infos[i].name);
-        }
-        dynamic_array_destroy(&information->global_infos);
-
-        delete information;
-    }
 
     PDB_Constant_Value variant_to_constant_value(VARIANT& variant)
     {
@@ -544,7 +493,21 @@ namespace PDB_Analysis
         if (symbol->get_name(&name) == S_OK) {
             wide_string_to_utf8(name, append_to);
             SysFreeString(name);
+            dynstring_replace_character(append_to, '\\', '/');
         }
+    }
+
+    String pdb_symbol_copy_name(IDiaSymbol* symbol, PDB_Info* info)
+    {
+        SCRATCH_ARENA_MAKE_SCOPED(info->arena);
+        DynString tmp_string = DynString::create(scratch_arena);
+        BSTR name = nullptr;
+        if (symbol->get_name(&name) == S_OK) {
+            wide_string_to_utf8(name, &tmp_string);
+            SysFreeString(name);
+            dynstring_replace_character(&tmp_string, '\\', '/');
+        }
+        return string_allocate_copy(tmp_string.to_string(), info->arena->upcast());
     }
 
     void pdb_symbol_get_undecorated_name(IDiaSymbol* symbol, DynString* append_to)
@@ -558,8 +521,17 @@ namespace PDB_Analysis
     }
 
     void pdb_symbol_analyse_recursive(
-        IDiaSymbol* symbol, PDB_Information* info, bool inside_main_compiland, int source_info_index, int block_index, IDiaSession* session, const char* main_compiland_name)
+        IDiaSymbol* symbol, 
+        PDB_Info* info, 
+        bool inside_main_compiland, 
+        int source_info_index, 
+        int block_index, 
+        IDiaSession* session, 
+        String main_compiland_name)
     {
+        SCRATCH_ARENA_MAKE_SCOPED(info->arena);
+        DynString tmp_string = DynString::create(scratch_arena);
+
         DWORD tag = 0;
         if (symbol->get_symTag(&tag) != S_OK) {
             return;
@@ -613,21 +585,10 @@ namespace PDB_Analysis
         case SymTagCompiland:
         {
             bool is_main_compiland = false;
-            BSTR wide_compiland_string;
-            if (symbol->get_name(&wide_compiland_string) == S_OK)
-            {
-                DynString tmp = dynstring_create();
-                SCOPE_EXIT(string_destroy(&tmp));
-                wide_string_to_utf8(wide_compiland_string, &tmp);
-                SysFreeString(wide_compiland_string);
-
-                string_replace_character(&tmp, '\\', '/');
-                //printf("Compiland name: \"%s\"\n", string_buffer.characters);
-                if (string_equals_cstring(&tmp, main_compiland_name)) {
-                    is_main_compiland = true;
-                }
+            pdb_symbol_get_name(symbol, &tmp_string);
+            if (string_equals(tmp_string.to_string(), main_compiland_name)) {
+                is_main_compiland = true;
             }
-
 
             // Recursively call all child items
             IDiaEnumSymbols* child_iter = NULL;
@@ -665,11 +626,10 @@ namespace PDB_Analysis
                 PDB_Function fn;
                 fn.length = length;
                 fn.location = location.options.static_loc;
-                fn.name = dynstring_create();
+                fn.name = pdb_symbol_copy_name(symbol, info);
                 fn.source_info_index = inside_main_compiland ? info->source_infos.size : -1;
-                pdb_symbol_get_name(symbol, &fn.name);
                 function_index = info->functions.size;
-                dynamic_array_push_back(&info->functions, fn);
+                info->functions.push_back(fn);
             }
 
             if (!inside_main_compiland) {
@@ -678,26 +638,26 @@ namespace PDB_Analysis
 
             // Query source-infos
             PDB_Function_Source_Info source_info;
-            source_info.line_infos = dynamic_array_create<PDB_Line_Info>();
-            source_info.parameter_infos = dynamic_array_create<PDB_Variable_Info>();
-            source_info.child_block_indices = dynamic_array_create<int>();
+            source_info.line_infos = DynArray<PDB_Line_Info>::create(info->arena);
+            source_info.parameter_infos = DynArray<PDB_Variable_Info>::create(info->arena);
+            source_info.child_block_indices = DynArray<int>::create(info->arena);
             source_info.debug_start_location = optional_make_failure<PDB_Location_Static>();
             source_info.debug_end_location = optional_make_failure<PDB_Location_Static>();
             source_info.function_index = function_index;
 
             int added_source_info_index = info->source_infos.size;
-            dynamic_array_push_back(&info->source_infos, source_info);
+            info->source_infos.push_back(source_info);
 
             // Add default block for function (Note: The Dia-Interface does not report the normal function-scope as a block)
             PDB_Code_Block_Info block_info;
-            block_info.variables = dynamic_array_create<PDB_Variable_Info>();
+            block_info.variables = DynArray<PDB_Variable_Info>::create(info->arena);
             block_info.source_info_index = added_source_info_index;
             block_info.length = info->functions[function_index].length;
             block_info.location = info->functions[function_index].location;
 
             int added_block_index = info->block_infos.size;
-            dynamic_array_push_back(&info->block_infos, block_info);
-            dynamic_array_push_back(&info->source_infos[added_source_info_index].child_block_indices, added_block_index);
+            info->block_infos.push_back(block_info);
+            info->source_infos[added_source_info_index].child_block_indices.push_back(added_block_index);
 
             // Query line-infos
             auto& function_info = info->functions[function_index];
@@ -741,16 +701,17 @@ namespace PDB_Analysis
                         if (last_src_id != src_id)
                         {
                             int int_id = src_id;
-                            DynString* str = hashtable_find_element(&info->source_file_paths, int_id);
+                            String* str = info->source_file_paths.find(int_id);
                             if (str == 0)
                             {
                                 CComPtr<IDiaSourceFile> source_file;
                                 if (line_number->get_sourceFile(&source_file) == S_OK) {
                                     BSTR filename = NULL;
                                     if (source_file->get_fileName(&filename) == S_OK) {
-                                        DynString source_filename = dynstring_create();
-                                        wide_string_to_utf8(filename, &source_filename);
-                                        hashtable_insert_element(&info->source_file_paths, int_id, source_filename);
+                                        wide_string_to_utf8(filename, &tmp_string);
+                                        info->source_file_paths.insert(
+                                            int_id, string_allocate_copy(tmp_string.to_string(), info->arena->upcast())
+                                        );
                                         SysFreeString(filename);
                                     }
                                 }
@@ -764,7 +725,7 @@ namespace PDB_Analysis
                         line_info.location.offset = offset;
                         line_info.source_file_id = src_id;
                         line_info.line_num = linenum;
-                        dynamic_array_push_back(&info->source_infos[added_source_info_index].line_infos, line_info);
+                        info->source_infos[added_source_info_index].line_infos.push_back(line_info);
 
                         line_number->Release();
                     }
@@ -803,14 +764,14 @@ namespace PDB_Analysis
             }
 
             PDB_Code_Block_Info block_info;
-            block_info.variables = dynamic_array_create<PDB_Variable_Info>();
+            block_info.variables = DynArray<PDB_Variable_Info>::create(info->arena);
             block_info.source_info_index = source_info_index;
             block_info.length = length;
             block_info.location = location.options.static_loc;
 
             int added_block_index = info->block_infos.size;
-            dynamic_array_push_back(&info->block_infos, block_info);
-            dynamic_array_push_back(&info->source_infos[source_info_index].child_block_indices, added_block_index);
+            info->block_infos.push_back(block_info);
+            info->source_infos[source_info_index].child_block_indices.push_back(added_block_index);
 
             // Recursively call all child items
             IDiaEnumSymbols* child_iterator = NULL;
@@ -836,14 +797,14 @@ namespace PDB_Analysis
             variable_info.location = pdb_symbol_get_location(symbol);
             switch (data_kind)
             {
-            case DataIsLocal: {
+            case DataIsLocal: 
+            {
                 if (block_index == -1 || !inside_main_compiland) {
                     break;
                 }
-                variable_info.name = dynstring_create();
-                pdb_symbol_get_name(symbol, &variable_info.name);
+                variable_info.name = pdb_symbol_copy_name(symbol, info);
                 auto& block = info->block_infos[block_index];
-                dynamic_array_push_back(&block.variables, variable_info);
+                block.variables.push_back(variable_info);
                 break;
             }
             case DataIsParam:
@@ -851,10 +812,9 @@ namespace PDB_Analysis
                 if (source_info_index == -1 || !inside_main_compiland) {
                     break;
                 }
-                variable_info.name = dynstring_create();
-                pdb_symbol_get_name(symbol, &variable_info.name);
+                variable_info.name = pdb_symbol_copy_name(symbol, info);
                 auto& source_info = info->source_infos[source_info_index];
-                dynamic_array_push_back(&source_info.parameter_infos, variable_info);
+                source_info.parameter_infos.push_back(variable_info);
                 break;
             }
 
@@ -862,9 +822,8 @@ namespace PDB_Analysis
             case DataIsFileStatic: // File scoped global
             case DataIsGlobal: 
             {
-                variable_info.name = dynstring_create();
-                pdb_symbol_get_name(symbol, &variable_info.name);
-                dynamic_array_push_back(&info->global_infos, variable_info);
+                variable_info.name = pdb_symbol_copy_name(symbol, info);
+                info->global_infos.push_back(variable_info);
                 break;
             }
 
@@ -963,8 +922,11 @@ namespace PDB_Analysis
         }
     }
 
-    void symbol_tree_append_to_string_recursive(DynString* string, IDiaSymbol* symbol, int indentation, IDiaSession* session, Hashset<u64>* already_visited)
+    void symbol_tree_append_to_string_recursive(DynString* string, IDiaSymbol* symbol, int indentation, IDiaSession* session, DynSet<u64>* already_visited)
     {
+        SCRATCH_ARENA_MAKE_SCOPED(string->arena);
+        DynString tmp_string = DynString::create(scratch_arena);
+        
         for (int i = 0; i < indentation; i++) {
             dynstring_append_formated(string, "    ");
         }
@@ -1052,10 +1014,8 @@ namespace PDB_Analysis
 
         if (append_name)
         {
-            DynString tmp = dynstring_create();
-            SCOPE_EXIT(string_destroy(&tmp));
-            pdb_symbol_get_name(symbol, &tmp);
-            dynstring_append_formated(string, " \"%s\"", tmp.characters);
+            pdb_symbol_get_name(symbol, &tmp_string);
+            string->append('"')->append(tmp_string)->append('"');
         }
 
         // Check if already visited
@@ -1067,10 +1027,11 @@ namespace PDB_Analysis
         else
         {
             u64 id = (u64)indexID;
-            if (!hashset_insert_element(already_visited, id)) {
+            if (!already_visited->contains(id)) {
                 dynstring_append_formated(string, " [Visited]\n");
                 return;
             }
+            already_visited->insert(id);
         }
         dynstring_append_formated(string, "\n");
 
@@ -1093,12 +1054,16 @@ namespace PDB_Analysis
         }
     }
 
-    bool pdb_information_fill_from_file(PDB_Information* information, const char* filepath, const char* main_compiland_name)
+    bool pdb_info_init(PDB_Info* information, String filepath, String main_compiland_name, Arena* arena)
     {
-        Dynamic_Array<wchar_t> wide_string_buffer = dynamic_array_create<wchar_t>(64);
-        SCOPE_EXIT(dynamic_array_destroy(&wide_string_buffer));
-        DynString string_buffer = dynstring_create(128);
-        SCOPE_EXIT(string_destroy(&string_buffer));
+        information->arena             = arena;
+        information->source_infos      = DynArray<PDB_Function_Source_Info>::create(arena);
+        information->block_infos       = DynArray<PDB_Code_Block_Info>::create(arena);
+        information->global_infos      = DynArray<PDB_Variable_Info>::create(arena);
+        information->functions         = DynArray<PDB_Function>::create(arena);
+        information->source_file_paths = DynTable<i32, String>::create(arena, hash_i32, equals_i32);
+
+        SCRATCH_ARENA_MAKE_SCOPED(arena);
 
         // Initialize COM
         HRESULT result = CoInitialize(NULL);
@@ -1123,8 +1088,7 @@ namespace PDB_Analysis
         SCOPE_EXIT(if (data_source != NULL) { data_source->Release(); data_source = NULL; });
 
         // Load PDB file
-        wide_string_from_utf8(&wide_string_buffer, filepath);
-        result = data_source->loadDataFromPdb(wide_string_buffer.data);
+        result = data_source->loadDataFromPdb(wide_string_from_utf8(filepath, scratch_arena));
         if (FAILED(result)) {
             printf("LoadDataFromPdb failed!\n");
             return false;
@@ -1147,12 +1111,10 @@ namespace PDB_Analysis
 
         // Write Symbol-Tree as info file (Debug purposes)
         {
-            Hashset<u64> visited = hashset_create_empty<u64>(512, hash_u64, equals_u64);
-            SCOPE_EXIT(hashset_destroy(&visited));
-            DynString tmp = dynstring_create(2048);
-            SCOPE_EXIT(string_destroy(&tmp));
-            symbol_tree_append_to_string_recursive(&tmp, global_scope, 0, session, &visited);
-            file_io_write_text_file(string_create_static("backend/build/pdb_info_tree.txt"), tmp);
+            DynSet<u64> visited = DynSet<u64>::create(scratch_arena, hash_u64, equals_u64);
+            DynString tmp_string = DynString::create(scratch_arena);
+            symbol_tree_append_to_string_recursive(&tmp_string, global_scope, 0, session, &visited);
+            file_io_write_text_file(string_make("backend/build/pdb_info_tree.txt"), tmp_string.to_string());
         }
 
         DWORD machine_type;
@@ -1166,6 +1128,7 @@ namespace PDB_Analysis
         }
 
         pdb_symbol_analyse_recursive(global_scope, information, false, -1, -1, session, main_compiland_name);
+
         return true;
     }
 }
@@ -1176,15 +1139,15 @@ namespace PE_Analysis
     struct Export_Symbol_Info
     {
         u32 rva; // Relative Virtual Address...
-        Optional<DynString> name; // Symbols may not have a name if they are referenced by ordinal
-        Optional<DynString> forwarder_name; // If the symbol is a forward to another dll
+        Optional<String> name; // Symbols may not have a name if they are referenced by ordinal
+        Optional<String> forwarder_name; // If the symbol is a forward to another dll
         int associated_unwind_info_index; // Index of unwind-info with the same address (same rva), otherwise -1 
     };
 
     // Section Infos
     struct Section_Info
     {
-        DynString name;
+        String name;
         int section_index;
         u64 rva;
         u64 size;
@@ -1228,7 +1191,7 @@ namespace PE_Analysis
     struct Unwind_Block
     {
         u32 size_of_prolog;
-        Dynamic_Array<Unwind_Code> unwind_codes;
+        DynArray<Unwind_Code> unwind_codes;
         bool parsed_successfully; // If not, then we cannot do stack walking from this frame onwards
         int next_chained_unwind_block_index; // -1 if not available
     };
@@ -1243,57 +1206,15 @@ namespace PE_Analysis
 
     struct PE_Info
     {
+        Arena* arena;
         u64 base_address; // VirtualAddress where PE image is loaded
-        DynString name; // Name of executable or dll
-        DynString pdb_name;
-        Dynamic_Array<Export_Symbol_Info> exported_symbols;
-        Dynamic_Array<Section_Info> sections;
-        Dynamic_Array<Function_Unwind_Info> function_unwind_infos;
-        Dynamic_Array<Unwind_Block> unwind_blocks;
+        String name; // Name of executable or dll
+        String pdb_name;
+        DynArray<Export_Symbol_Info> exported_symbols;
+        DynArray<Section_Info> sections;
+        DynArray<Function_Unwind_Info> function_unwind_infos;
+        DynArray<Unwind_Block> unwind_blocks;
     };
-
-    PE_Info pe_info_create()
-    {
-        PE_Info info;
-        info.base_address = 0;
-        info.name = dynstring_create();
-        info.pdb_name = dynstring_create();
-        info.exported_symbols = dynamic_array_create<Export_Symbol_Info>();
-        info.sections = dynamic_array_create<Section_Info>();
-        info.function_unwind_infos = dynamic_array_create<Function_Unwind_Info>();
-        info.unwind_blocks = dynamic_array_create<Unwind_Block>();
-        return info;
-    }
-
-    void pe_info_destroy(PE_Info* info)
-    {
-        string_destroy(&info->name);
-        string_destroy(&info->pdb_name);
-
-        for (int i = 0; i < info->exported_symbols.size; i++) {
-            auto& symbol = info->exported_symbols[i];
-            if (symbol.name.available) {
-                string_destroy(&symbol.name.value);
-            }
-            if (symbol.forwarder_name.available) {
-                string_destroy(&symbol.forwarder_name.value);
-            }
-        }
-        dynamic_array_destroy(&info->exported_symbols);
-
-        for (int i = 0; i < info->unwind_blocks.size; i++) {
-            auto block = info->unwind_blocks[i];
-            dynamic_array_destroy(&block.unwind_codes);
-        }
-        dynamic_array_destroy(&info->unwind_blocks);
-
-        for (int i = 0; i < info->sections.size; i++) {
-            string_destroy(&info->sections[i].name);
-        }
-        dynamic_array_destroy(&info->sections);
-
-        dynamic_array_destroy(&info->function_unwind_infos);
-    }
 
     struct PDB_INFO_DUMMY
     {
@@ -1346,10 +1267,11 @@ namespace PE_Analysis
         return a->start_rva == b->start_rva && a->end_rva == b->end_rva && a->unwind_block_index == b->unwind_block_index;
     }
 
-    void add_function_unwind_info(PE_Info* pe_info, Function_Unwind_Info info, Hashset<Function_Unwind_Info>* already_generated_infos)
+    void add_function_unwind_info(PE_Info* pe_info, Function_Unwind_Info info, DynSet<Function_Unwind_Info>* already_generated_infos)
     {
-        if (hashset_insert_element(already_generated_infos, info)) {
-            dynamic_array_push_back(&pe_info->function_unwind_infos, info);
+        
+        if (already_generated_infos->insert(info)) {
+            pe_info->function_unwind_infos.push_back(info);
         }
         else {
             //printf("found duplicated function_unwind_info\n");
@@ -1358,12 +1280,12 @@ namespace PE_Analysis
 
     int add_unwind_block(
         PE_Info* pe_info, Memory_Source memory_source, u64 unwind_data_rva, u64 base_virtual_address,
-        Hashtable<u64, int>* already_generated_blocks, Hashset<Function_Unwind_Info>* already_generated_fn_infos,
-        Dynamic_Array<Unwind_Code_Slot>& code_slot_buffer)
+        DynTable<u64, int>* already_generated_blocks, DynSet<Function_Unwind_Info>* already_generated_fn_infos,
+        DynArray<Unwind_Code_Slot>& code_slot_buffer)
     {
         // Check if we have already generated this unwind_info
         {
-            int* found_unwind_block_index = hashtable_find_element(already_generated_blocks, unwind_data_rva);
+            int* found_unwind_block_index = already_generated_blocks->find(unwind_data_rva);
             if (found_unwind_block_index != nullptr) {
                 //printf("found duplicated unwind block\n");
                 return *found_unwind_block_index;
@@ -1375,7 +1297,7 @@ namespace PE_Analysis
         unwind_block.next_chained_unwind_block_index = -1;
         unwind_block.parsed_successfully = true;
         unwind_block.size_of_prolog = 0;
-        unwind_block.unwind_codes = dynamic_array_create<Unwind_Code>();
+        unwind_block.unwind_codes = DynArray<Unwind_Code>::create(pe_info->arena);
 
         // Load unwind data
         UNWIND_INFO unwind_info;
@@ -1512,15 +1434,15 @@ namespace PE_Analysis
 
             if (success) {
                 slot_index += slot_count;
-                dynamic_array_push_back(&unwind_block.unwind_codes, code);
+                unwind_block.unwind_codes.push_back(code);
             }
         }
 
         // Store unwind code block
         unwind_block.parsed_successfully = success;
         int unwind_block_index = pe_info->unwind_blocks.size;
-        dynamic_array_push_back(&pe_info->unwind_blocks, unwind_block);
-        hashtable_insert_element(already_generated_blocks, unwind_data_rva, unwind_block_index);
+        pe_info->unwind_blocks.push_back(unwind_block);
+        already_generated_blocks->insert(unwind_data_rva, unwind_block_index);
 
         // Store chained unwind info
         if (success && unwind_info.Flags & UNW_FLAG_CHAININFO)
@@ -1551,21 +1473,32 @@ namespace PE_Analysis
         return unwind_block_index;
     }
 
-    bool pe_info_fill_from_executable_image(
-        PE_Info* pe_info, u64 base_virtual_address, Memory_Source memory_source, void* image_name_addr_opt, bool name_is_unicode)
+    bool pe_info_init_from_executable_image(
+        PE_Info* pe_info, u64 base_virtual_address, Memory_Source memory_source, void* image_name_addr_opt, bool name_is_utf16, Arena* arena)
     {
+        pe_info->arena = arena;
+        pe_info->base_address = 0;
+        pe_info->name = string_make("");
+        pe_info->pdb_name = string_make("");
+        pe_info->exported_symbols      = DynArray<Export_Symbol_Info>::create(arena);
+        pe_info->sections              = DynArray<Section_Info>::create(arena);
+        pe_info->function_unwind_infos = DynArray<Function_Unwind_Info>::create(arena);
+        pe_info->unwind_blocks         = DynArray<Unwind_Block>::create(arena);
+
+        SCRATCH_ARENA_MAKE_SCOPED(arena);
+        DynString tmp_string = DynString::create(scratch_arena);
+
         if (base_virtual_address == 0 || memory_source.process_handle == nullptr) return false;
         pe_info->base_address = base_virtual_address;
 
-        Dynamic_Array<u8> byte_buffer = dynamic_array_create<u8>(512);
-        SCOPE_EXIT(dynamic_array_destroy(&byte_buffer));
-
         // Load name if specified from debugger infos (parameters)
-        if (image_name_addr_opt != nullptr) {
+        if (image_name_addr_opt != nullptr) 
+        {
             void* address = nullptr;
             bool success = memory_source.read_single_value(image_name_addr_opt, &address);
             if (success && address != nullptr) {
-                memory_source.read_null_terminated_string(address, &pe_info->name, MAX_STRING_LENGTH, name_is_unicode, &byte_buffer);
+                memory_source.read_string_null_terminated_generic(address, tmp_string.reset(), MAX_STRING_LENGTH, !name_is_utf16);
+                pe_info->name = string_allocate_copy(tmp_string.to_string(), pe_info->arena->upcast());
             }
         }
 
@@ -1602,8 +1535,7 @@ namespace PE_Analysis
             int section_count = header_nt.FileHeader.NumberOfSections;
 
             // Note: dynamic_array size is zero if this fails --> Maybe we want to not store success for failure...
-            Dynamic_Array<IMAGE_SECTION_HEADER> section_infos = dynamic_array_create<IMAGE_SECTION_HEADER>(section_count);
-            SCOPE_EXIT(dynamic_array_destroy(&section_infos));
+            DynArray<IMAGE_SECTION_HEADER> section_infos = DynArray<IMAGE_SECTION_HEADER>::create(scratch_arena, section_count);
             memory_source.read_array(section_table_virtual_address, &section_infos, section_count);
 
             // Not sure if we want to fully abort if we cannot query section infos, but it's probably the right thing to do...
@@ -1619,14 +1551,14 @@ namespace PE_Analysis
                 memory_copy(section_name_buffer, section.Name, 8); // Section name is not null-terminated if size = 8
 
                 Section_Info info;
-                info.name = dynstring_create(section_name_buffer);
+                info.name = string_allocate_copy(string_make(&section_name_buffer[0]), pe_info->arena->upcast());
                 info.section_index = i;
                 info.size = section.Misc.VirtualSize;
                 info.rva = section.VirtualAddress;
                 info.flag_read = (section.Characteristics & IMAGE_SCN_MEM_READ) != 0;
                 info.flag_write = (section.Characteristics & IMAGE_SCN_MEM_WRITE) != 0;
                 info.flag_execute = (section.Characteristics & IMAGE_SCN_MEM_EXECUTE) != 0;
-                dynamic_array_push_back(&pe_info->sections, info);
+                pe_info->sections.push_back(info);
             }
         }
 
@@ -1647,13 +1579,14 @@ namespace PE_Analysis
         {
             // Load name from export table if not already set
             if (pe_info->name.size == 0 && header_export_table.Name != 0) {
-                memory_source.read_null_terminated_string(
-                    (void*)(base_virtual_address + header_export_table.Name), &pe_info->name, MAX_STRING_LENGTH, false, &byte_buffer
+                // I think this is utf8, but not sure...
+                memory_source.read_string_utf8_null_terminated(
+                    (void*)(base_virtual_address + header_export_table.Name), tmp_string.reset(), MAX_STRING_LENGTH
                 );
+                pe_info->name = string_allocate_copy(tmp_string.to_string(), pe_info->arena->upcast());
             }
 
-            Dynamic_Array<u32> function_locations = dynamic_array_create<u32>(header_export_table.NumberOfFunctions);
-            SCOPE_EXIT(dynamic_array_destroy(&function_locations));
+            DynArray<u32> function_locations = DynArray<u32>::create(scratch_arena, header_export_table.NumberOfFunctions);
             bool function_locations_read = memory_source.read_array(
                 (void*)(base_virtual_address + header_export_table.AddressOfFunctions),
                 &function_locations,
@@ -1666,8 +1599,8 @@ namespace PE_Analysis
                     u32 rva = function_locations[i];
                     Export_Symbol_Info symbol_info;
                     symbol_info.rva = rva;
-                    symbol_info.name = optional_make_failure<DynString>();
-                    symbol_info.forwarder_name = optional_make_failure<DynString>();
+                    symbol_info.name = optional_make_failure<String>();
+                    symbol_info.forwarder_name = optional_make_failure<String>();
                     symbol_info.associated_unwind_info_index = -1;
 
                     bool is_forwarder =
@@ -1675,20 +1608,18 @@ namespace PE_Analysis
                         rva < location_export_table.VirtualAddress + location_export_table.Size;
                     if (is_forwarder)
                     {
-                        DynString forwarder_name = dynstring_create();
-                        memory_source.read_null_terminated_string((void*)(base_virtual_address + rva), &forwarder_name, 260, false, &byte_buffer);
+                        // Again, i guess this was utf-8, but i'm not sure anymore
+                        memory_source.read_string_utf8_null_terminated((void*)(base_virtual_address + rva), tmp_string.reset(), 260);
                         // Note: normally forwarder name should have a specific format, but we don't care for now...
-                        symbol_info.forwarder_name = optional_make_success(forwarder_name);
+                        symbol_info.forwarder_name = optional_make_success(string_allocate_copy(tmp_string.to_string(), pe_info->arena->upcast()));
                     }
-                    dynamic_array_push_back(&pe_info->exported_symbols, symbol_info);
+                    pe_info->exported_symbols.push_back(symbol_info);
                 }
             }
 
             // Try to read names and symbol_indices
-            Dynamic_Array<u16> symbol_indices_unbiased = dynamic_array_create<u16>(header_export_table.NumberOfNames);
-            Dynamic_Array<u32> symbol_name_rvas = dynamic_array_create<u32>(header_export_table.NumberOfNames);
-            SCOPE_EXIT(dynamic_array_destroy(&symbol_indices_unbiased));
-            SCOPE_EXIT(dynamic_array_destroy(&symbol_name_rvas));
+            DynArray<u16> symbol_indices_unbiased = DynArray<u16>::create(scratch_arena, header_export_table.NumberOfNames);
+            DynArray<u32> symbol_name_rvas = DynArray<u32>::create(scratch_arena, header_export_table.NumberOfNames);
 
             bool indices_available = memory_source.read_array(
                 (void*)(base_virtual_address + header_export_table.AddressOfNameOrdinals),
@@ -1721,24 +1652,19 @@ namespace PE_Analysis
                         continue;
                     }
 
-                    DynString name = dynstring_create();
-                    bool name_read_success = memory_source.read_null_terminated_string(
-                        (void*)(base_virtual_address + name_rva), &name, MAX_STRING_LENGTH, false, &byte_buffer
+                    bool name_read_success = memory_source.read_string_utf8_null_terminated(
+                        (void*)(base_virtual_address + name_rva), tmp_string.reset(), MAX_STRING_LENGTH
                     );
                     if (function_locations_read && name_read_success)
                     {
                         auto& symbol = pe_info->exported_symbols[export_symbol_index];
                         if (symbol.name.available) {
                             // printf("Error: Name of extern symbol #%d found twice in name table!\n", export_symbol_index);
-                            string_destroy(&name);
                         }
                         else {
-                            symbol.name = optional_make_success(name);
+                            symbol.name = optional_make_success(string_allocate_copy(tmp_string.to_string(), pe_info->arena->upcast()));
                             // printf("    Found symbol: \"%s\"\n", symbol.name.value.characters);
                         }
-                    }
-                    else {
-                        string_destroy(&name);
                     }
                 }
             }
@@ -1775,13 +1701,12 @@ namespace PE_Analysis
                 // PDB_INFO_DUMMY dummy_info;
                 // read_process_memory_datatype((u8*)base_of_module + debug_table_entry.AddressOfRawData, &dummy_info);
 
-                memory_source.read_null_terminated_string(
+                memory_source.read_string_utf8_null_terminated(
                     (void*)(base_virtual_address + debug_table_entry.AddressOfRawData + sizeof(PDB_INFO_DUMMY)),
-                    &pe_info->pdb_name,
-                    MAX_STRING_LENGTH,
-                    false,
-                    &byte_buffer
+                    tmp_string.reset(),
+                    MAX_STRING_LENGTH
                 );
+                pe_info->pdb_name = string_allocate_copy(tmp_string.to_string(), pe_info->arena->upcast());
             }
         }
 
@@ -1789,8 +1714,7 @@ namespace PE_Analysis
         if (location_exception_data.Size != 0)
         {
             int function_count = location_exception_data.Size / sizeof(RUNTIME_FUNCTION);
-            Dynamic_Array<RUNTIME_FUNCTION> runtime_functions = dynamic_array_create<RUNTIME_FUNCTION>();
-            SCOPE_EXIT(dynamic_array_destroy(&runtime_functions));
+            DynArray<RUNTIME_FUNCTION> runtime_functions = DynArray<RUNTIME_FUNCTION>::create(scratch_arena);
             memory_source.read_array(
                 (void*)(base_virtual_address + location_exception_data.VirtualAddress),
                 &runtime_functions,
@@ -1798,15 +1722,11 @@ namespace PE_Analysis
             );
 
             // Note: Unwind-infos shouldn't be duplicate in table, but because of chained-unwind-infos, we don't want to reparse already parsed codes
-            Hashtable<u64, int> already_analysed_unwind_blocks = hashtable_create_empty<u64, int>(function_count + 1, hash_u64, equals_u64);
-            SCOPE_EXIT(hashtable_destroy(&already_analysed_unwind_blocks));
+            DynTable<u64, int> already_analysed_unwind_blocks = DynTable<u64, int>::create(scratch_arena, hash_u64, equals_u64, function_count + 1);
+            DynSet<Function_Unwind_Info> already_analysed_function_infos =
+                DynSet<Function_Unwind_Info>::create(arena, hash_function_unwind_info, equals_function_unwind_info, function_count + 1);
 
-            Hashset<Function_Unwind_Info> already_analysed_function_infos =
-                hashset_create_empty<Function_Unwind_Info>(function_count + 1, hash_function_unwind_info, equals_function_unwind_info);
-            SCOPE_EXIT(hashset_destroy(&already_analysed_function_infos));
-
-            Dynamic_Array<Unwind_Code_Slot> code_slot_buffer = dynamic_array_create<Unwind_Code_Slot>();
-            SCOPE_EXIT(dynamic_array_destroy(&code_slot_buffer));
+            DynArray<Unwind_Code_Slot> code_slot_buffer = DynArray<Unwind_Code_Slot>::create(scratch_arena);
             for (int i = 0; i < runtime_functions.size; i++)
             {
                 auto& runtime_function = runtime_functions[i];
@@ -1901,28 +1821,28 @@ struct Machine_Code_Range
 
 struct Compilation_Unit_Mapping
 {
-    Dynamic_Array<Upp_Line_Mapping> lines;
+    DynArray<Upp_Line_Mapping> lines;
     Compilation_Unit* compilation_unit;
 };
 
 struct Upp_Line_Mapping
 {
     Compilation_Unit_Mapping* parent_unit;
-    Dynamic_Array<Statement_Mapping*> statements;
+    DynArray<Statement_Mapping*> statements;
     int line_number;
 };
 
 struct Statement_Mapping
 {
     Upp_Line_Mapping* parent_line;
-    Dynamic_Array<IR_Instruction_Mapping*> ir_instructions;
+    DynArray<IR_Instruction_Mapping*> ir_instructions;
     AST::Statement* statement;
 };
 
 struct IR_Instruction_Mapping
 {
     Statement_Mapping* parent_statement; // Note: Not every IR-Instruction has a parent statement!
-    Dynamic_Array<C_Line_Mapping*> c_lines;
+    DynArray<C_Line_Mapping*> c_lines;
     IR_Code_Block* code_block;
     int instruction_index;
 };
@@ -1937,10 +1857,10 @@ struct C_Line_Mapping
 struct C_Function_Mapping
 {
     Upp_Function* function;
-    Dynamic_Array<C_Line_Mapping*> c_lines; // All C-Lines for which machine instructions exist?
+    DynArray<C_Line_Mapping*> c_lines; // All C-Lines for which machine instructions exist?
     u64 virtual_address_start;
     u64 virtual_address_end;
-    DynString name;
+    String name;
 };
 
 
@@ -1986,6 +1906,8 @@ const int HARDWARE_BREAKPOINT_COUNT = 4;
 
 struct Debugger
 {
+    Arena arena;
+
     // Process Infos
     HANDLE process_handle; // From CreateProcessA
     HANDLE main_thread_handle; // From CreateProcessA
@@ -1994,32 +1916,31 @@ struct Debugger
     DWORD  main_thread_id; // From CreateProcessA
     DWORD  process_id; // From CreateProcessA
 
-    Dynamic_Array<Thread_Info> threads;
-    Dynamic_Array<PE_Analysis::PE_Info> pe_infos;
-    PDB_Analysis::PDB_Information* pdb_info;
+    DynArray<Thread_Info> threads;
+    DynArray<PE_Analysis::PE_Info*> pe_infos;
+    PDB_Analysis::PDB_Info* pdb_info; // Only one pdb info for the main program, we don't load pdbs for dlls currently
     int main_thread_info_index; // The main thread is determined by the thread that starts executing main
     int exe_pe_info_index; // PE-Info for executable (Determined by first Create_Process debug event)
 
     // Debugger Data
     Debugger_State state;
-    Dynamic_Array<Stack_Frame> stack_frames;
-    Dynamic_Array<Address_Breakpoint> address_breakpoints;
-    Dynamic_Array<Source_Breakpoint*> source_breakpoints;
+    DynArray<Stack_Frame> stack_frames;
+    DynArray<Address_Breakpoint> address_breakpoints;
+    DynArray<Source_Breakpoint*> source_breakpoints;
 
     // Source to assembly mapping
-    Dynamic_Array<Compilation_Unit_Mapping> compilation_unit_mapping;
-    Dynamic_Array<Statement_Mapping> statement_mapping;
-    Dynamic_Array<IR_Instruction_Mapping> ir_instruction_mapping;
-    Dynamic_Array<C_Line_Mapping> c_line_mapping;
-    Dynamic_Array<C_Function_Mapping> ir_function_mapping;
+    DynArray<Compilation_Unit_Mapping> compilation_unit_mapping;
+    DynArray<Statement_Mapping> statement_mapping;
+    DynArray<IR_Instruction_Mapping> ir_instruction_mapping;
+    DynArray<C_Line_Mapping> c_line_mapping;
+    DynArray<C_Function_Mapping> ir_function_mapping;
 
-    Hashtable<IR_Code_Block*, int> ir_block_to_ir_instruction_mapping_start_index;
-    Hashtable<DynString, PDB_Analysis::PDB_Location> c_name_to_location_map; // Stores local-variables, parameters and globals
+    DynTable<IR_Code_Block*, int> ir_block_to_ir_instruction_mapping_start_index;
+    // Stores local-variables, parameters and globals 
+    // This works because every name in our c-generated code is unique, otherwise we would need more infos
+    DynTable<String, PDB_Analysis::PDB_Location> c_name_to_location_map;
 
     // Helpers
-    DynString string_buffer;
-    Dynamic_Array<u8> byte_buffer;
-    Dynamic_Array<INSTRUX> disassembly_buffer;
     Hardware_Breakpoint hardware_breakpoints[HARDWARE_BREAKPOINT_COUNT];
     Compilation_Data* compilation_data;
 
@@ -2034,38 +1955,18 @@ struct Debugger
 
 Debugger* debugger_create()
 {
-    Debugger* result = new Debugger;
+    Debugger* debugger = new Debugger;
+    memory_zero(debugger);
+    debugger->arena = Arena::create();
+    debugger_reset(debugger);
+    return debugger;
+}
 
-    result->threads = dynamic_array_create<Thread_Info>();
-    result->main_thread_info_index = -1;
-    result->pe_infos = dynamic_array_create<PE_Analysis::PE_Info>();
-    result->exe_pe_info_index = -1;
-    result->pdb_info = nullptr;
-    result->main_thread_handle = nullptr;
-    result->process_handle = nullptr;
-    result->memory_source.process_handle = nullptr;
-
-    result->state.process_state = Debug_Process_State::NO_ACTIVE_PROCESS;
-    result->stack_frames = dynamic_array_create<Stack_Frame>();
-    result->address_breakpoints = dynamic_array_create<Address_Breakpoint>();
-    result->source_breakpoints = dynamic_array_create<Source_Breakpoint*>();
-
-    result->compilation_unit_mapping = dynamic_array_create<Compilation_Unit_Mapping>();
-    result->statement_mapping = dynamic_array_create<Statement_Mapping>();
-    result->ir_instruction_mapping = dynamic_array_create<IR_Instruction_Mapping>();
-    result->c_line_mapping = dynamic_array_create<C_Line_Mapping>();
-    result->ir_function_mapping = dynamic_array_create<C_Function_Mapping>();
-    result->ir_block_to_ir_instruction_mapping_start_index = hashtable_create_pointer_empty<IR_Code_Block*, int>(64);
-    result->c_name_to_location_map = hashtable_create_empty<DynString, PDB_Analysis::PDB_Location>(64, hash_string, string_equals);
-    hashtable_reset(&result->c_name_to_location_map);
-
-    result->string_buffer = dynstring_create();
-    result->byte_buffer = dynamic_array_create<u8>();
-    result->disassembly_buffer = dynamic_array_create<INSTRUX>();
-
-    debugger_reset(result);
-
-    return result;
+void debugger_destroy(Debugger* debugger)
+{
+    debugger_reset(debugger);
+    debugger->arena.destroy();
+    delete debugger;
 }
 
 void debugger_reset(Debugger* debugger)
@@ -2096,107 +1997,32 @@ void debugger_reset(Debugger* debugger)
         debugger->process_handle = nullptr;
     }
 
-    debugger->process_id = -1;
-    debugger->main_thread_id = -1;
+    // Reset arena and recreate datastructures
+    debugger->arena.reset(true);
+    Arena* arena = &debugger->arena;
 
-    debugger->exe_pe_info_index = -1;
-    debugger->compilation_data = nullptr;
     debugger->main_thread_info_index = -1;
-    debugger->last_debug_event_requires_handling = false;
-    debugger->event_count = 0;
-    debugger->last_stack_walk_event_count = -1;
-
-    for (int i = 0; i < HARDWARE_BREAKPOINT_COUNT; i++) {
-        auto& bp = debugger->hardware_breakpoints[i];
-        bp.address = 0;
-        bp.enabled = false;
-        bp.length_bits = 0;
-        bp.type = Hardware_Breakpoint_Type::BREAK_ON_EXECUTE;
-    }
-
-    for (int i = 0; i < debugger->pe_infos.size; i++) {
-        PE_Analysis::pe_info_destroy(&debugger->pe_infos[i]);
-    }
-    dynamic_array_reset(&debugger->pe_infos);
-
-    if (debugger->pdb_info != nullptr) {
-        PDB_Analysis::pdb_information_destroy(debugger->pdb_info);
-        debugger->pdb_info = nullptr;
-    }
-
-    dynamic_array_reset(&debugger->threads);
-    dynamic_array_reset(&debugger->stack_frames);
-    dynamic_array_reset(&debugger->address_breakpoints);
-    dynamic_array_reset(&debugger->byte_buffer);
-    dynamic_array_reset(&debugger->disassembly_buffer);
-    dynstring_reset(&debugger->string_buffer);
-    hashtable_reset(&debugger->ir_block_to_ir_instruction_mapping_start_index);
-    hashtable_reset(&debugger->c_name_to_location_map);
-
-    for (int i = 0; i < debugger->source_breakpoints.size; i++) {
-        Source_Breakpoint* bp = debugger->source_breakpoints[i];
-        dynamic_array_destroy(&bp->addresses);
-        delete bp;
-    }
-    dynamic_array_reset(&debugger->source_breakpoints);
-
-    // Reset mappings
-    for (int i = 0; i < debugger->compilation_unit_mapping.size; i++) {
-        auto unit = debugger->compilation_unit_mapping[i];
-        for (int k = 0; k < unit.lines.size; k++) {
-            auto line_mapping = unit.lines[k];
-            dynamic_array_destroy(&line_mapping.statements);
-        }
-        dynamic_array_destroy(&unit.lines);
-    }
-    dynamic_array_reset(&debugger->compilation_unit_mapping);
-
-    for (int i = 0; i < debugger->statement_mapping.size; i++) {
-        dynamic_array_destroy(&debugger->statement_mapping[i].ir_instructions);
-    }
-    dynamic_array_reset(&debugger->statement_mapping);
-
-    for (int i = 0; i < debugger->ir_instruction_mapping.size; i++) {
-        dynamic_array_destroy(&debugger->ir_instruction_mapping[i].c_lines);
-    }
-    dynamic_array_reset(&debugger->ir_instruction_mapping);
-
-    for (int i = 0; i < debugger->ir_function_mapping.size; i++) {
-        dynamic_array_destroy(&debugger->ir_function_mapping[i].c_lines);
-    }
-    dynamic_array_reset(&debugger->ir_function_mapping);
-    dynamic_array_reset(&debugger->c_line_mapping);
-}
-
-void debugger_destroy(Debugger* debugger)
-{
-    debugger_reset(debugger);
-
+    debugger->exe_pe_info_index = -1;
+    debugger->pdb_info = nullptr;
+    debugger->main_thread_handle = nullptr;
     debugger->process_handle = nullptr;
-    debugger->process_id = -1;
-    debugger->exe_pe_info_index = -1;
-    debugger->main_thread_info_index = -1;
-    debugger->last_debug_event_requires_handling = false;
+    debugger->memory_source.process_handle = nullptr;
 
-    dynamic_array_destroy(&debugger->pe_infos);
-    dynamic_array_destroy(&debugger->threads);
-    dynamic_array_destroy(&debugger->stack_frames);
-    dynamic_array_destroy(&debugger->address_breakpoints);
-    dynamic_array_destroy(&debugger->byte_buffer);
-    dynamic_array_destroy(&debugger->disassembly_buffer);
-    string_destroy(&debugger->string_buffer);
-    hashtable_destroy(&debugger->ir_block_to_ir_instruction_mapping_start_index);
-    hashtable_destroy(&debugger->c_name_to_location_map);
+    debugger->threads = DynArray<Thread_Info>::create(arena);
+    debugger->pe_infos = DynArray<PE_Analysis::PE_Info*>::create(arena);
 
-    dynamic_array_destroy(&debugger->source_breakpoints);
+    debugger->state.process_state = Debug_Process_State::NO_ACTIVE_PROCESS;
+    debugger->stack_frames        = DynArray<Stack_Frame>::create(arena);
+    debugger->address_breakpoints = DynArray<Address_Breakpoint>::create(arena);
+    debugger->source_breakpoints  = DynArray<Source_Breakpoint*>::create(arena);
 
-    dynamic_array_destroy(&debugger->compilation_unit_mapping);
-    dynamic_array_destroy(&debugger->statement_mapping);
-    dynamic_array_destroy(&debugger->ir_instruction_mapping);
-    dynamic_array_destroy(&debugger->ir_function_mapping);
-    dynamic_array_destroy(&debugger->c_line_mapping);
-
-    delete debugger;
+    debugger->compilation_unit_mapping = DynArray<Compilation_Unit_Mapping>::create(arena);
+    debugger->statement_mapping = DynArray<Statement_Mapping>::create(arena);
+    debugger->ir_instruction_mapping = DynArray<IR_Instruction_Mapping>::create(arena);
+    debugger->c_line_mapping = DynArray<C_Line_Mapping>::create(arena);
+    debugger->ir_function_mapping = DynArray<C_Function_Mapping>::create(arena);
+    debugger->ir_block_to_ir_instruction_mapping_start_index = DynTable<IR_Code_Block*, int>::create_pointer(arena);
+    debugger->c_name_to_location_map = DynTable<String, PDB_Analysis::PDB_Location>::create(arena, string_hash_pointer, string_equals_pointers);
 }
 
 
@@ -2207,26 +2033,26 @@ u64 static_location_to_virtual_address(Debugger* debugger, PDB_Analysis::PDB_Loc
     if (debugger->state.process_state == Debug_Process_State::NO_ACTIVE_PROCESS) return 0;
     if (debugger->exe_pe_info_index == -1) return 0;
 
-    auto& pe_info = debugger->pe_infos[debugger->exe_pe_info_index];
+    PE_Analysis::PE_Info* pe_info = debugger->pe_infos[debugger->exe_pe_info_index];
     int section_index = location.section_index - 1;
-    if (section_index < 0 || section_index >= pe_info.sections.size) return 0;
-    return pe_info.base_address + pe_info.sections[section_index].rva + location.offset;
+    if (section_index < 0 || section_index >= pe_info->sections.size) return 0;
+    return pe_info->base_address + pe_info->sections[section_index].rva + location.offset;
 }
 
 PE_Analysis::PE_Info* debugger_find_module_of_address(Debugger* debugger, u64 address, bool must_be_executable_section)
 {
     for (int i = 0; i < debugger->pe_infos.size; i++)
     {
-        auto& info = debugger->pe_infos[i];
-        auto& sections = info.sections;
+        auto info = debugger->pe_infos[i];
+        auto& sections = info->sections;
         for (int j = 0; j < sections.size; j++)
         {
             auto& section = sections[j];
             if (!section.flag_execute && must_be_executable_section) continue;
 
-            u64 section_start_addr = info.base_address + section.rva;
+            u64 section_start_addr = info->base_address + section.rva;
             if (address >= section_start_addr && address < section_start_addr + section.size) {
-                return &debugger->pe_infos[i];
+                return debugger->pe_infos[i];
             }
         }
     }
@@ -2234,7 +2060,7 @@ PE_Analysis::PE_Info* debugger_find_module_of_address(Debugger* debugger, u64 ad
     return nullptr;
 }
 
-u64 debugger_find_address_of_function(Debugger* debugger, DynString name)
+u64 debugger_find_address_of_function(Debugger* debugger, String name)
 {
     if (debugger->pdb_info == nullptr || debugger->exe_pe_info_index == -1) return 0;
     // Search in pdb for function with this name...
@@ -2242,16 +2068,16 @@ u64 debugger_find_address_of_function(Debugger* debugger, DynString name)
     for (int i = 0; i < pdb_info->functions.size; i++)
     {
         auto& function = pdb_info->functions[i];
-        if (!string_equals(&name, &function.name)) continue;
+        if (!string_equals(name, function.name)) continue;
 
         int section_index = function.location.section_index - 1;
         u64 offset = function.location.offset;
 
         auto& main_pe = debugger->pe_infos[debugger->exe_pe_info_index];
-        auto& sections = main_pe.sections;
+        auto& sections = main_pe->sections;
         if (section_index >= 0 && section_index < sections.size) {
             auto& section = sections[section_index];
-            return main_pe.base_address + section.rva + offset;
+            return main_pe->base_address + section.rva + offset;
         }
     }
     return 0;
@@ -2265,20 +2091,20 @@ Closest_Symbol_Info debugger_find_closest_symbol_name(Debugger* debugger, u64 ad
     info.section_index = -1;
     info.found_symbol = false;
     info.exception_handling_index = -1;
-    info.symbol_name = string_create_static("");
-    info.section_name = string_create_static("");
-    info.pe_name = string_create_static("");
+    info.symbol_name = string_make("");
+    info.section_name = string_make("");
+    info.pe_name = string_make("");
     if (debugger->pe_infos.size == 0) return info;
 
     // Find PE (Dll or exe) and section of address
     for (int i = 0; i < debugger->pe_infos.size && info.pe_index == -1; i++) {
         auto& pe_info = debugger->pe_infos[i];
-        for (int j = 0; j < pe_info.sections.size; j++) {
-            auto& section = pe_info.sections[j];
-            if (address >= section.rva + pe_info.base_address && address < section.rva + section.size + pe_info.base_address) {
+        for (int j = 0; j < pe_info->sections.size; j++) {
+            auto& section = pe_info->sections[j];
+            if (address >= section.rva + pe_info->base_address && address < section.rva + section.size + pe_info->base_address) {
                 info.pe_index = i;
                 info.section_index = j;
-                info.pe_name = filepath_get_parts(pe_info.name).filename;
+                info.pe_name = filepath_get_parts(pe_info->name).filename;
                 info.section_name = section.name;
                 break;
             }
@@ -2292,8 +2118,8 @@ Closest_Symbol_Info debugger_find_closest_symbol_name(Debugger* debugger, u64 ad
     // Check if we can find function in PDB-Information (Only possible for main exe currently)
     if (info.pe_index == debugger->exe_pe_info_index && debugger->pdb_info != nullptr)
     {
-        auto& main_pe = debugger->pe_infos[debugger->exe_pe_info_index];
-        auto& section_infos = main_pe.sections;
+        auto main_pe = debugger->pe_infos[debugger->exe_pe_info_index];
+        auto& section_infos = main_pe->sections;
         for (int i = 0; i < debugger->pdb_info->functions.size; i++)
         {
             auto& function = debugger->pdb_info->functions[i];
@@ -2306,7 +2132,7 @@ Closest_Symbol_Info debugger_find_closest_symbol_name(Debugger* debugger, u64 ad
             if (section_index < 0 || section_index >= section_infos.size) continue;
 
             auto& section = section_infos[section_index];
-            u64 fn_address = main_pe.base_address + section.rva + loc.offset;
+            u64 fn_address = main_pe->base_address + section.rva + loc.offset;
 
             if (address >= fn_address && address < fn_address + function.length) {
                 info.distance = address - fn_address;
@@ -2319,17 +2145,17 @@ Closest_Symbol_Info debugger_find_closest_symbol_name(Debugger* debugger, u64 ad
 
     // Check if we can find an exception handler for the current function
     auto& pe_info = debugger->pe_infos[info.pe_index];
-    for (int i = 0; i < pe_info.function_unwind_infos.size; i++)
+    for (int i = 0; i < pe_info->function_unwind_infos.size; i++)
     {
-        auto& unwind_info = pe_info.function_unwind_infos[i];
-        u64 start_address = unwind_info.start_rva + pe_info.base_address;
-        u64 end_address = unwind_info.end_rva + pe_info.base_address;
+        auto& unwind_info = pe_info->function_unwind_infos[i];
+        u64 start_address = unwind_info.start_rva + pe_info->base_address;
+        u64 end_address = unwind_info.end_rva + pe_info->base_address;
         if (address >= start_address && address < end_address) {
             info.exception_handling_index = i;
             info.found_symbol = false;
             info.distance = address - start_address;
             if (unwind_info.export_symbol_info_index != -1) {
-                auto& export_symbol = pe_info.exported_symbols[unwind_info.export_symbol_info_index];
+                auto& export_symbol = pe_info->exported_symbols[unwind_info.export_symbol_info_index];
                 if (export_symbol.name.available) {
                     info.found_symbol = true;
                     info.symbol_name = export_symbol.name.value;
@@ -2340,18 +2166,18 @@ Closest_Symbol_Info debugger_find_closest_symbol_name(Debugger* debugger, u64 ad
     }
 
     // Otherwise find closest address from export-table of loaded Dll/PEs
-    DynString closest_name = string_create_static("");
+    String closest_name = string_make("");
     u64 closest_distance = (u64)(i64)-1;
 
     // Find symbol that is closest to address
     auto& pe_infos = debugger->pe_infos;
     {
         auto& pe_info = pe_infos[info.pe_index];
-        for (int i = 0; i < pe_info.exported_symbols.size; i++) {
-            auto& symbol = pe_info.exported_symbols[i];
+        for (int i = 0; i < pe_info->exported_symbols.size; i++) {
+            auto& symbol = pe_info->exported_symbols[i];
             if (symbol.forwarder_name.available || !symbol.name.available) continue;
 
-            u64 symbol_address = symbol.rva + pe_info.base_address;
+            u64 symbol_address = symbol.rva + pe_info->base_address;
             if (address < symbol_address) continue;
 
             u64 distance = address - symbol_address;
@@ -2373,40 +2199,40 @@ Closest_Symbol_Info debugger_find_closest_symbol_name(Debugger* debugger, u64 ad
 void closest_symbol_info_append_to_string(Debugger* debugger, Closest_Symbol_Info symbol_info, DynString* string)
 {
     if (symbol_info.pe_index == -1) {
-        string_append(string, "ADDRESS_OUTSIDE_LOADED_SECTIONS");
+        string->append("ADDRESS_OUTSIDE_LOADED_SECTIONS");
         return;
     }
 
     if (symbol_info.found_symbol) {
-        string_append(string, symbol_info.symbol_name.characters);
-        string_append(string, " ");
+        string->append(symbol_info.symbol_name);
+        string->append(" ");
     }
     else {
         if (symbol_info.exception_handling_index != -1) {
-            string_append(string, "Private Function ");
+            string->append("Private Function ");
         }
         else {
-            string_append(string, "Unknown/Leaf-Function ");
+            string->append("Unknown/Leaf-Function ");
         }
     }
 
     if (symbol_info.pe_index == debugger->exe_pe_info_index) {
-        string_append(string, "[main.exe ");
+        string->append("[main.exe ");
     }
     else {
         if (symbol_info.pe_name.size == 0) {
             dynstring_append_formated(string, "[?(PE #%d) ", symbol_info.pe_index);
         }
         else {
-            dynstring_append_formated(string, "[%s ", symbol_info.pe_name.characters);
+            string->append('[')->append(symbol_info.pe_name)->append(' ');
         }
     }
     if (symbol_info.section_name.size == 0) {
         dynstring_append_formated(string, "?(Section #%d) ", symbol_info.section_index);
     }
     else {
-        string_append(string, symbol_info.section_name.characters);
-        string_append(string, " ");
+        string->append(symbol_info.section_name);
+        string->append(" ");
     }
 
     dynstring_append_formated(string, "+0x%04llX]", symbol_info.distance);
@@ -2414,10 +2240,10 @@ void closest_symbol_info_append_to_string(Debugger* debugger, Closest_Symbol_Inf
 
 void print_closest_symbol_name(Debugger* debugger, Closest_Symbol_Info symbol_info)
 {
-    DynString tmp = dynstring_create();
-    SCOPE_EXIT(string_destroy(&tmp));
+    SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+    DynString tmp = dynstring_create(scratch_arena);
     closest_symbol_info_append_to_string(debugger, symbol_info, &tmp);
-    printf("%s\n", tmp.characters);
+    printf("%.*s\n", tmp.size, tmp.characters);
 }
 
 u64 debugger_find_address_of_c_line_from_pdb_info(Debugger* debugger, int line_index)
@@ -2438,15 +2264,25 @@ u64 debugger_find_address_of_c_line_from_pdb_info(Debugger* debugger, int line_i
     return 0;
 }
 
-// Returns true if the whole read_size was disassembled. If only partial read was successfull, false is returned, but out_instructions is filled
-bool debugger_disassemble_bytes(Debugger* debugger, u64 virtual_address, u32 read_size)
+// Note: It would be better if we would just disassemble the whole function of the virtual address, then return that...
+struct Disassembly_Info
 {
-    auto& instructions = debugger->disassembly_buffer;
-    auto& byte_buffer = debugger->byte_buffer;
-    dynamic_array_reset(&instructions);
+    Array<byte> bytes;
+    DynArray<INSTRUX> instructions;
+};
 
+Disassembly_Info debugger_disassemble_bytes(Debugger* debugger, u64 virtual_address, u32 read_size, Arena* arena)
+{
     // Read bytes
-    debugger->memory_source.read_as_much_as_possible((void*)virtual_address, &byte_buffer, read_size);
+    Disassembly_Info result;
+    result.bytes = array_create_static<byte>(nullptr, 0);
+    result.instructions = DynArray<INSTRUX>::create(arena);
+    Array<byte>& byte_buffer = result.bytes;
+
+    uint readable_size = debugger->memory_source.query_max_readable_size((void*)virtual_address);
+    read_size = math_minimum(read_size, (u32)readable_size);
+    result.bytes = arena->allocate_array<byte>(read_size);
+    debugger->memory_source.read((void*)byte_buffer.data, (void*)virtual_address, read_size);
 
     // Handle software breakpoints
     for (int i = 0; i < debugger->address_breakpoints.size; i++) {
@@ -2460,7 +2296,6 @@ bool debugger_disassemble_bytes(Debugger* debugger, u64 virtual_address, u32 rea
 
     // Disassemble bytes
     u32 byte_index = 0;
-    dynamic_array_reserve(&instructions, byte_buffer.size / 4); // Reserve buffer size assuming a normal instruction stakes ~4 bytes
     while (byte_index < (u32)byte_buffer.size)
     {
         INSTRUX instruction;
@@ -2469,32 +2304,32 @@ bool debugger_disassemble_bytes(Debugger* debugger, u64 virtual_address, u32 rea
             break;
         }
         assert(instruction.Length > 0, "");
-        dynamic_array_push_back(&instructions, instruction);
+        result.instructions.push_back(instruction);
         byte_index += instruction.Length;
     }
 
-    return byte_index >= read_size;
+    return result;
 }
 
-void debugger_print_last_disassembly(Debugger* debugger, u64 address, int indentation_spaces, bool print_addresses = true, bool print_raw_bytes = true)
+void assembly_print(Disassembly_Info& disassembly, u64 start_address, int indentation_spaces, bool print_addresses = true, bool print_raw_bytes = true)
 {
-    DynString str = dynstring_create(256);
-    SCOPE_EXIT(string_destroy(&str));
+    SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+    DynString str = dynstring_create(scratch_arena);
 
-    auto& instructions = debugger->disassembly_buffer;
-    auto& byte_buffer = debugger->byte_buffer;
+    auto& instructions = disassembly.instructions;
+    auto& byte_buffer = disassembly.bytes;
 
     u32 byte_index = 0;
     for (int i = 0; i < instructions.size; i++)
     {
-        INSTRUX instr = instructions.data[i];
+        INSTRUX instr = instructions[i];
 
         for (int i = 0; i < indentation_spaces; i++) {
             printf(" ");
         }
         // Print bytes of instruction
         if (print_addresses) {
-            printf("[0x%08llX] ", address + byte_index);
+            printf("[0x%08llX] ", start_address + byte_index);
         }
         if (print_raw_bytes)
         {
@@ -2505,7 +2340,7 @@ void debugger_print_last_disassembly(Debugger* debugger, u64 address, int indent
                         printf(".. ");
                     }
                     else {
-                        printf("%02X ", (i32)(byte_buffer.data[byte_index + i]));
+                        printf("%02X ", (i32)(byte_buffer[(int)byte_index + i]));
                     }
                 }
                 else {
@@ -2515,7 +2350,7 @@ void debugger_print_last_disassembly(Debugger* debugger, u64 address, int indent
         }
 
         // Print instruction
-        NdToText(&instr, address + byte_index, str.capacity - 1, str.characters);
+        NdToText(&instr, start_address + byte_index, str.capacity - 1, str.characters);
         str.size = (int)strlen(str.characters);
         printf("%s\n", str.characters);
         byte_index += instr.Length;
@@ -2601,7 +2436,7 @@ void do_stack_walk(Debugger* debugger)
 		return;
 	}
 
-	dynamic_array_reset(&debugger->stack_frames);
+    debugger->stack_frames.reset();
 	if (debugger->state.process_state != Debug_Process_State::HALTED) return;
 	debugger->last_stack_walk_event_count = debugger->event_count;
 
@@ -2632,12 +2467,13 @@ void do_stack_walk(Debugger* debugger)
 		assert(stack_min_address <= stack_max_address, "");
 	}
 
-	auto& disassembly_buffer = debugger->disassembly_buffer;
-
+    SCRATCH_ARENA_MAKE_SCOPED(debugger->stack_frames.arena);
 	const int max_depth = 8;
 	int frame_depth = 0;
 	while (true)
 	{
+        ARENA_MAKE_SCOPED_CHECKPOINT(scratch_arena);
+        
 		// Check for exit criteria (Left stack-region or return address invalid)
 		{
 			if (context.Rsp > stack_max_address) {
@@ -2670,7 +2506,7 @@ void do_stack_walk(Debugger* debugger)
 		frame_info.instruction_pointer = context.Rip;
 		frame_info.stack_frame_start_address = 0;
         x64_register_state_from_context(frame_info.register_state, context);
-		dynamic_array_push_back(&debugger->stack_frames, frame_info);
+		debugger->stack_frames.push_back(frame_info);
 		frame_depth += 1;
 
 		// Find unwind infos
@@ -2712,14 +2548,14 @@ void do_stack_walk(Debugger* debugger)
 			{
 				u32 remaining_bytes = (unwind_info.end_rva + found_module->base_address) - context.Rip;
 				remaining_bytes = math_minimum(remaining_bytes, (u32)(16 * 32)); // Limit count of instructions read to max 32 instructions with 16 bytes each
-				debugger_disassemble_bytes(debugger, context.Rip, remaining_bytes);
+				Disassembly_Info disassembly = debugger_disassemble_bytes(debugger, context.Rip, remaining_bytes, scratch_arena);
 
 				// Analyse instructions to check if we are in epilog
 				// Epilog must only consist of 8byte register pops and a return or a non-relative jmp
 				// We ignore the non-relative jump now, because I can't figure out the encoding for this (ModRM bits need to be checked...)
-				for (int i = 0; i < disassembly_buffer.size; i++)
+				for (int i = 0; i < disassembly.instructions.size; i++)
 				{
-					auto& instr = disassembly_buffer[i];
+					auto& instr = disassembly.instructions[i];
 					if (instr.Category == ND_CAT_POP && instr.OpMode == ND_ADDR_64 && instr.OperandsCount == 1)
 					{
 						auto& operand = instr.Operands[0];
@@ -2750,9 +2586,9 @@ void do_stack_walk(Debugger* debugger)
 				// Execute epilog if we are inside, to get the previous context back
 				if (inside_epilog)
 				{
-					for (int i = 0; i < disassembly_buffer.size && success; i++)
+					for (int i = 0; i < disassembly.instructions.size && success; i++)
 					{
-						auto& instr = disassembly_buffer[i];
+						auto& instr = disassembly.instructions[i];
 						if (instr.Category == ND_CAT_POP && instr.OpMode == ND_ADDR_64 && instr.OperandsCount == 1) {
 							auto& operand = instr.Operands[0];
 							X64_Integer_Register reg_id = (X64_Integer_Register)operand.Info.Register.Reg;
@@ -2875,19 +2711,20 @@ void debugger_print_stack_frames(Debugger* debugger)
 // SOURCE_MAPPING
 // Note: This only adds the statement mappings, but not line-to statement mapping (Must be done in seperate case for pointers to work)
 void source_mapping_generate_statement_to_line_mapping_recursive(
-	AST::Node* node, Debugger* debugger, Hashtable<AST::Statement*, int>* statement_to_mapping_table, Compilation_Unit_Mapping* unit_mapping)
+	AST::Node* node, Debugger* debugger, DynTable<AST::Statement*, int>* statement_to_mapping_table, Compilation_Unit_Mapping* unit_mapping)
 {
-	if (node->type == AST::Node_Type::STATEMENT) {
+	if (node->type == AST::Node_Type::STATEMENT) 
+    {
 		AST::Statement* statement = downcast<AST::Statement>(node);
-		if (!hashtable_insert_element(statement_to_mapping_table, statement, debugger->statement_mapping.size)) {
+		if (!statement_to_mapping_table->try_insert(statement, debugger->statement_mapping.size)) {
 			return;
 		}
 
 		Statement_Mapping stat_mapping;
-		stat_mapping.ir_instructions = dynamic_array_create<IR_Instruction_Mapping*>();
+		stat_mapping.ir_instructions = DynArray<IR_Instruction_Mapping*>::create(&debugger->arena);
 		stat_mapping.statement = statement;
 		stat_mapping.parent_line = &unit_mapping->lines[node->bounding_range.start.line];
-		dynamic_array_push_back(&debugger->statement_mapping, stat_mapping);
+		debugger->statement_mapping.push_back(stat_mapping);
 	}
 
 	int child_index = 0;
@@ -2904,20 +2741,21 @@ void source_mapping_generate_ir_instruction_mapping_recursive(IR_Code_Block* blo
 {
 	auto code_block_start_offsets = &debugger->ir_block_to_ir_instruction_mapping_start_index;
 	int offset_start = debugger->ir_instruction_mapping.size;
-	if (!hashtable_insert_element(code_block_start_offsets, block, offset_start)) {
-		return;
-	}
+
+    if (!code_block_start_offsets->try_insert(block, offset_start)) {
+        return;
+    }
 
 	// Push dummy mappings for now
-	dynamic_array_reserve(&debugger->ir_instruction_mapping, debugger->ir_instruction_mapping.size + block->instructions.size);
+	debugger->ir_instruction_mapping.reserve(debugger->ir_instruction_mapping.size + block->instructions.size);
 	for (int i = 0; i < block->instructions.size; i++)
 	{
 		IR_Instruction_Mapping instr_mapping;
 		instr_mapping.parent_statement = nullptr;
 		instr_mapping.code_block = block;
 		instr_mapping.instruction_index = i;
-		instr_mapping.c_lines = dynamic_array_create<C_Line_Mapping*>();
-		dynamic_array_push_back(&debugger->ir_instruction_mapping, instr_mapping);
+		instr_mapping.c_lines = DynArray<C_Line_Mapping*>::create(&debugger->arena);
+		debugger->ir_instruction_mapping.push_back(instr_mapping);
 	}
 
 	// Afterwards recurse to lower blocks
@@ -2958,6 +2796,16 @@ struct Machine_Code_Segment
 	int c_line_index_with_offset;
 };
 
+Order_Comparison_Result machine_code_segment_compare(Machine_Code_Segment* ap, Machine_Code_Segment* bp, void* userdata)
+{
+    auto& a = *ap;
+    auto& b = *bp;
+	if (a.function != b.function) {
+		return a.function->function_index < b.function->function_index ? Order_Comparison_Result::LESS : Order_Comparison_Result::GREATER;
+	}
+	return a.virtual_address_start < b.virtual_address_start ? Order_Comparison_Result::LESS : Order_Comparison_Result::GREATER;
+}
+
 struct Segment_Comparator
 {
 	bool operator()(const Machine_Code_Segment& a, const Machine_Code_Segment& b)
@@ -2970,9 +2818,9 @@ struct Segment_Comparator
 };
 
 void source_mapping_upp_line_to_machine_code_segments(
-	Debugger* debugger, Compilation_Unit* compilation_unit, int line_index, Dynamic_Array<Machine_Code_Segment>* out_machine_code_segments)
+	Debugger* debugger, Compilation_Unit* compilation_unit, int line_index, DynArray<Machine_Code_Segment>* out_machine_code_segments)
 {
-	dynamic_array_reset(out_machine_code_segments);
+	out_machine_code_segments->reset();
 	Compilation_Unit_Mapping* unit_map = nullptr;
 	for (int i = 0; i < debugger->compilation_unit_mapping.size; i++) {
 		auto& unit = debugger->compilation_unit_mapping[i];
@@ -3000,23 +2848,22 @@ void source_mapping_upp_line_to_machine_code_segments(
 				segment.virtual_address_end = c_line_info->range.end_virtual_address;
 				segment.c_line_index_with_offset = c_line_info->c_line_index;
 				if (segment.virtual_address_start == 0 || segment.virtual_address_end == 0) continue;
-				dynamic_array_push_back(out_machine_code_segments, segment);
+				out_machine_code_segments->push_back(segment);
 			}
 		}
 	}
 
 	// Sort segments and fuse together...
-	Segment_Comparator comp;
-	dynamic_array_sort(out_machine_code_segments, comp);
+    array_sort(out_machine_code_segments->as_array(), machine_code_segment_compare, nullptr);
 	for (int i = 0; i < out_machine_code_segments->size - 1; i++)
 	{
-		auto& current = out_machine_code_segments->data[i];
-		auto& next = out_machine_code_segments->data[i + 1];
+		auto& current = out_machine_code_segments->at(i);
+		auto& next    = out_machine_code_segments->at(i + 1);
 
 		if (current.function != next.function) continue;
 		if (current.virtual_address_end == next.virtual_address_start) {
 			current.virtual_address_end = next.virtual_address_end;
-			dynamic_array_remove_ordered(out_machine_code_segments, i + 1);
+			out_machine_code_segments->remove_ordered(i + 1);
 			i = i - 1;
 		}
 	}
@@ -3118,7 +2965,7 @@ bool debugger_add_address_breakpoint(Debugger* debugger, u64 address)
 		}
 	}
 
-	dynamic_array_push_back(&debugger->address_breakpoints, breakpoint);
+	debugger->address_breakpoints.push_back(breakpoint);
 	return true;
 }
 
@@ -3139,10 +2986,11 @@ bool debugger_remove_address_breakpoint(Debugger* debugger, u64 address)
 	auto& bp = debugger->address_breakpoints[index];
 	bp.reference_count = math_maximum(0, bp.reference_count - 1);
 
-	if (bp.reference_count == 0 && !bp.is_software_breakpoint) {
+	if (bp.reference_count == 0 && !bp.is_software_breakpoint) 
+    {
 		debugger->hardware_breakpoints[bp.options.hardware_breakpoint_index].enabled = false;
 		debugger->hardware_breakpoints[bp.options.hardware_breakpoint_index].address = 0;
-		dynamic_array_swap_remove(&debugger->address_breakpoints, index);
+		debugger->address_breakpoints.swap_remove(index);
 	}
 
 	return true;
@@ -3205,23 +3053,22 @@ void debugger_handle_last_debug_event(Debugger* debugger)
 			Thread_Info info;
 			info.id = GetThreadId(create_info.hThread);
 			info.handle = create_info.hThread;
-			dynamic_array_push_back(&debugger->threads, info);
+			debugger->threads.push_back(info);
 			debugger->main_thread_info_index = debugger->threads.size - 1;
 		}
 
 		// Load portable-executable information
-		PE_Analysis::PE_Info pe_info = PE_Analysis::pe_info_create();
-		bool success = PE_Analysis::pe_info_fill_from_executable_image(
-			&pe_info, (u64)create_info.lpBaseOfImage, debugger->process_handle, create_info.lpImageName, create_info.fUnicode
+        PE_Analysis::PE_Info* pe_info = debugger->arena.allocate<PE_Analysis::PE_Info>();
+		bool success = PE_Analysis::pe_info_init_from_executable_image(
+			pe_info, (u64)create_info.lpBaseOfImage, debugger->process_handle, create_info.lpImageName, create_info.fUnicode, &debugger->arena
 		);
 		if (success) {
 			debugger->exe_pe_info_index = debugger->pe_infos.size;
-			dynamic_array_push_back(&debugger->pe_infos, pe_info);
+			debugger->pe_infos.push_back(pe_info);
 		}
 		else {
 			printf("Could not parse main executable pe info!\n");
 			debugger_reset(debugger);
-			PE_Analysis::pe_info_destroy(&pe_info);
 		}
 
 		break;
@@ -3235,15 +3082,17 @@ void debugger_handle_last_debug_event(Debugger* debugger)
 
         // Print exit code
         {
+            SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+            DynString tmp = DynString::create(scratch_arena);
+
             int exit_code_value = (int)debug_event.u.ExitProcess.dwExitCode;
             Exit_Code exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Exit code value from program execution was invalid");
             if (exit_code_value >= 0 && exit_code_value < (int)Exit_Code_Type::MAX_ENUM_VALUE) {
                 exit_code = exit_code_make((Exit_Code_Type)exit_code_value);
             }
-            DynString tmp = dynstring_create();
-            SCOPE_EXIT(string_destroy(&tmp));
+
             exit_code_append_to_string(&tmp, exit_code);
-            printf("Debug Process exited with code: %s\n", tmp.characters);
+            printf("Debug Process exited with code: %.*s\n", tmp.size, tmp.characters);
         }
 
 		// Note: ContinueDebugEvent closes the process handle and the thread handle received through the create_process_debug_event
@@ -3262,30 +3111,29 @@ void debugger_handle_last_debug_event(Debugger* debugger)
 		CloseHandle(dll_load.hFile);
 
 		// Load portable-executable information
-		PE_Analysis::PE_Info pe_info = PE_Analysis::pe_info_create();
-		bool success = PE_Analysis::pe_info_fill_from_executable_image(
-			&pe_info, (u64)dll_load.lpBaseOfDll, debugger->process_handle, dll_load.lpImageName, dll_load.fUnicode
+        PE_Analysis::PE_Info* pe_info = debugger->arena.allocate<PE_Analysis::PE_Info>();
+		bool success = PE_Analysis::pe_info_init_from_executable_image(
+			pe_info, (u64)dll_load.lpBaseOfDll, debugger->process_handle, dll_load.lpImageName, dll_load.fUnicode, &debugger->arena
 		);
 		if (success)
 		{
-			dynamic_array_push_back(&debugger->pe_infos, pe_info);
+			debugger->pe_infos.push_back(pe_info);
 
 			if (DEBUG_OUTPUT_ENABLED)
 			{
-				if (pe_info.name.size > 0) {
-					printf("\"%s\" ", pe_info.name.characters);
+				if (pe_info->name.size > 0) {
+					printf("\"%s\" ", pe_info->name.characters);
 				}
 				else {
 					printf("Analysis success, but name not retrievable ");
 				}
-				if (pe_info.pdb_name.size > 0) {
-					printf("pdb: \"%s\" ", pe_info.pdb_name.characters);
+				if (pe_info->pdb_name.size > 0) {
+					printf("pdb: \"%s\" ", pe_info->pdb_name.characters);
 				}
 				printf("\n");
 			}
 		}
 		else {
-			PE_Analysis::pe_info_destroy(&pe_info);
 			if (DEBUG_OUTPUT_ENABLED) { printf("Analysis failed!\n"); }
 		}
 
@@ -3297,10 +3145,11 @@ void debugger_handle_last_debug_event(Debugger* debugger)
 		u64 dll_base = (u64)debug_event.u.UnloadDll.lpBaseOfDll;
 		for (int i = 0; i < debugger->pe_infos.size; i++) {
 			auto& pe_info = debugger->pe_infos[i];
-			if (pe_info.base_address == dll_base && i != debugger->exe_pe_info_index) {
-				printf(pe_info.name.characters);
-				PE_Analysis::pe_info_destroy(&pe_info);
-				dynamic_array_swap_remove(&debugger->pe_infos, i);
+			if (pe_info->base_address == dll_base && i != debugger->exe_pe_info_index) {
+                // Note: we currently don't free dlls when they get de-allocated
+                // which shouldn't happen regularly unless we are dealing with hot-reloading or something like that
+				printf("%.*s", pe_info->name.size, pe_info->name.characters);
+				debugger->pe_infos.swap_remove(i);
 				break;
 			}
 		}
@@ -3312,7 +3161,7 @@ void debugger_handle_last_debug_event(Debugger* debugger)
 		Thread_Info info;
 		info.handle = debug_event.u.CreateThread.hThread;
 		info.id = debug_event.dwThreadId;
-		dynamic_array_push_back(&debugger->threads, info);
+		debugger->threads.push_back(info);
 
 		if (DEBUG_OUTPUT_ENABLED) { printf("Create_thread\n"); }
 		break;
@@ -3329,7 +3178,7 @@ void debugger_handle_last_debug_event(Debugger* debugger)
 				else if (i < debugger->main_thread_info_index) {
 					debugger->main_thread_info_index -= 1;
 				}
-				dynamic_array_remove_ordered(&debugger->threads, i);
+				debugger->threads.remove_ordered(i);
 				break;
 			}
 		}
@@ -3413,14 +3262,15 @@ void debugger_handle_last_debug_event(Debugger* debugger)
 	case OUTPUT_DEBUG_STRING_EVENT:
 	{
 		auto& debug_str = debug_event.u.DebugString;
-		auto& str = debugger->string_buffer;
-		dynstring_reset(&str);
-		bool success = debugger->memory_source.read_null_terminated_string(
+        SCRATCH_ARENA_MAKE_SCOPED(&debugger->arena);
+        DynString tmp_string = DynString::create(scratch_arena);
+		bool success = debugger->memory_source.read_string_null_terminated_generic(
 			(void*)(debug_str.lpDebugStringData),
-			&str, debug_str.nDebugStringLength + 1, debug_str.fUnicode, &debugger->byte_buffer
+			&tmp_string, debug_str.nDebugStringLength + 1, 
+            !debug_str.fUnicode  // fUnicode bool is true for UTF16, false for ansi
 		);
 		if (success) {
-			printf("Output_Debug_String: \"%s\"\n", str.characters);
+			printf("Output_Debug_String: \"%s\"\n", tmp_string.to_cstring());
 		}
 		else {
 			printf("Debug string could not be read\n");
@@ -3562,7 +3412,7 @@ void debugger_continue_from_last_debug_event(Debugger* debugger)
 			}
 		}
 
-		dynamic_array_swap_remove(&debugger->address_breakpoints, i);
+		debugger->address_breakpoints.swap_remove(i);
 		i = i - 1;
 	}
 
@@ -3718,18 +3568,17 @@ void debugger_resume_until_next_halt_or_exit(Debugger* debugger)
 }
 
 bool debugger_start_process(
-	Debugger* debugger, const char* exe_filepath, const char* pdb_filepath, const char* main_obj_filepath, Compilation_Data* compilation_data)
+	Debugger* debugger, String exe_filepath, String pdb_filepath, String main_obj_filepath, Compilation_Data* compilation_data)
 {
 	debugger_reset(debugger);
 	debugger->compilation_data = compilation_data;
+    Arena* arena = &debugger->arena;
 
 	// Load pdb file
     // timing_start();
     SCOPE_EXIT(timing_end());
-	debugger->pdb_info = PDB_Analysis::pdb_information_create();
-	if (!PDB_Analysis::pdb_information_fill_from_file(debugger->pdb_info, pdb_filepath, main_obj_filepath)) {
-		PDB_Analysis::pdb_information_destroy(debugger->pdb_info);
-		debugger->pdb_info = nullptr;
+    debugger->pdb_info = arena->allocate<PDB_Analysis::PDB_Info>();
+	if (!PDB_Analysis::pdb_info_init(debugger->pdb_info, pdb_filepath, main_obj_filepath, arena)) {
 		printf("Couldn't parse pdb file!\n");
 		return false;
 	}
@@ -3737,12 +3586,15 @@ bool debugger_start_process(
 
 	// Create process
 	{
+        SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+        DynString tmp_string = DynString::create(scratch_arena);
+        
 		STARTUPINFO startup_info;
 		ZeroMemory(&startup_info, sizeof(startup_info));
 		startup_info.cb = sizeof(startup_info);
 		PROCESS_INFORMATION process_info;
 		bool success = CreateProcessA(
-			exe_filepath, // application path
+			tmp_string.reset()->append(exe_filepath)->to_cstring(), // application path
 			nullptr, // Command line args
 			nullptr, // Security-Attributes (if child processes can access this handle)
 			nullptr, // Security-attributes for thread
@@ -3788,7 +3640,7 @@ bool debugger_start_process(
 		// Note: Using hardware breakpoints between the Create_Process_Event and entering main does not work reliably
 		//       I guess this has something to do with the thread setting itself up, and maybe manipulating it's own context
 		if (debugger->last_debug_event.dwDebugEventCode == CREATE_PROCESS_DEBUG_EVENT) {
-			main_address = debugger_find_address_of_function(debugger, string_create_static("main"));
+			main_address = debugger_find_address_of_function(debugger, string_make("main"));
 			if (main_address == 0) {
 				printf("No main function found!\n");
 				debugger_reset(debugger);
@@ -3856,13 +3708,13 @@ bool debugger_start_process(
     timing_log("Execute until main");
 
 	// Generate all mappings (Upp-Source-Code <-> Statements <-> IR_Instructions <-> C-Lines <-> Assembly)
-	C_Program_Translation* c_translation = c_generator_get_translation(compilation_data->c_generator);
+    C_Program_Translation* c_translation = compilation_data->c_program_translation;
 	if (compilation_data != nullptr)
 	{
 		auto pdb_info = debugger->pdb_info;
 
-		Hashtable<AST::Statement*, int> statement_to_mapping_table = hashtable_create_pointer_empty<AST::Statement*, int>(1024);
-		SCOPE_EXIT(hashtable_destroy(&statement_to_mapping_table));
+        SCRATCH_ARENA_MAKE_SCOPED(arena);
+		DynTable<AST::Statement*, int> statement_to_mapping_table = DynTable<AST::Statement*, int>::create_pointer(scratch_arena);
 
 		// Create Compilation-Unit <-> Upp_Line mapping
 		for (int i = 0; i < compilation_data->compilation_units.size; i++)
@@ -3871,19 +3723,19 @@ bool debugger_start_process(
             if (unit->upp_module == nullptr) continue; // Skip unused units
 
 			Compilation_Unit_Mapping unit_mapping;
-			unit_mapping.lines = dynamic_array_create<Upp_Line_Mapping>(unit->code->line_count);
+			unit_mapping.lines = DynArray<Upp_Line_Mapping>::create(arena);
 			unit_mapping.compilation_unit = unit;
-			dynamic_array_push_back(&debugger->compilation_unit_mapping, unit_mapping);
+			debugger->compilation_unit_mapping.push_back(unit_mapping);
 		}
 		for (int i = 0; i < debugger->compilation_unit_mapping.size; i++)
 		{
 			Compilation_Unit_Mapping* unit_mapping = &debugger->compilation_unit_mapping[i];
-			for (int i = 0; i < unit_mapping->compilation_unit->code->line_count; i++) {
+			for (int i = 0; i < unit_mapping->compilation_unit->code->lines.size; i++) {
 				Upp_Line_Mapping line_mapping;
 				line_mapping.parent_unit = unit_mapping;
 				line_mapping.line_number = i;
-				line_mapping.statements = dynamic_array_create<Statement_Mapping*>();
-				dynamic_array_push_back(&unit_mapping->lines, line_mapping);
+				line_mapping.statements = DynArray<Statement_Mapping*>::create(arena);
+				unit_mapping->lines.push_back( line_mapping);
 			}
 		}
 
@@ -3900,7 +3752,7 @@ bool debugger_start_process(
 		}
 		for (int i = 0; i < debugger->statement_mapping.size; i++) { // Add connection from upp-line to statements
 			auto& stat_mapping = debugger->statement_mapping[i];
-			dynamic_array_push_back(&stat_mapping.parent_line->statements, &stat_mapping);
+			stat_mapping.parent_line->statements.push_back(&stat_mapping);
 		}
 
 		// Add IR-Instruction to Statement mapping
@@ -3914,20 +3766,19 @@ bool debugger_start_process(
 			auto& ir_mapping = debugger->ir_instruction_mapping[i];
 			auto& ir_instr = ir_mapping.code_block->instructions[ir_mapping.instruction_index];
 			if (ir_instr.associated_statement != 0) {
-				int* map_index = hashtable_find_element(&statement_to_mapping_table, ir_instr.associated_statement);
-				if (map_index != 0) {
+				int* map_index = statement_to_mapping_table.find(ir_instr.associated_statement);
+				if (map_index != nullptr) {
 					ir_mapping.parent_statement = &debugger->statement_mapping[*map_index];
 				}
 			}
 
 			if (ir_mapping.parent_statement != 0) {
-				dynamic_array_push_back(&ir_mapping.parent_statement->ir_instructions, &ir_mapping);
+				ir_mapping.parent_statement->ir_instructions.push_back(&ir_mapping);
 			}
 		}
 
 		// Add C-Line to IR_Instruction mapping
-		dynamic_array_reset(&debugger->c_line_mapping);
-		dynamic_array_reserve(&debugger->c_line_mapping, c_translation->line_infos.size);
+        debugger->c_line_mapping.reset()->reserve(c_translation->line_infos.size);
 		for (int i = 0; i < c_translation->line_infos.size; i++)
 		{
 			auto line_info = c_translation->line_infos[i];
@@ -3938,46 +3789,46 @@ bool debugger_start_process(
 			line_map.range.end_virtual_address = 0;
 			line_map.parent_instruction = nullptr;
 
-			int* block_start_offset = hashtable_find_element(&debugger->ir_block_to_ir_instruction_mapping_start_index, line_info.ir_block);
+			int* block_start_offset = debugger->ir_block_to_ir_instruction_mapping_start_index.find(line_info.ir_block);
 			if (block_start_offset != 0) {
 				line_map.parent_instruction = &debugger->ir_instruction_mapping[*block_start_offset + line_info.instruction_index];
 			}
 
-			dynamic_array_push_back(&debugger->c_line_mapping, line_map);
+			debugger->c_line_mapping.push_back(line_map);
 		}
 		for (int i = 0; i < debugger->c_line_mapping.size; i++)
 		{
 			auto& line_mapping = debugger->c_line_mapping[i];
 			if (line_mapping.parent_instruction != 0) {
-				dynamic_array_push_back(&line_mapping.parent_instruction->c_lines, &line_mapping);
+				line_mapping.parent_instruction->c_lines.push_back(&line_mapping);
 			}
 		}
 
 		// Add IR_Function-Mapping
-		dynamic_array_reset(&debugger->ir_function_mapping);
-		dynamic_array_reserve(&debugger->ir_function_mapping, compilation_data->functions.size);
+		debugger->ir_function_mapping.reset()->reserve(compilation_data->functions.size);
 		for (int i = 0; i < compilation_data->functions.size; i++) {
 			Upp_Function* function = compilation_data->functions[i];
 			C_Function_Mapping mapping;
-			mapping.c_lines = dynamic_array_create<C_Line_Mapping*>();
-			mapping.name = string_create_static("");
+			mapping.c_lines = DynArray<C_Line_Mapping*>::create(arena);
+			mapping.name = string_make("");
 			mapping.virtual_address_start = 0;
 			mapping.virtual_address_end = 0;
 			mapping.function = function;
-			dynamic_array_push_back(&debugger->ir_function_mapping, mapping);
+			debugger->ir_function_mapping.push_back(mapping);
 		}
-		Hashtable<DynString, C_Function_Mapping*> c_function_name_to_ir_function_map =
-			hashtable_create_empty<DynString, C_Function_Mapping*>(debugger->ir_function_mapping.size, hash_string, string_equals);
-		SCOPE_EXIT(hashtable_destroy(&c_function_name_to_ir_function_map));
+
+		DynTable<String, C_Function_Mapping*> c_function_name_to_ir_function_map = DynTable<String, C_Function_Mapping*>::create(
+            scratch_arena, hash_string_pointer, string_equals_pointers, debugger->ir_function_mapping.size
+        );
 		for (int i = 0; i < debugger->ir_function_mapping.size; i++)
 		{
 			C_Function_Mapping* function_mapping = &debugger->ir_function_mapping[i];;
 			C_Translation translation;
 			translation.type = C_Translation_Type::FUNCTION;
 			translation.options.function = function_mapping->function;
-			DynString* c_function_name_opt = hashtable_find_element(&c_translation->name_mapping, translation);
+			String* c_function_name_opt = c_translation->name_mapping.find(translation);
 			if (c_function_name_opt != nullptr) {
-				bool success = hashtable_insert_element(&c_function_name_to_ir_function_map, *c_function_name_opt, function_mapping);
+				bool success = c_function_name_to_ir_function_map.try_insert(*c_function_name_opt, function_mapping);
 				assert(success, "Functions names should be guaranteed to be unique");
 			}
 		}
@@ -3988,7 +3839,7 @@ bool debugger_start_process(
 			auto& src_info = pdb_info->source_infos[i];
 			auto& fn_info = pdb_info->functions[src_info.function_index];
 
-			C_Function_Mapping** function_mapping_opt = hashtable_find_element(&c_function_name_to_ir_function_map, fn_info.name);
+			C_Function_Mapping** function_mapping_opt = c_function_name_to_ir_function_map.find(fn_info.name);
 			if (function_mapping_opt == nullptr) continue;
 			C_Function_Mapping* function_mapping = *function_mapping_opt;
 			function_mapping->name = fn_info.name;
@@ -4005,7 +3856,7 @@ bool debugger_start_process(
 				c_line_mapping.range.start_virtual_address = static_location_to_virtual_address(debugger, pdb_line_info.location);
 				c_line_mapping.range.end_virtual_address = c_line_mapping.range.start_virtual_address + pdb_line_info.length;
 
-				dynamic_array_push_back(&function_mapping->c_lines, &c_line_mapping);
+				function_mapping->c_lines.push_back(&c_line_mapping);
 			}
 		}
 
@@ -4018,7 +3869,7 @@ bool debugger_start_process(
 				PDB_Analysis::PDB_Code_Block_Info& block_info = debugger->pdb_info->block_infos[i];
 				for (int j = 0; j < block_info.variables.size; j++) {
 					const auto& variable_info = block_info.variables[j];
-					hashtable_insert_element(c_name_to_pdb_location_map, variable_info.name, variable_info.location);
+					c_name_to_pdb_location_map->insert(variable_info.name, variable_info.location);
 				}
 			}
 			// Add function parameters
@@ -4026,13 +3877,13 @@ bool debugger_start_process(
 				auto function_source_info = &debugger->pdb_info->source_infos[i];
 				for (int j = 0; j < function_source_info->parameter_infos.size; j++) {
 					const auto& param_info = function_source_info->parameter_infos[j];
-					hashtable_insert_element(c_name_to_pdb_location_map, param_info.name, param_info.location);
+					c_name_to_pdb_location_map->insert(param_info.name, param_info.location);
 				}
 			}
 			// Add globals 
 			for (int i = 0; i < debugger->pdb_info->global_infos.size; i++) {
 				auto global_info = &debugger->pdb_info->global_infos[i];
-				hashtable_insert_element(c_name_to_pdb_location_map, global_info->name, global_info->location);
+				c_name_to_pdb_location_map->insert(global_info->name, global_info->location);
 			}
 		}
 	}
@@ -4165,7 +4016,7 @@ void debugger_step_over_statement(Debugger* debugger, bool step_into)
 
 // Queries Local-Variables, Parameters or Globals by name
 Optional<PDB_Analysis::PDB_Location> debugger_query_named_upp_value(
-	Debugger* debugger, Assembly_Source_Information source_info, u64 instruction_pointer, DynString variable_name, Datatype** out_datatype)
+	Debugger* debugger, Assembly_Source_Information source_info, u64 instruction_pointer, String variable_name, Datatype** out_datatype)
 {
 	C_Translation translation;
 	translation.type = (C_Translation_Type)-1;
@@ -4189,7 +4040,7 @@ Optional<PDB_Analysis::PDB_Location> debugger_query_named_upp_value(
 			for (int i = 0; i < block->registers.size; i++) {
 				auto& reg = block->registers[i];
 				if (!reg.name.available) continue;
-				if (string_equals(reg.name.value, &variable_name)) {
+				if (string_equals(*reg.name.value.string, variable_name)) {
 					register_index = i;
 					break;
 				}
@@ -4214,7 +4065,7 @@ Optional<PDB_Analysis::PDB_Location> debugger_query_named_upp_value(
 		for (int i = 0; i < params.size; i++)
 		{
 			auto& param = params[i];
-			if (string_equals(param.name, &variable_name)) {
+			if (string_equals(*param.name.string, variable_name)) {
 				translation.type = C_Translation_Type::PARAMETER;
 				translation.options.parameter.function = source_info.upp_function;
 				translation.options.parameter.index = i;
@@ -4231,7 +4082,7 @@ Optional<PDB_Analysis::PDB_Location> debugger_query_named_upp_value(
 		{
 			auto& global = debugger->compilation_data->globals[i];
 			if (global->symbol == 0) continue;
-			if (string_equals(global->symbol->id, &variable_name)) {
+			if (string_equals(*global->symbol->id.string, variable_name)) {
 				translation.type = C_Translation_Type::GLOBAL;
 				translation.options.global_index = i;
 				*out_datatype = global->type;
@@ -4244,11 +4095,11 @@ Optional<PDB_Analysis::PDB_Location> debugger_query_named_upp_value(
 		return optional_make_failure<PDB_Analysis::PDB_Location>();
 	}
 
-	DynString* c_name_opt = hashtable_find_element(&c_generator_get_translation(debugger->compilation_data->c_generator)->name_mapping, translation);
+	String* c_name_opt =  debugger->compilation_data->c_program_translation->name_mapping.find(translation);
 	if (c_name_opt == nullptr) {
 		return optional_make_failure<PDB_Analysis::PDB_Location>();
 	}
-	PDB_Analysis::PDB_Location* location_opt = hashtable_find_element(&debugger->c_name_to_location_map, *c_name_opt);
+	PDB_Analysis::PDB_Location* location_opt = debugger->c_name_to_location_map.find(*c_name_opt);
 	if (location_opt == nullptr) {
 		return optional_make_failure<PDB_Analysis::PDB_Location>();
 	}
@@ -4256,18 +4107,18 @@ Optional<PDB_Analysis::PDB_Location> debugger_query_named_upp_value(
 }
 
 Debugger_Value_Read debugger_read_variable_value(
-	Debugger* debugger, DynString variable_name, Dynamic_Array<u8>* value_buffer, int stack_frame_start, int max_frame_depth)
+	Debugger* debugger, String variable_name, DynArray<u8>* value_buffer, int stack_frame_start, int max_frame_depth)
 {
 	Debugger_Value_Read result;
 	result.success = false;
-	result.error_msg = "";
+	result.error_msg = string_make("");
 	result.result_type = nullptr;
-	dynamic_array_reset(value_buffer);
+    value_buffer->reset();
 
 	// Find variable localtion
 	Array<Stack_Frame> stack_frames = debugger_get_stack_frames(debugger);
 	if (stack_frames.size == 0) {
-		result.error_msg = "Could not retrieve current stack";
+		result.error_msg = string_make("Could not retrieve current stack");
 		return result;
 	}
 
@@ -4288,7 +4139,7 @@ Debugger_Value_Read debugger_read_variable_value(
 	}
 
 	if (!value_query.available) {
-		result.error_msg = "Could not find value with this name!";
+		result.error_msg = string_make("Could not find value with this name!");
 		return result;
 	}
 	result.result_type = value_type;
@@ -4296,14 +4147,14 @@ Debugger_Value_Read debugger_read_variable_value(
 
 	// Try reading variable location
 	int read_size = value_type->memory_info.value.size;
-	dynamic_array_reserve(value_buffer, value_type->memory_info.value.size);
-	void* write_to_ptr = value_buffer->data;
+    value_buffer->reserve(value_type->memory_info.value.size);
+	void* write_to_ptr = value_buffer->buffer.data;
 
 	CONTEXT thread_context;
 	thread_context.ContextFlags = CONTEXT_ALL;
 	BOOL success = GetThreadContext(debugger->threads[debugger->main_thread_info_index].handle, &thread_context);
 	if (!success) {
-		result.error_msg = "Couldn't access thread context?!";
+		result.error_msg = string_make("Couldn't access thread context?!");
 		return result;
 	}
 
@@ -4374,12 +4225,12 @@ Debugger_Value_Read debugger_read_variable_value(
 
 	if (read_success) {
 		result.success = true;
-		result.error_msg = "";
+		result.error_msg = string_make("");
 		value_buffer->size = read_size;
 	}
 	else {
 		result.success = false;
-		result.error_msg = read_error_msg;
+		result.error_msg = string_make(read_error_msg);
 	}
 	return result;
 }
@@ -4399,8 +4250,8 @@ void debugger_wait_for_console_command(Debugger* debugger)
 		}
 
 		// Print current state
-		DynString input_line = dynstring_create();
-		SCOPE_EXIT(string_destroy(&input_line));
+        SCRATCH_ARENA_MAKE_SCOPED(&debugger->arena);
+		DynString input_line = dynstring_create(scratch_arena);
 		{
 			printf("rip=[0x%08llX] ", thread_context.Rip);
 
@@ -4408,18 +4259,17 @@ void debugger_wait_for_console_command(Debugger* debugger)
 			print_closest_symbol_name(debugger, symbol_info);
 
 			printf("\n> ");
-			if (string_fill_from_line(&input_line)) {
+			if (dynstring_read_line_from_console(&input_line)) {
 				return;
 			}
 		}
 
 		// Handle commands
-		Array<DynString> parts = string_split(input_line, ' ');
-		SCOPE_EXIT(string_split_destroy(parts));
+		Array<String> parts = string_split(input_line.to_string(), ' ', scratch_arena);
 		if (parts.size == 0) continue;
-		DynString command = parts[0];
+		String command = parts[0];
 
-		if (string_equals_cstring(&command, "?")) {
+		if (string_equals(command, string_make("?"))) {
 			printf("Commands:\n");
 			printf("    c  - continue until next debug-event\n");
 			printf("    s  - single step\n");
@@ -4433,18 +4283,18 @@ void debugger_wait_for_console_command(Debugger* debugger)
 			printf("    i  - show PDB-Infos (All functions in src)\n");
 			printf("    v  - Print variable information\n");
 		}
-		else if (string_equals_cstring(&command, "c") || string_equals_cstring(&command, "continue")) {
+		else if (string_equals(command, string_make("c")) || string_equals(command, string_make("continue"))) {
 			return;
 		}
-		else if (string_equals_cstring(&command, "s") || string_equals_cstring(&command, "step")) {
+		else if (string_equals(command, string_make("s")) || string_equals(command, string_make("step"))) {
 			debugger_single_step_thread(debugger, debugger->threads[debugger->main_thread_info_index].handle);
 			continue;
 		}
-		else if (string_equals_cstring(&command, "q") || string_equals_cstring(&command, "quit") || string_equals_cstring(&command, "exit")) {
+		else if (string_equals(command, string_make("q")) || string_equals(command, string_make("quit")) || string_equals(command, string_make("exit"))) {
 			debugger_reset(debugger);
 			return;
 		}
-		else if (string_equals_cstring(&command, "registers") || string_equals_cstring(&command, "r"))
+		else if (string_equals(command, string_make("registers")) || string_equals(command, string_make("r")))
 		{
 			auto& c = thread_context;
 			auto flag = [&](int bit_index)->int { return (thread_context.EFlags & (1 << bit_index)) == 0 ? 0 : 1; };
@@ -4458,22 +4308,20 @@ void debugger_wait_for_console_command(Debugger* debugger)
 			printf("    TF: %d, IF: %d, DF: %d, OF: %d, RF: %d\n", flag(8), flag(9), flag(10), flag(11), flag(16));
 			printf("    Carry, Parity, Auxillary-Carry, Zero, Sign, Trap, Interrupt-enabled, Direction, Overflow, Resume\n");
 		}
-		else if (string_equals_cstring(&command, "d") || string_equals_cstring(&command, "display"))
+		else if (string_equals(command, string_make("d")) || string_equals(command, string_make("display")))
 		{
-			auto& bytes = debugger->byte_buffer;
-
 			void* virtual_address = (void*)thread_context.Rip;
 			u64 byte_length = 32;
 			if (parts.size == 2 && debugger->pdb_info != nullptr)
 			{
-				DynString symbol_name = parts[1];
+				String symbol_name = parts[1];
 				auto pdb_info = debugger->pdb_info;
 
 				// Search in pdb for function with this name...
 				PDB_Analysis::PDB_Function* function = nullptr;
 				for (int i = 0; i < pdb_info->functions.size; i++) {
 					auto& fn = pdb_info->functions[i];
-					if (string_equals(&symbol_name, &fn.name)) {
+					if (string_equals(symbol_name, fn.name)) {
 						function = &fn;
 						break;
 					}
@@ -4496,10 +4344,11 @@ void debugger_wait_for_console_command(Debugger* debugger)
 				}
 			}
 
-			debugger_disassemble_bytes(debugger, (u64)virtual_address, (u32)byte_length);
-			debugger_print_last_disassembly(debugger, (u64)virtual_address, 2);
+            SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+			auto disassembly = debugger_disassemble_bytes(debugger, (u64)virtual_address, (u32)byte_length, scratch_arena);
+			assembly_print(disassembly, (u64)virtual_address, 2);
 		}
-		else if (string_equals_cstring(&command, "bp") || string_equals_cstring(&command, "ba"))  // Add breakpoint
+		else if (string_equals(command, string_make("bp")) || string_equals(command, string_make("ba")))  // Add breakpoint
 		{
 			if (parts.size != 2) {
 				printf("Add breakpoint command requires an argument\n");
@@ -4509,8 +4358,8 @@ void debugger_wait_for_console_command(Debugger* debugger)
 			auto param = parts[1];
 			bool is_address = false;
 			u64 function_address = 0;
-			if (param.size > 2 && (string_starts_with(param, "0x") || string_starts_with(param, "0X"))) {
-				Optional<i64> value = string_parse_i64_hex(string_create_substring_static(&param, 2, param.size));
+			if (param.size > 2 && (string_starts_with(param, string_make("0x")) || string_starts_with(param, string_make("0X")))) {
+				Optional<i64> value = string_parse_i64_hex(string_make_substring(param, 2, param.size));
 				if (!value.available) {
 					printf("Add breakpoint failed, couldn't parse hexadecimal value\n");
 					continue;
@@ -4556,14 +4405,14 @@ void debugger_wait_for_console_command(Debugger* debugger)
 				printf("Could not add breakpoint at [0x%08llX]\n", function_address);
 			}
 		}
-		else if (string_equals_cstring(&command, "bd") || string_equals_cstring(&command, "bc"))  // Delete breakpoint
+		else if (string_equals(command, string_make("bd")) || string_equals(command, string_make("bc")))  // Delete breakpoint
 		{
 			if (parts.size != 2) {
 				printf("Delete breakpoint command requires an argument (id)\n");
 				continue;
 			}
 
-			auto id_opt = string_parse_int(&parts[1]);
+			auto id_opt = string_parse_int(parts[1]);
 			if (!id_opt.available) {
 				printf("Delete breakpoint failed, could not parse argument\n");
 				continue;
@@ -4576,10 +4425,10 @@ void debugger_wait_for_console_command(Debugger* debugger)
 				continue;
 			}
 
-			dynamic_array_remove_ordered(&breakpoints, index);
+			breakpoints.remove_ordered(index);
 			printf("Removed breakpoint %d\n", index);
 		}
-		else if (string_equals_cstring(&command, "bl") || string_equals_cstring(&command, "breakpoint_list")) // List breakpoints
+		else if (string_equals(command, string_make("bl")) || string_equals(command, string_make("breakpoint_list"))) // List breakpoints
 		{
 			auto& breakpoints = debugger->address_breakpoints;
 			for (int i = 0; i < breakpoints.size; i++) {
@@ -4587,7 +4436,7 @@ void debugger_wait_for_console_command(Debugger* debugger)
 				printf("    #%2d, Address: [0x%08llX]\n", i, bp.address);
 			}
 		}
-		else if (string_equals_cstring(&command, "i"))
+		else if (string_equals(command, string_make("i")))
 		{
 			for (int i = 0; i < debugger->pdb_info->source_infos.size; i++) {
 				auto& src_info = debugger->pdb_info->source_infos[i];
@@ -4600,35 +4449,35 @@ void debugger_wait_for_console_command(Debugger* debugger)
 				);
 			}
 		}
-		else if (string_equals_cstring(&command, "v"))
+		else if (string_equals(command, string_make("v")))
 		{
 			if (parts.size != 2) {
 				printf("Variable command requires an argument");
 				continue;
 			}
 
-			DynString& variable_name = parts[1];
-			auto& byte_buffer = debugger->byte_buffer;
-			dynamic_array_reset(&byte_buffer);
+            SCRATCH_ARENA_MAKE_SCOPED(&debugger->arena);
+
+			String variable_name = parts[1];
+            DynArray<byte> byte_buffer = DynArray<byte>::create(scratch_arena);
 			Debugger_Value_Read value_read = debugger_read_variable_value(debugger, variable_name, &byte_buffer, 0, 3);
 			if (value_read.success)
 			{
-				DynString str = dynstring_create();
-				SCOPE_EXIT(string_destroy(&str));
+				DynString str = dynstring_create(scratch_arena);
 				// TODO: This needs to be able to read memory for e.g. arrays, or simple integer data
                 datatype_append_value_to_string(
-                    value_read.result_type, &str, byte_buffer.data,
+                    value_read.result_type, &str, byte_buffer.buffer.data,
                     datatype_value_format_multi_line(8, 5), 0, Memory_Source(nullptr), debugger->memory_source, debugger->compilation_data->type_system
                 );
                 string_style_remove_codes(&str);
-				printf("Variable-value: \"%s\"\n", str.characters);
+				printf("Variable-value: \"%.*s\"\n", str.size, str.characters);
 
 			}
 			else {
-				printf("%s\n", value_read.error_msg);
+				printf("%.*s\n", value_read.error_msg.size, value_read.error_msg.characters);
 			}
 		}
-		else if (string_equals_cstring(&command, "k") || string_equals_cstring(&command, "stack")) {
+		else if (string_equals(command, string_make("k")) || string_equals(command, string_make("stack"))) {
 			debugger_print_stack_frames(debugger);
 		}
 		else {
@@ -4639,7 +4488,9 @@ void debugger_wait_for_console_command(Debugger* debugger)
 
 Source_Breakpoint* debugger_add_source_breakpoint(Debugger* debugger, int line_index, Compilation_Unit* unit)
 {
-	for (int i = 0; i < debugger->source_breakpoints.size; i++) {
+    // Check if source-breakpoint already exists
+	for (int i = 0; i < debugger->source_breakpoints.size; i++) 
+    {
 		auto& bp = debugger->source_breakpoints[i];
 		if (bp->compilation_unit == unit && bp->line_index == line_index) {
 			bp->active_reference_count += 1;
@@ -4653,12 +4504,12 @@ Source_Breakpoint* debugger_add_source_breakpoint(Debugger* debugger, int line_i
 		}
 	}
 
-	Dynamic_Array<Machine_Code_Segment> segments = dynamic_array_create<Machine_Code_Segment>();
-	SCOPE_EXIT(dynamic_array_destroy(&segments));
+    SCRATCH_ARENA_MAKE_SCOPED(debugger->source_breakpoints.arena);
+	DynArray<Machine_Code_Segment> segments = DynArray<Machine_Code_Segment>::create(scratch_arena);
 	source_mapping_upp_line_to_machine_code_segments(debugger, unit, line_index, &segments);
 
-	Source_Breakpoint* breakpoint = new Source_Breakpoint;
-	breakpoint->addresses = dynamic_array_create<u64>();
+    Source_Breakpoint* breakpoint = debugger->arena.allocate<Source_Breakpoint>();
+	breakpoint->addresses = DynArray<u64>::create(&debugger->arena);
 	breakpoint->compilation_unit = unit;
 	breakpoint->line_index = line_index;
 	breakpoint->active_reference_count = 1;
@@ -4666,10 +4517,10 @@ Source_Breakpoint* debugger_add_source_breakpoint(Debugger* debugger, int line_i
 	for (int i = 0; i < segments.size; i++) {
 		auto& segment = segments[i];
 		bool success = debugger_add_address_breakpoint(debugger, segment.virtual_address_start);
-		dynamic_array_push_back(&breakpoint->addresses, segment.virtual_address_start);
+		breakpoint->addresses.push_back(segment.virtual_address_start);
 	}
 
-	dynamic_array_push_back(&debugger->source_breakpoints, breakpoint);
+	debugger->source_breakpoints.push_back(breakpoint);
 	return breakpoint;
 }
 
@@ -4695,12 +4546,14 @@ Array<Stack_Frame> debugger_get_stack_frames(Debugger* debugger)
 	}
 
 	do_stack_walk(debugger);
-	return dynamic_array_as_array(&debugger->stack_frames);
+	return debugger->stack_frames.as_array();
 }
 
 void debugger_print_line_translation(Debugger* debugger, Compilation_Unit* compilation_unit, int line_index, Compilation_Data* compilation_data)
 {
 	printf("Mapping info for line #%d of %s\n", line_index, compilation_unit->filepath.characters);
+
+    SCRATCH_ARENA_MAKE_SCOPED(&debugger->arena);
 
 	Compilation_Unit_Mapping* unit_map = nullptr;
 	for (int i = 0; i < debugger->compilation_unit_mapping.size; i++) {
@@ -4714,24 +4567,17 @@ void debugger_print_line_translation(Debugger* debugger, Compilation_Unit* compi
 	if (line_index < 0 || line_index >= unit_map->lines.size)  return;
 
 	// Prepare temporary values
-	auto c_source = c_generator_get_translation(compilation_data->c_generator)->source_code;
-	auto c_line_array = string_split(c_source, '\n');
-	SCOPE_EXIT(string_split_destroy(c_line_array));
+    auto c_source = compilation_data->c_program_translation->source_code;
+	auto c_line_array = string_split(c_source.to_string(), '\n', scratch_arena);
 
-	DynString tmp = dynstring_create(128);
-	SCOPE_EXIT(string_destroy(&tmp));
-
-	Dynamic_Array<byte> byte_buffer = dynamic_array_create<byte>(256);
-	Dynamic_Array<INSTRUX> disassembly = dynamic_array_create<INSTRUX>(16);
-	SCOPE_EXIT(dynamic_array_destroy(&byte_buffer));
-	SCOPE_EXIT(dynamic_array_destroy(&disassembly));
+	DynString tmp = dynstring_create(scratch_arena);
 
 	auto& line_map = unit_map->lines[line_index];
 	for (int i = 0; i < line_map.statements.size; i++)
 	{
 		auto stat_map = line_map.statements[i];
 		AST::base_append_to_string(upcast(stat_map->statement), &tmp);
-		printf("Statement #%d: %s\n", i, tmp.characters);
+		printf("Statement #%d: %.*s\n", i, tmp.size, tmp.characters);
 		dynstring_reset(&tmp);
 
 		for (int j = 0; j < stat_map->ir_instructions.size; j++)
@@ -4739,7 +4585,7 @@ void debugger_print_line_translation(Debugger* debugger, Compilation_Unit* compi
 			auto ir_instr_map = stat_map->ir_instructions[j];
 			ir_instruction_append_to_string(
 				&ir_instr_map->code_block->instructions[ir_instr_map->instruction_index], &tmp, 0, ir_instr_map->code_block, compilation_data);
-			printf("  IR-Instr: #%d: %s\n", j, tmp.characters);
+			printf("  IR-Instr: #%d: %.*s\n", j, tmp.size, tmp.characters);
 			dynstring_reset(&tmp);
 
 			for (int k = 0; k < ir_instr_map->c_lines.size; k++)
@@ -4750,15 +4596,15 @@ void debugger_print_line_translation(Debugger* debugger, Compilation_Unit* compi
 					printf("    INVALID line index: %d\n", c_index);
 					continue;
 				}
-				string_append_string(&tmp, &c_line_array[c_index]);
-				printf("    C-Line: #%d: %s\n", c_index, tmp.characters);
+				tmp.append(c_line_array[c_index]);
+				printf("    C-Line: #%d: %.*s\n", c_index, tmp.size, tmp.characters);
 				dynstring_reset(&tmp);
 
 				// Print disassembly
 				if (c_line->range.start_virtual_address != 0 && c_line->range.start_virtual_address < c_line->range.end_virtual_address) {
 					u64 size = c_line->range.end_virtual_address - c_line->range.start_virtual_address;
-					debugger_disassemble_bytes(debugger, c_line->range.start_virtual_address, size);
-					debugger_print_last_disassembly(debugger, c_line->range.start_virtual_address, 6);
+					auto disassembly = debugger_disassemble_bytes(debugger, c_line->range.start_virtual_address, size, scratch_arena);
+					assembly_print(disassembly, c_line->range.start_virtual_address, 6);
 				}
 			}
 		}

@@ -3,6 +3,7 @@
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../utility/utils.hpp"
 #include "../../datastructures/string.hpp"
+#include "../../utility/identifier_pool.hpp"
 #include "compiler_misc.hpp"
 #include "code_history.hpp"
 
@@ -23,7 +24,7 @@ struct Literal_Value
 {
     Literal_Type type;
     union {
-        DynString* string;
+        Identifier string;
         i64 int_val;
         f64 float_val;
         bool boolean;
@@ -121,14 +122,14 @@ namespace AST
     struct Get_Overload_Argument
     {
         Node base;
-        DynString* id;
+        Identifier id;
         Optional<Expression*> type_expr;
     };
 
     struct Symbol_Node
     {
         Node base;
-        DynString* name;
+        Identifier name;
         bool is_root_lookup; // If it is a ~
         bool is_definition;  // Symbol nodes are either definitions or lookups
     };
@@ -194,7 +195,7 @@ namespace AST
     struct Structure_Member_Node
     {
         Node base;
-        DynString* name;
+        Identifier name;
         bool is_expression; // Either expression or subtype_members
         union {
             Expression* expression;
@@ -231,7 +232,7 @@ namespace AST
             Path_Lookup* struct_type_lookup; // This should be a path to an already defined struct
             struct {
                 Extern_Compiler_Setting type;
-                DynString* value;
+                Identifier value;
             } setting;
         } options;
     };
@@ -250,7 +251,7 @@ namespace AST
         {
             Path_Lookup* path;
             struct {
-                DynString* relative_path;
+                Identifier relative_path;
                 Compilation_Unit* node_unit;
             } file_import;
         } options;
@@ -259,7 +260,7 @@ namespace AST
     struct Enum_Member_Node
     {
         Node base;
-        DynString* name;
+        Identifier name;
         Optional<Expression*> value;
     };
 
@@ -289,14 +290,14 @@ namespace AST
     struct Argument
     {
         Node base;
-        Optional<DynString*> name;
+        Optional<Identifier> name;
         Expression* value;
     };
 
     struct Subtype_Initializer
     {
         Node base;
-        Optional<DynString*> name; // If not available, supertype initializer
+        Optional<Identifier> name; // If not available, supertype initializer
         Call_Node* call_node;
     };
 
@@ -328,7 +329,7 @@ namespace AST
     {
         Node base;
         Array<Statement*> statements;
-        Optional<DynString*> block_id;
+        Optional<Identifier> block_id;
     };
 
     enum class Expression_Type
@@ -392,18 +393,18 @@ namespace AST
             } call;
             struct {
                 Expression* expr;
-                DynString* name;
+                Identifier name;
             } subtype_access;
             Expression* basetype_access_expr;
             Path_Lookup* path_lookup;
-            DynString* auto_enum;
+            Identifier auto_enum;
             Literal_Value literal_read;
             struct {
                 Expression* array_expr;
                 Expression* index_expr;
             } array_access;
             struct {
-                DynString* name;
+                Identifier name;
                 Expression* expr;
             } member_access;
             Function_Body inferred_function_body;
@@ -452,7 +453,7 @@ namespace AST
         Match_Case_Type case_type;
         union {
             Expression* expression;
-            DynString* subtype_name;
+            Identifier subtype_name;
         } options;
         Optional<Symbol_Node*> variable_definition; // case .IPv4 => v4
         Code_Block* block;
@@ -530,10 +531,10 @@ namespace AST
             struct {
                 Expression* condition;
                 Array<Match_Case*> cases;
-                Optional<DynString*> label;
+                Optional<Identifier> label;
             } match_statement;
-            Optional<DynString*> break_name;
-            Optional<DynString*> continue_name;
+            Optional<Identifier> break_name;
+            Optional<Identifier> continue_name;
             Optional<Expression*> return_value;
         } options;
     };

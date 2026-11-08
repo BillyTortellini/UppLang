@@ -6,266 +6,152 @@
 #include "ast.hpp"
 #include <string>
 
-const int BUNDLE_MAX_SIZE = 500;
-const int BUNDLE_MERGE_THRESHHOLD = 300; // If a bundle can merge with a neighbor bundle into another bundle with fewer than these lines, it will do so
+struct DynString;
 
 // PROTOTYPES
-void source_text_remove_invalid_whitespaces(DynString& text);
+void source_text_remove_invalid_whitespaces(DynString* text);
 
-void add_first_bundle_and_line(Source_Code* code)
+void add_first_line(Source_Code* code)
 {
-    Line_Bundle first_bundle;
-    first_bundle.first_line_index = 0;
-    first_bundle.lines = dynamic_array_create<Source_Line>();
-
     Source_Line first_line;
-    first_line.text = dynstring_create();
-    first_line.item_infos = dynamic_array_create<Editor_Info_Reference>();
-
-    dynamic_array_push_back(&first_bundle.lines, first_line);
-    dynamic_array_push_back(&code->bundles, first_bundle);
-    code->line_count = 1;
+    first_line.text = String_List::create_empty(code->free_list.upcast());
+    first_line.item_infos = List<Editor_Info_Reference>::create(code->free_list.upcast());
+    code->lines.push_back(first_line);
 }
 
 // Source Code
 Source_Code* source_code_create()
 {
     Source_Code* result = new Source_Code;
-    result->line_count = 0;
-    result->bundles = dynamic_array_create<Line_Bundle>();
-    result->block_id_range = dynamic_array_create<Block_ID_Range>();
-    result->symbol_table_ranges = dynamic_array_create<Symbol_Table_Range>();
-    result->root_table = nullptr;
-    add_first_bundle_and_line(result);
+    result->arena = Arena::create();
+    source_code_reset(result);
     return result;
 }
 
 Source_Code* source_code_copy(Source_Code* copy_from)
 {
-    Source_Code* result = new Source_Code;
-    *result = *copy_from;
-    result->line_count = copy_from->line_count;
-    result->bundles = dynamic_array_create_copy<Line_Bundle>(copy_from->bundles.data, copy_from->bundles.size);
-    for (int i = 0; i < result->bundles.size; i++) {
-        auto& bundle = result->bundles[i];
-        bundle.lines = dynamic_array_create_copy<Source_Line>(bundle.lines.data, bundle.lines.size);
-        for (int j = 0; j < bundle.lines.size; j++) {
-            auto& line = bundle.lines[j];
-            line.text = dynstring_copy(line.text);
-            line.item_infos = dynamic_array_create_copy(line.item_infos.data, line.item_infos.size);
+    SCRATCH_ARENA_MAKE_SCOPED(&copy_from->arena);
+    DynString tmp_string = DynString::create(scratch_arena);
+
+    Source_Code* result = source_code_create();
+    result->lines.reserve(copy_from->lines.size);
+
+    // Copy lines
+    for (int i = 0; i < copy_from->lines.size; i++)
+    {
+        Source_Line* other = &copy_from->lines[i];
+        source_code_insert_line(result, result->lines.size);
+        Source_Line* line = &result->lines[result->lines.size - 1];
+        line->text.set(tmp_string.reset()->append(other->text)->to_string());
+
+        auto node = other->item_infos.head;
+        while (node != nullptr) {
+            line->item_infos.append(node->value);
+            node = node->next;
         }
     }
 
-    result->symbol_table_ranges = dynamic_array_create_copy(copy_from->symbol_table_ranges.data, copy_from->symbol_table_ranges.size);
-    result->block_id_range = dynamic_array_create_copy(copy_from->block_id_range.data, copy_from->block_id_range.size);
+    // Copy Infos
+    result->symbol_table_ranges.append_array(copy_from->symbol_table_ranges.as_array());
+    result->block_id_range.append_array(copy_from->block_id_range.as_array());
+    result->root_table = copy_from->root_table;
 
     return result;
 }
 
-void source_line_destroy(Source_Line* line)
-{
-    dynamic_array_destroy(&line->item_infos);
-    string_destroy(&line->text);
-}
-
 void source_code_destroy(Source_Code* code)
 {
-    for (int i = 0; i < code->bundles.size; i++) {
-        auto& bundle = code->bundles[i];
-        dynamic_array_for_each(bundle.lines, source_line_destroy);
-        dynamic_array_destroy(&bundle.lines);
-    }
-    dynamic_array_destroy(&code->bundles);
-    dynamic_array_destroy(&code->symbol_table_ranges);
-    dynamic_array_destroy(&code->block_id_range);
-    code->line_count = 0;
+    code->arena.destroy();
     delete code;
 }
 
 void source_code_reset(Source_Code* code)
 {
-    for (int i = 0; i < code->bundles.size; i++) {
-        auto& bundle = code->bundles[i];
-        dynamic_array_for_each(bundle.lines, source_line_destroy);
-        dynamic_array_destroy(&bundle.lines);
-    }
-    dynamic_array_reset(&code->bundles);
+    code->arena.reset();
+    code->lines = DynArray<Source_Line>::create(&code->arena);
+    code->free_list = Free_List::create_with_info(
+        code->arena.upcast(),
+        math_maximum(sizeof(String_List_Node), sizeof(List_Node<Editor_Info_Reference>)),
+        math_maximum(alignof(String_List_Node), alignof(List_Node<Editor_Info_Reference>))
+    );
 
-    add_first_bundle_and_line(code);
+    code->block_id_range = DynArray<Block_ID_Range>::create(&code->arena);
+    code->symbol_table_ranges = DynArray<Symbol_Table_Range>::create(&code->arena);
+    code->root_table = nullptr;
+
+    add_first_line(code);
 }
 
-void source_code_print_bundles(Source_Code* code)
+int source_code_line_get_size(Source_Code* code, int line_index) {
+    if (line_index < 0 || line_index >= code->lines.size) return 0;
+    return code->lines[line_index].text.size;
+}
+
+void source_code_line_append_to_string(Source_Code* code, int line_index, DynString* append_to) {
+    if (line_index < 0 || line_index >= code->lines.size) return;
+    append_to->append(code->lines[line_index].text);
+}
+
+void source_code_line_get_items(Source_Code* code, int line_index, DynArray<Editor_Info_Reference>* append_to)
 {
-    printf("\nLines: %d, Bundles: %d\n------------------\n", code->line_count, code->bundles.size);
-    int line_start = 0;
-    for (int i = 0; i < code->bundles.size; i++) {
-        auto& bundle = code->bundles[i];
-        printf("Bundle %d: From/To %d-%d,  (#%d)\n", i, bundle.first_line_index, bundle.first_line_index + bundle.lines.size - 1, bundle.lines.size);
+    if (line_index < 0 || line_index >= code->lines.size) return;
+
+    auto info_list = &code->lines[line_index].item_infos;
+    append_to->reserve(append_to->size + info_list->element_count);
+    auto node = info_list->head;
+    while (node != nullptr) {
+        append_to->push_back(node->value);
+        node = node->next;
     }
 }
 
-// Finds the bundle which contains the line index
-int source_code_get_line_bundle_index(Source_Code* code, int line_index)
+void source_code_line_set_text(Source_Code* code, int line_index, String text)
 {
-    assert(line_index >= 0, "");
-
-    // Do linear search for now (Binary search possible, but I think it's only usefull after a few hundred lines...)
-    // Also last accessed lines could be cached, but this can be done in the future
-    for (int i = 0; i < code->bundles.size; i++)
-    {
-        auto& bundle = code->bundles[i];
-        if (line_index >= bundle.first_line_index && line_index < bundle.first_line_index + bundle.lines.size) {
-            return i;
-        }
-    }
-
-    // Otherwise we return the last code bundle
-    assert(line_index >= code->bundles[code->bundles.size - 1].first_line_index, "Must be true");
-    return code->bundles.size - 1;
+    if (line_index < 0 || line_index >= code->lines.size) return;
+    code->lines[line_index].text.set(text);
 }
 
-Source_Line* source_code_get_line(Source_Code* code, int line_index)
+void source_code_line_set_items(Source_Code* code, int line_index, Array<Editor_Info_Reference> editor_infos)
 {
-    int bundle_index = source_code_get_line_bundle_index(code, line_index);
-    auto& bundle = code->bundles[bundle_index];
-    return &bundle.lines[line_index - bundle.first_line_index];
+    if (line_index < 0 || line_index >= code->lines.size) return;
+
+    auto info_list = &code->lines[line_index].item_infos;
+    info_list->reset();
+    for (int i = 0; i < editor_infos.size; i++) {
+        auto& info = editor_infos[i];
+        info_list->append(info);
+    }
 }
 
-Source_Line* source_code_get_line(Source_Code* code, int line_index, int& nearby_bundle_index)
-{
-    if (line_index < 0 || line_index >= code->line_count) return nullptr;
-    if (nearby_bundle_index < 0) {
-        nearby_bundle_index = 0;
-    }
-    if (nearby_bundle_index >= code->bundles.size) {
-        nearby_bundle_index = code->bundles.size - 1;
-    }
-    Line_Bundle* bundle = &code->bundles[nearby_bundle_index];
-    while (bundle->first_line_index > line_index) {
-        nearby_bundle_index -= 1;
-        bundle = &code->bundles[nearby_bundle_index];
-    }
-    while (bundle->first_line_index + bundle->lines.size <= line_index) {
-        nearby_bundle_index += 1;
-        bundle = &code->bundles[nearby_bundle_index];
-    }
-    return &bundle->lines[line_index - bundle->first_line_index];
+List<Editor_Info_Reference>* source_code_get_line_items(Source_Code* code, int line_index) {
+    return &code->lines[line_index].item_infos;
 }
 
-Source_Line* source_code_insert_line(Source_Code* code, int new_line_index)
+void source_code_insert_line(Source_Code* code, int new_line_index)
 {
-    int bundle_index = source_code_get_line_bundle_index(code, new_line_index);
-    Line_Bundle* bundle = &code->bundles[bundle_index];
-
-    // Split bundle if max size is exceeded
-    if (bundle->lines.size > BUNDLE_MAX_SIZE)
-    {
-        int new_line_count = BUNDLE_MAX_SIZE / 2;
-
-        Line_Bundle new_bundle;
-        new_bundle.first_line_index = bundle->first_line_index + new_line_count;
-        new_bundle.lines = dynamic_array_create<Source_Line>(new_line_count);
-
-        // Copy lines into new bundle
-        for (int i = new_line_count; i < bundle->lines.size; i++) {
-            dynamic_array_push_back(&new_bundle.lines, bundle->lines[i]);
-        }
-        dynamic_array_rollback_to_size(&bundle->lines, new_line_count);
-
-        // Insert new bundle
-        dynamic_array_insert_ordered(&code->bundles, new_bundle, bundle_index + 1);
-        // Refresh pointer after insertion
-        bundle = &code->bundles[bundle_index];
-
-        // Check in which bundle we need to insert the index
-        if (new_line_index >= bundle->first_line_index + bundle->lines.size) {
-            bundle_index = bundle_index + 1;
-            bundle = &code->bundles[bundle_index];
-        }
-    }
-
-    // Add new line to bundle
-    {
-        int index_in_bundle = new_line_index - bundle->first_line_index;
-        assert(new_line_index >= bundle->first_line_index, "Should be the case");
-        assert(index_in_bundle <= bundle->lines.size, "");
-
-        Source_Line line;
-        line.text = dynstring_create();
-        line.item_infos = dynamic_array_create<Editor_Info_Reference>();
-        dynamic_array_insert_ordered(&bundle->lines, line, index_in_bundle);
-    }
-
-    // Update following bundles line start index
-    for (int i = bundle_index + 1; i < code->bundles.size; i++) {
-        code->bundles[i].first_line_index += 1;
-    }
-    code->line_count += 1;
-
-    return &bundle->lines[new_line_index - bundle->first_line_index];
+    Source_Line new_line;
+    new_line.item_infos = List<Editor_Info_Reference>::create(code->free_list.upcast());
+    new_line.text = String_List::create_empty(code->free_list.upcast());
+    code->lines.insert_ordered(new_line, new_line_index);
 }
 
 void source_code_remove_line(Source_Code* code, int line_index)
 {
-    int bundle_index = source_code_get_line_bundle_index(code, line_index);
-    Line_Bundle* bundle = &code->bundles[bundle_index];
-
+    Source_Line* line = &code->lines[line_index];
+    line->text.deallocate();
+    line->item_infos.deallocate();
     // Don't remove line if only one line exists
-    if (code->line_count <= 1) {
-        auto& line = code->bundles[0].lines[0];
-        dynstring_reset(&line.text);
-        return;
-    }
-
-    // Remove line from bundle
-    {
-        Source_Line* line = &bundle->lines[line_index - bundle->first_line_index];
-        source_line_destroy(line);
-        dynamic_array_remove_ordered(&bundle->lines, line_index - bundle->first_line_index);
-    }
-
-    // Update following bundles line start index
-    for (int i = bundle_index + 1; i < code->bundles.size; i++) {
-        code->bundles[i].first_line_index -= 1;
-    }
-    code->line_count -= 1;
-
-    if (bundle->lines.size == 0)
-    {
-        // This means that the bundle should just be deleted, as merging was not possible previously
-        dynamic_array_destroy(&bundle->lines);
-        dynamic_array_remove_ordered(&code->bundles, bundle_index);
-        return;
-    }
-    else if (bundle->lines.size < BUNDLE_MERGE_THRESHHOLD)
-    {
-        // Check if merging with previous/next bundle is possible
-        if (bundle_index > 0 && code->bundles[bundle_index - 1].lines.size + bundle->lines.size < BUNDLE_MERGE_THRESHHOLD) {
-            // Update current bundle so that we always merge with next bundle
-            bundle_index = bundle_index - 1;
-            bundle = &code->bundles[bundle_index];
-        }
-        else if (bundle_index + 1 < code->bundles.size && code->bundles[bundle_index + 1].lines.size + bundle->lines.size < BUNDLE_MERGE_THRESHHOLD) {
-            // Merge with next bundle
-        }
-        else {
-            // Exit if merge not possible
-            return;
-        }
-
-        // Add lines from next bundle to our bundle
-        Line_Bundle* next_bundle = &code->bundles[bundle_index + 1];
-        for (int i = 0; i < next_bundle->lines.size; i++) {
-            dynamic_array_push_back(&bundle->lines, next_bundle->lines[i]);
-        }
-        dynamic_array_destroy(&next_bundle->lines);
-        dynamic_array_swap_remove(&code->bundles, bundle_index + 1);
+    if (code->lines.size > 1) {
+        code->lines.remove_ordered(line_index);
     }
 }
 
 // Loading/Writing from file
-void source_code_fill_from_string(Source_Code* code, DynString text)
+void source_code_fill_from_string(Source_Code* code, String text)
 {
+    SCRATCH_ARENA_MAKE_SCOPED(&code->arena);
+    DynString tmp_string = DynString::create(scratch_arena);
+
     // Reset
     source_code_reset(code);
 
@@ -284,61 +170,61 @@ void source_code_fill_from_string(Source_Code* code, DynString text)
             index += 1; // Skip \n
         }
 
-        Source_Line* line = source_code_insert_line(code, code->line_count);
-        DynString substring = string_create_substring_static(&text, line_start_index, line_end_index);
+        // Turn \t into spaces
+        String line_substring = string_make_substring(text, line_start_index, line_end_index);
+        tmp_string.reset();
         int sub_index = 0;
-        while (sub_index < substring.size && substring[sub_index] == '\t') {
-            line->text.append("    ");
+        while (sub_index < line_substring.size && line_substring[sub_index] == '\t') {
+            tmp_string.append("    ");
             sub_index += 1;
         }
-        substring = string_create_substring_static(&substring, sub_index, substring.size);
-        
-        string_append_string(&line->text, &substring);
-        source_text_remove_invalid_whitespaces(line->text);
+        tmp_string.append(string_make_substring(line_substring, sub_index, line_substring.size));
+        source_text_remove_invalid_whitespaces(&tmp_string);
+
+        source_code_insert_line(code, code->lines.size);
+        Source_Line* line = &code->lines[code->lines.size - 1];
+        line->text.set(tmp_string.to_string());
     }
 
     // Because we always start with an empty line after reset, we want to remove it if other lines were added
-    if (code->line_count > 0) {
+    if (code->lines.size > 0) {
         source_code_remove_line(code, 0);
     }
 }
 
 void source_code_append_to_string(Source_Code* code, DynString* text) 
 {
-    for (int i = 0; i < code->bundles.size; i++)
+    for (int i = 0; i < code->lines.size; i++)
     {
-        auto& bundle = code->bundles[i];
-        for (int j = 0; j < bundle.lines.size; j++) {
-            Source_Line& line = bundle.lines[j];
-            string_append_string(text, &line.text);
-            dynstring_append_formated(text, "\n");
-        }
+        Source_Line* line = &code->lines[i];
+        text->append(line->text)->append("\n");
     }
 }
 
-Source_Code* source_code_load_from_file(DynString filepath)
+Source_Code* source_code_load_from_file(String filepath)
 {
     SCRATCH_ARENA_MAKE_SCOPED(nullptr);
-	Optional<DynString> file_content = file_io_load_text_file(filepath, scratch_arena);
-	if (!file_content.available) {
+    DynString file_content = DynString::create(scratch_arena);
+	bool file_loaded = file_io_load_text_file(filepath, &file_content);
+	if (!file_loaded) {
 	    return nullptr;
 	}
 
 	Source_Code* source_code = source_code_create();
-	source_code_fill_from_string(source_code, file_content.value);
+	source_code_fill_from_string(source_code, file_content.to_string());
 	return source_code;
 }
 
 // Utils
-void source_text_remove_invalid_whitespaces(DynString& text)
+void source_text_remove_invalid_whitespaces(DynString* text)
 {
     int index = 0;
-    while (index < text.size)
+    while (index < text->size)
     {
-        char curr = text[index];
+        char curr = (*text)[index];
         // Remove control characters from line, like \n, \t, \r and others
         if (curr < ' '){
-            string_remove_character(&text, index);
+            dynstring_remove_character(text, index);
         }
         else {
             index += 1;
@@ -356,7 +242,7 @@ Text_Index text_index_make(int line, int character) {
 Text_Index text_index_make_line_end(Source_Code* code, int line) {
     Text_Index index;
     index.line = line;
-    index.character = (line < 0 || line >= code->line_count) ? 0 : source_code_get_line(code, line)->text.size;
+    index.character = (line < 0 || line >= code->lines.size) ? 0 : source_code_line_get_size(code, line);
     return index;
 }
 
@@ -378,4 +264,6 @@ bool text_range_contains(Text_Range range, Text_Index index) {
     return text_index_in_order(range.start, index) && text_index_in_order(index, range.end);
 }
 
-
+int Source_Code::line_count() {
+    return lines.size;
+}

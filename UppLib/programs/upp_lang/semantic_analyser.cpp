@@ -23,7 +23,7 @@ bool PRINT_DEPENDENCIES = false;
 bool PRINT_TIMING = false;
 
 // PROTOTYPES
-Upp_Function* upp_function_create_empty(Call_Signature* signature, DynString* name, Compilation_Data* compilation_data);
+Upp_Function* upp_function_create_empty(Call_Signature* signature, Identifier name, Compilation_Data* compilation_data);
 Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expression, Expression_Context context, Semantic_Context* semantic_context);
 Datatype* semantic_analyser_analyse_expression_value(
 	AST::Expression* expression, Expression_Context context, Semantic_Context* semantic_context, bool allow_nothing = false, bool allow_pattern = false);
@@ -63,7 +63,7 @@ void analyse_custom_operator_node(AST::Definition_Custom_Operator* custom_operat
 Call_Info call_info_make_with_empty_arguments(Call_Origin origin, Arena* arena);
 Call_Origin call_origin_make(Poly_Header* poly_header);
 void analyse_function_body(Upp_Function* function, Semantic_Context* semantic_context, const Function_Body& body, Symbol_Table* parameter_table);
-Optional<Upp_Constant> query_default_value(Semantic_Context* semantic_context, DynString* name, Datatype* datatype, Upp_Function* function = nullptr);
+Optional<Upp_Constant> query_default_value(Semantic_Context* semantic_context, Identifier name, Datatype* datatype, Upp_Function* function = nullptr);
 bool semantic_context_wait_for_workload(Semantic_Context* context, Workload_Base* workload);
 Datatype* analyse_variable_definition(
 	Optional<AST::Expression*> datatype_expr, Optional<AST::Expression*> initial_value_expr,
@@ -180,7 +180,7 @@ Analysis_Info* pass_get_base_info(Analysis_Pass* pass, AST::Node* node, Info_Que
     key.pass = pass;
     key.base = node;
     auto& info_mapping = compilation_data->ast_to_info_mapping;
-	DynTable_Query_Result query_result = info_mapping.query(key);
+	auto query_result = info_mapping.query(key);
 
     switch (query)
     {
@@ -193,7 +193,7 @@ Analysis_Info* pass_get_base_info(Analysis_Pass* pass, AST::Node* node, Info_Que
 	{
         // Check if already there
 		if (query_result.value_is_in_table) {
-			return *info_mapping.query_to_value(query_result);
+			return *query_result.get_value_pointer();
 		}
 		break;
     }
@@ -328,7 +328,7 @@ void log_semantic_error(Semantic_Context* semantic_context, const char* msg, AST
 	if (semantic_context->error_logging_enabled) 
 	{
 		compilation_data_add_code_error_code_section(
-			semantic_context->compilation_data, msg, node, node_section
+			semantic_context->compilation_data, string_make(msg), node, node_section
 		);
 	}
 	semantic_context_raise_error_flag(false, semantic_context);
@@ -371,8 +371,8 @@ void log_error_info_argument_count(Semantic_Context* semantic_context, int given
     add_error_info_to_last_error(semantic_context, info);
 }
 
-void log_error_info_id(Semantic_Context* semantic_context, DynString* id) {
-    assert(id != 0, "");
+void log_error_info_id(Semantic_Context* semantic_context, Identifier id) {
+    assert(id.string != 0, "");
     Error_Information info = error_information_make_empty(Error_Information_Type::ID);
     info.options.id = id;
     add_error_info_to_last_error(semantic_context, info);
@@ -442,14 +442,14 @@ void log_error_info_cycle_workload(Semantic_Context* context, Workload_Base* wor
 
 
 // Upp-Function
-Upp_Function* upp_function_create_empty(Call_Signature* signature, DynString* name, Compilation_Data* compilation_data)
+Upp_Function* upp_function_create_empty(Call_Signature* signature, Identifier name, Compilation_Data* compilation_data)
 {
 	Upp_Function* function = compilation_data->arena.allocate<Upp_Function>();
 	memory_zero(function);
 	function->function_index = compilation_data->functions.size;
 	function->signature = signature;
 	function->body_node.available = false;
-	function->name = name == nullptr ? compilation_data->identifier_pool.predefined_ids.lambda_function : name;
+	function->name = name.string == nullptr ? compilation_data->predefined_ids.lambda_function : name;
 	function->poly_type = Poly_Type::NORMAL;
 	function->origin.type = Function_Origin_Type::BUILT_IN;
 	function->is_extern = false;
@@ -540,7 +540,7 @@ void add_struct_members_empty_recursive(
             // Check other members
             for (int j = 0; j < i; j++) {
                 auto other = member_nodes[j];
-                if (other->name == member_node->name) {
+                if (other->name.equals(member_node->name)) {
                     log_semantic_error(
 						semantic_context, 
 						"Struct member name is already defined in previous member", 
@@ -552,7 +552,7 @@ void add_struct_members_empty_recursive(
             // Check struct params
             for (int j = 0; j < struct_signature->parameters.size; j++) {
                 auto param = struct_signature->parameters[j];
-                if (param->symbol->name == member_node->name) {
+                if (param->symbol->name.equals(member_node->name)) {
                     log_semantic_error(
 						semantic_context, "Struct member name is already defined as struct parameter name", 
 						upcast(member_node), Node_Section::IDENTIFIER
@@ -575,7 +575,7 @@ void datatype_struct_set_poly_infos(Datatype_Struct* structure, bool contains_pa
 Upp_Struct* upp_struct_create_empty(AST::Definition_Struct* struct_node, Poly_Type poly_type, Semantic_Context* semantic_context, bool log_hierarchy_errors)
 {
 	auto compilation_data = semantic_context->compilation_data;
-	auto& ids = compilation_data->identifier_pool.predefined_ids;
+	auto& ids = compilation_data->predefined_ids;
 	auto type_system = compilation_data->type_system;
 
 	Datatype_Struct* structure = type_system_make_struct_empty(
@@ -1131,8 +1131,7 @@ Comptime_Result expression_calculate_comptime_value_internal_no_cast(AST::Expres
 				}
 
 				Upp_String* result_string = arena.allocate<Upp_String>();
-				result_string->data = result.value.name->characters;
-				result_string->size = result.value.name->size;
+				*result_string = upp_string_from_id(result.value.name);
 				return comptime_result_make_available(result_string, result_datatype);
 			}
 		}
@@ -1432,7 +1431,7 @@ void call_info_set_parameter_to_expression(Call_Info* call_info, int param_index
 
 	auto& arg_info = call_info->argument_infos[argument_index];
 	arg_info.expression = expression;
-	arg_info.name = optional_make_failure<DynString*>();
+	arg_info.name = optional_make_failure<Identifier>();
 	arg_info.parameter_index = param_index;
 }
 
@@ -2111,10 +2110,9 @@ void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* co
 	memory_set_bytes(&time_per_workload_type[0], sizeof(double) * (size_t)Analysis_Workload_Type::MAX_ENUM_VALUE, 0);
 	double last_timestamp = timer_current_time_in_seconds();
 
-	Arena scratch_arena = Arena::create(0);
-	SCOPE_EXIT(scratch_arena.destroy());
+	SCRATCH_ARENA_MAKE_SCOPED(nullptr);
 	Semantic_Context error_logging_context = semantic_context_make(
-		compilation_data, nullptr, nullptr, Symbol_Access_Level::GLOBAL, nullptr, &scratch_arena
+		compilation_data, nullptr, nullptr, Symbol_Access_Level::GLOBAL, nullptr, scratch_arena
 	);
 	
 	auto& all_workloads = executer->all_workloads;
@@ -2126,9 +2124,9 @@ void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* co
 		// Print workloads and dependencies
 		if (PRINT_DEPENDENCIES)
 		{
-			DynString tmp = dynstring_create(256);
-			SCOPE_EXIT(string_destroy(&tmp));
-			dynstring_append_formated(&tmp, "\n\n--------------------\nWorkload Execution Round %d\n---------------------\n", round_no);
+			ARENA_MAKE_SCOPED_CHECKPOINT(scratch_arena)
+			DynString tmp = dynstring_create(scratch_arena);
+			tmp.reset()->append_formated("\n\n--------------------\nWorkload Execution Round %d\n---------------------\n", round_no);
 			for (int i = 0; i < executer->runnable_workloads.size; i++)
 			{
 				auto workload = executer->runnable_workloads[i];
@@ -2193,7 +2191,7 @@ void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* co
 
 			}
 
-			logg("%s", tmp.characters);
+			logg("%s", tmp.to_cstring());
 		}
 
 		// Execute runnable workloads
@@ -2209,10 +2207,10 @@ void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* co
 			executer->progress_was_made = true;
 
 			if (PRINT_DEPENDENCIES) {
-				DynString tmp = dynstring_create(128);
+				ARENA_MAKE_SCOPED_CHECKPOINT(scratch_arena);
+				DynString tmp = dynstring_create(scratch_arena);
 				analysis_workload_append_to_string(workload, &tmp);
 				logg("Executing workload: %s\n", tmp.characters);
-				string_destroy(&tmp);
 			}
 
 			// TIMING
@@ -2478,12 +2476,13 @@ bool workload_executer_switch_to_workload(Workload_Executer* executer, Workload_
 	bool result = fiber_pool_switch_to_handel(workload->fiber_handle);
 	scratch_arena_set_arenas(current_pair);
 
-	if (PRINT_DEPENDENCIES) {
-		auto tmp = dynstring_create(1);
+	if (PRINT_DEPENDENCIES) 
+	{
+		SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+		DynString tmp = dynstring_create(scratch_arena);
 		analysis_workload_append_to_string(workload, &tmp);
 		if (workload->dependencies.element_count == 0) {
-			SCOPE_EXIT(string_destroy(&tmp));
-			logg("FINISHED: %s\n", tmp.characters);
+			logg("FINISHED: %s\n", tmp.to_cstring());
 		}
 		else
 		{
@@ -2499,7 +2498,7 @@ bool workload_executer_switch_to_workload(Workload_Executer* executer, Workload_
 				analysis_workload_append_to_string(dependency, &tmp);
 				dynstring_append_formated(&tmp, "\n");
 			}
-			logg("WAITING: %s\n", tmp.characters);
+			logg("WAITING: %s\n", tmp.to_cstring());
 		}
 	}
 
@@ -2541,54 +2540,54 @@ void analysis_workload_append_to_string(Workload_Base* workload, DynString* stri
 	{
 	case Analysis_Workload_Type::MODULE_ANALYSIS: {
 		auto module = downcast<Workload_Module_Analysis>(workload);
-		string_append(string, "Module analysis");
+		dynstring_append(string, "Module analysis");
 		break;
 	}
 	case Analysis_Workload_Type::CUSTOM_OPERATORS: {
 		auto change = downcast<Workload_Custom_Operators>(workload);
-		string_append(string, "Custom_Operator Datatypes");
+		dynstring_append(string, "Custom_Operator Datatypes");
 		break;
 	}
 	case Analysis_Workload_Type::ENUM: {
 		auto enumeration = downcast<Workload_Enum>(workload);
-		dynstring_append_formated(string, "Enum: %s", enumeration->node->symbol->name->characters);
+		string->append("Enum: ")->append(enumeration->node->symbol->name.string);
 		break;
 	}
 	case Analysis_Workload_Type::EXTERN_IMPORT: {
-		string_append(string, "Extern-Import");
+		dynstring_append(string, "Extern-Import");
 		break;
 	}
 	case Analysis_Workload_Type::FAST_CALL: 
 	{
 		auto fast_call = downcast<Workload_Fast_Call>(workload);
-		dynstring_append_formated(string, "Fast_Call %s", fast_call->symbol->id->characters);
+		string->append("Fast call ")->append(fast_call->symbol->id.string);
 		break;
 	}
 	case Analysis_Workload_Type::GLOBAL_OR_COMPTIME_VALUE: 
 	{
 		auto def = downcast<Workload_Global>(workload);
-		dynstring_append_formated(string, "Global/Comptime %s", def->symbol->id->characters);
+		string->append("Global/Comptime ")->append(def->symbol->id.string);
 		break;
 	}
 	case Analysis_Workload_Type::FUNCTION_BODY: {
 		Symbol* symbol = 0;
 		auto function = downcast<Workload_Function_Body>(workload)->function;
-		dynstring_append_formated(string, "Body \"%s\"", function->name->characters);
+		string->append("Body \"")->append(function->name.string)->append("\"");
 		break;
 	}
 	case Analysis_Workload_Type::FUNCTION_HEADER: {
 		auto function = downcast<Workload_Function_Header>(workload)->function;
-		dynstring_append_formated(string, "Header \"%s\"", function->name->characters);
+		string->append("Header \"")->append(function->name.string)->append("\"");
 		break;
 	}
 	case Analysis_Workload_Type::STRUCT_BODY: {
-		auto struct_id = downcast<Workload_Structure_Body>(workload)->upp_struct->datatype->name->characters;
-		dynstring_append_formated(string, "Struct-Analysis \"%s\"", struct_id);
+		auto struct_id = downcast<Workload_Structure_Body>(workload)->upp_struct->datatype->name;
+		string->append("Struct-Analysis \"")->append(struct_id.string)->append("\"");
 		break;
 	}
 	case Analysis_Workload_Type::STRUCT_HEADER: {
-		auto struct_id = downcast<Workload_Structure_Header>(workload)->upp_struct->datatype->name->characters;
-		dynstring_append_formated(string, "Struct-Analysis \"%s\"", struct_id);
+		auto struct_id = downcast<Workload_Structure_Header>(workload)->upp_struct->datatype->name;
+		string->append("Struct-Analysis \"")->append(struct_id.string)->append("\"");
 		break;
 	}
 	default: panic("");
@@ -2635,7 +2634,7 @@ void semantic_analyser_finish_analysis(Compilation_Data* compilation_data)
 {
 	// Finish semantic-analysis
 	auto& type_system = compilation_data->type_system;
-	auto& ids = compilation_data->identifier_pool.predefined_ids;
+	auto& ids = compilation_data->predefined_ids;
 
 	Arena arena = Arena::create();
 	SCOPE_EXIT(arena.destroy());
@@ -2953,7 +2952,7 @@ bool pattern_matcher_match_types(Pattern_Matcher& result, Datatype* type_a, Data
 		{
 			auto& ap = a->parameters[i];
 			auto& bp = b->parameters[i];
-			if (ap.name != bp.name) {
+			if (!ap.name.equals(bp.name)) {
 				result.success = false;
 				return false;
 			}
@@ -3334,7 +3333,7 @@ Call_Origin call_origin_make_slice_initializer(Datatype_Slice* slice_type, Compi
 {
 	if (slice_type->slice_initializer_signature_cached == nullptr) 
 	{
-		auto& ids = compilation_data->identifier_pool.predefined_ids;
+		auto& ids = compilation_data->predefined_ids;
 		Call_Signature* signature = call_signature_create_empty();
 		call_signature_add_parameter(signature, ids.data, slice_type->data_member.datatype, true, false, false);
 		call_signature_add_parameter(signature, ids.size, slice_type->size_member.datatype, true, false, false);
@@ -3620,7 +3619,7 @@ void arguments_match_to_parameters(Call_Info& call_info, Semantic_Context* seman
 			// Search parameters for name
 			for (int j = 0; j < params.size; j++) {
 				auto& param = params[j];
-				if (param.name == arg.name.value) {
+				if (param.name.equals(arg.name.value)) {
 					param_index = j;
 					break;
 				}
@@ -4240,7 +4239,7 @@ bool equals_poly_instance(Poly_Instance** ap, Poly_Instance** bp)
 struct Parameter_Symbol_Lookup
 {
 	int parameter_index;
-	DynString* lookup_id;
+	Identifier lookup_id;
 	AST::Symbol_Node* node;
 };
 
@@ -4391,7 +4390,7 @@ void analyse_parameter_type_and_value(Call_Parameter& parameter, AST::Parameter*
 
 // Defines all necessary symbols in symbol-table, and looks for polymorphism
 Poly_Header* poly_header_analyse(
-	AST::Signature* signature_node, Symbol_Table* symbol_table, DynString* name, Semantic_Context* semantic_context,
+	AST::Signature* signature_node, Symbol_Table* symbol_table, Identifier name, Semantic_Context* semantic_context,
 	Upp_Function* upp_function = nullptr, Workload_Structure_Header* poly_struct = nullptr)
 {
 	auto type_system = semantic_context->compilation_data->type_system;
@@ -4420,7 +4419,7 @@ Poly_Header* poly_header_analyse(
 	header.param_infos = DynArray<Poly_Parameter_Info>::create(arena);
 	header.signature = call_signature_create_empty();
 	header.signature->return_type_index = return_type_index;
-	assert(name != nullptr, "Name should be available for polymorhphic functions/structs");
+	assert(name.string != nullptr, "Name should be available for polymorhphic functions/structs");
 	if (poly_struct != nullptr) {
 		header.is_function = false;
 		header.origin.upp_struct = poly_struct->upp_struct;
@@ -5832,16 +5831,16 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 
 				// Replace filename in path with import string (All imports are currently relative)
 				path.append(import_node->options.file_import.node_unit->filepath);
-				Optional<int> last_pos = string_find_character_index_reverse(&path, '/', path.size - 1);
+				Optional<int> last_pos = string_find_character_index_reverse(path.to_string(), '/', path.size - 1);
 				if (last_pos.available) {
 				    dynstring_truncate(&path, last_pos.value + 1);
 				}
 				else {
 				    dynstring_reset(&path);
 				}
-				string_append_string(&path, import_node->options.file_import.relative_path);
+				path.append(import_node->options.file_import.relative_path.string);
 				filepath_relative_to_absolute_path(&path);
-				imported_unit = compilation_data_add_compilation_unit_unique(compilation_data, path, true, true);
+				imported_unit = compilation_data_add_compilation_unit_unique(compilation_data, path.to_string(), true, true);
 			}
 
 			if (imported_unit == nullptr)
@@ -5931,20 +5930,20 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 				break;
 			}
 
-			Dynamic_Array<DynString*>& values = semantic_context->compilation_data->extern_sources.compiler_settings[(int)extern_import->options.setting.type];
-			DynString* id = extern_import->options.setting.value;
+			DynArray<Identifier>& values = semantic_context->compilation_data->extern_sources.compiler_settings[(int)extern_import->options.setting.type];
+			Identifier id = extern_import->options.setting.value;
 
 			// Check if unique
 			bool found = false;
 			for (int i = 0; i < values.size; i++) {
-				if (values[i] == id) {
+				if (values[i].equals(id)) {
 					found = true;
 					break;
 				}
 			}
 
 			if (!found) {
-				dynamic_array_push_back(&values, id);
+				values.push_back(id);
 			}
 			break;
 		}
@@ -5957,7 +5956,7 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 	{
 		AST::Definition_Custom_Operator* custom_op_node = &definition->options.custom_operator;
 		Symbol_Table* symbol_table = semantic_context->current_symbol_table;
-		auto& ids = semantic_context->compilation_data->identifier_pool.predefined_ids;
+		auto& ids = semantic_context->compilation_data->predefined_ids;
 
 		// Create new workload for custom-operator
 		if (!semantic_context->can_create_toplevel_items) {
@@ -6168,7 +6167,7 @@ void toplevel_content_resolve_imports(Toplevel_Content& toplevel_content, Semant
 			Symbol* alias_symbol = nullptr;
 			if (import_node->alias_name.available) 
 			{
-				if (path->parts.size == 1 && path->last()->name == import_node->alias_name.value->name) 
+				if (path->parts.size == 1 && path->last()->name.equals(import_node->alias_name.value->name))
 				{
 					log_semantic_error(
 						semantic_context, "Alias name is equal to normal symbol name",
@@ -6410,7 +6409,7 @@ void analysis_workload_entry(void* userdata)
 				bool found = false;
 				for (int i = 0; i < extern_functions.size; i++) {
 					auto extern_fn = extern_functions[i];
-					if (extern_fn->symbol->id == symbol->id && extern_fn->signature == function_ptr->signature)
+					if (extern_fn->symbol->id.equals(symbol->id) && extern_fn->signature == function_ptr->signature)
 					{
 						found = true;
 						symbol->type = Symbol_Type::FUNCTION;
@@ -6431,7 +6430,7 @@ void analysis_workload_entry(void* userdata)
 
 			symbol->type = Symbol_Type::FUNCTION;
 			symbol->options.function = extern_fn;
-			dynamic_array_push_back(&extern_functions, extern_fn);
+			extern_functions.push_back(extern_fn);
 
 			break;
 		}
@@ -6633,7 +6632,7 @@ void analysis_workload_entry(void* userdata)
 			for (int j = i + 1; j < enum_type->members.size; j++)
 			{
 				auto other = &enum_type->members[j];
-				if (other->name == member->name) {
+				if (other->name.equals(member->name)) {
 					log_semantic_error(semantic_context, "Enum member name is already in use", AST::upcast(members[j]), Node_Section::FIRST_TOKEN);
 					log_error_info_id(semantic_context, other->name);
 				}
@@ -7024,7 +7023,7 @@ Datatype_Struct* analyse_member_initializer_recursive(
 		{
 			for (int j = 0; j < structure->subtypes.size; j++) {
 				auto sub_content = structure->subtypes[j];
-				if (sub_content->name == init_node->name.value) {
+				if (sub_content->name.equals(init_node->name.value)) {
 					subtype_index = j;
 					break;
 				}
@@ -7032,7 +7031,7 @@ Datatype_Struct* analyse_member_initializer_recursive(
 
 			// Check if it's supertype name
 			if (subtype_index == -1 && structure->parent != nullptr) {
-				if (structure->parent->name == init_node->name.value) {
+				if (structure->parent->name.equals(init_node->name.value)) {
 					is_supertype_init = true;
 				}
 			}
@@ -7211,7 +7210,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 	Constant_Pool* constant_pool = compilation_data->constant_pool;
 	auto type_system = compilation_data->type_system;
 	auto& types = type_system->predefined_types;
-	auto& ids = compilation_data->identifier_pool.predefined_ids;
+	auto& ids = compilation_data->predefined_ids;
 
 	// Initialize expression info
 	auto info = get_info(expr, semantic_context, true);
@@ -7925,14 +7924,14 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			bool return_type_matched = false;
 			for (int j = 0; j < args.size && !remove_symbol; j++)
 			{
-				DynString* name = args[j]->id;
+				Identifier name = args[j]->id;
 				Datatype* arg_type = arg_types[j];
 
 				// Find parameter with matching name
 				int param_index = -1;
 				for (int k = 0; k < signature->parameters.size; k++) {
 					auto& param = signature->parameters[k];
-					if (param.name == name) {
+					if (param.name.equals(name)) {
 						param_index = k;
 						break;
 					}
@@ -9177,7 +9176,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 	}
 	case AST::Expression_Type::AUTO_ENUM:
 	{
-		DynString* id = expr->options.auto_enum;
+		Identifier id = expr->options.auto_enum;
 		if (context.type != Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
 			if (context.type != Expression_Context_Type::ERROR_OCCURED) {
 				log_semantic_error(semantic_context, "Could not determine context for auto enum", expr);
@@ -9821,7 +9820,7 @@ Array<Reachable_Table> symbol_table_find_reachable_operators_cached(Symbol_Table
 	);
 }
 
-Optional<Upp_Constant> query_default_value(Semantic_Context* semantic_context, DynString* name, Datatype* datatype, Upp_Function* function)
+Optional<Upp_Constant> query_default_value(Semantic_Context* semantic_context, Identifier name, Datatype* datatype, Upp_Function* function)
 {
 	if (!semantic_context->can_access_custom_operators) return optional_make_failure<Upp_Constant>();
 
@@ -10107,7 +10106,7 @@ Custom_Operator_Query_Result query_custom_operator(Custom_Operator_Query operato
 			instance_key.datatypes[0] = operator_query.argument_datatypes[0];
 			instance_key.datatypes[1] = operator_query.argument_datatypes[1];
 
-			DynTable_Query_Result query_result = compilation_data->custom_operator_instances.query(instance_key, true);
+			auto query_result = compilation_data->custom_operator_instances.query(instance_key, true);
 			if (query_result.value_is_in_table) 
 			{
 				Custom_Operator_Instance_Value* instance_value = compilation_data->custom_operator_instances.query_to_value(query_result);
@@ -10420,7 +10419,7 @@ bool query_custom_operator_and_set_expression_info(
 void analyse_custom_operator_node(AST::Definition_Custom_Operator* custom_operator_node, Semantic_Context* semantic_context)
 {
 	auto compilation_data = semantic_context->compilation_data;
-	auto& ids = compilation_data->identifier_pool;
+	auto& ids = compilation_data->predefined_ids;
 	auto& types = compilation_data->type_system->predefined_types;
 	bool success = true;
 
@@ -10727,7 +10726,7 @@ void analyse_custom_operator_node(AST::Definition_Custom_Operator* custom_operat
 		Default_Value value;
 		value.datatype = nullptr;
 		value.function = nullptr;
-		value.name = nullptr;
+		value.name = ids.invalid_symbol_name;
 		bool success = true;
 
 		// Analyse all given parameters
@@ -10814,7 +10813,7 @@ void analyse_custom_operator_node(AST::Definition_Custom_Operator* custom_operat
 			Default_Value_Query query;
 			query.datatype = value.datatype;
 			query.name = value.name;
-			DynTable_Query_Result table_result = symbol_table->default_values.query(query, true);
+			auto table_result = symbol_table->default_values.query(query, true);
 			if (table_result.value_is_in_table) {
 				symbol_table->default_values.query_to_value(table_result)->push_back(value);
 			}
@@ -10908,7 +10907,7 @@ void analyse_custom_operator_node(AST::Definition_Custom_Operator* custom_operat
 	result_node.options.custom_operator_child_index = 0;
 	while (true)
 	{
-		DynTable_Query_Result query = query_tree.query(result_node);
+		auto query = query_tree.query(result_node);
 		if (!query.value_is_in_table) {
 			query_tree.insert_with_query(query, result_node, result_node_value);
 			break;
@@ -11160,7 +11159,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 	case AST::Statement_Type::CONTINUE_STATEMENT:
 	{
 		bool is_continue = statement->type == AST::Statement_Type::CONTINUE_STATEMENT;
-		Optional<DynString*> search_id_opt = is_continue ? statement->options.continue_name : statement->options.break_name;
+		Optional<Identifier> search_id_opt = is_continue ? statement->options.continue_name : statement->options.break_name;
 		AST::Code_Block* found_block = 0;
 		auto& block_stack = semantic_context->block_stack;
 
@@ -11975,7 +11974,7 @@ void error_information_append_to_rich_string(
 			info.options.invalid_argument_count.given, info.options.invalid_argument_count.expected);
 		break;
 	case Error_Information_Type::ID:
-		string->append_formated("ID: %s", info.options.id->characters);
+		string->append("ID: ")->append(info.options.id);
 		break;
 	case Error_Information_Type::SYMBOL: {
 		string->append_formated("Symbol: ");
@@ -12057,19 +12056,19 @@ void compilation_data_append_code_errors_to_string(Compilation_Data* compilation
 	{
 		auto& e = errors[i];
 		for (int k = 0; k < indentation; k++) {
-			string_append(string, "    ");
+			dynstring_append(string, "    ");
 		}
 
-		string_append(string, e.msg);
-		string_append(string, "\n");
+		dynstring_append(string, e.msg);
+		dynstring_append(string, "\n");
 		for (int j = 0; j < e.infos.size; j++) {
 			auto& info = e.infos[j];
-			string_append(string, "\n");
+			dynstring_append(string, "\n");
 			for (int k = 0; k < indentation + 1; k++) {
-				string_append(string, "    ");
+				dynstring_append(string, "    ");
 			}
 			error_information_append_to_rich_string(info, compilation_data, string);
-			string_append(string, "\t");
+			dynstring_append(string, "\t");
 		}
 	}
 }

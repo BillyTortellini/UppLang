@@ -121,7 +121,7 @@ void ir_data_access_append_to_string(IR_Data_Access* access, DynString* string, 
     case IR_Data_Access_Type::PARAMETER: {
         auto& param_info = access->option.parameter;
         auto& param = param_info.function->signature->parameters[param_info.index];
-        dynstring_append_formated(string, "Param \"%s\", type: ", param.name->characters);
+        string->append("Param ")->append_in_quotation(param.name.to_string())->append(", type: ");
         datatype_append_to_string(param.datatype, string, type_system);
         break;
     }
@@ -129,7 +129,7 @@ void ir_data_access_append_to_string(IR_Data_Access* access, DynString* string, 
         auto& reg_access = access->option.register_access;
         auto& reg = reg_access.definition_block->registers[reg_access.index];
         if (reg.name.available) {
-            dynstring_append_formated(string, "Register #%d \"%s\", type: ", reg_access.index, reg.name.value->characters);
+            string->append_formated("Register #%d \"", reg_access.index)->append(reg.name.value)->append("\", type: ");
         }
         else {
             dynstring_append_formated(string, "Register #%d, type: ", reg_access.index);
@@ -141,19 +141,19 @@ void ir_data_access_append_to_string(IR_Data_Access* access, DynString* string, 
         break;
     }
     case IR_Data_Access_Type::ADDRESS_OF_VALUE: {
-        string_append(string, "Addr-Of: ");
+        string->append("Addr-Of: ");
         ir_data_access_append_to_string(access->option.address_of_value, string, current_block, compilation_data);
         break;
     }
     case IR_Data_Access_Type::ARRAY_ELEMENT_ACCESS: {
-        string_append(string, "Array_Access: ");
+        string->append("Array_Access: ");
         ir_data_access_append_to_string(access->option.array_access.array_access, string, current_block, compilation_data);
-        string_append(string, ", Index_Access: ");
+        string->append(", Index_Access: ");
         ir_data_access_append_to_string(access->option.array_access.index_access, string, current_block, compilation_data);
         break;
     }
     case IR_Data_Access_Type::POINTER_DEREFERENCE: {
-        string_append(string, "Dereference: ");
+        string->append("Dereference: ");
         ir_data_access_append_to_string(access->option.pointer_value, string, current_block, compilation_data);
         break;
     }
@@ -163,12 +163,12 @@ void ir_data_access_append_to_string(IR_Data_Access* access, DynString* string, 
         break;
     }
     case IR_Data_Access_Type::MEMBER_ACCESS: {
-        dynstring_append_formated(string, "Member \"%s\" of: ", access->option.member_access.member.name->characters);
+        string->append("Member: \"")->append(access->option.member_access.member.name)->append("\" of: ");
         ir_data_access_append_to_string(access->option.member_access.struct_access, string, current_block, compilation_data);
         break;
     }
     case IR_Data_Access_Type::NOTHING: {
-        string_append(string, "Nothing-Access");
+        string->append("Nothing-Access");
         break;
     }
     default: panic("");
@@ -192,7 +192,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, DynString* str
         IR_Instruction_Function_Address* function_address = &instruction->options.function_address;
         auto& function = function_address->function;
 
-        dynstring_append_formated(string, "FUNCTION_ADDRESS of %s\n", function->name->characters);
+        string->append("FUNCTION_ADDRESS of \"")->append(function->name)->append("\"\n");
         indent_string(string, indentation + 1);
         dynstring_append_formated(string, "dst: ");
         ir_data_access_append_to_string(function_address->destination, string, code_block, compilation_data);
@@ -222,9 +222,9 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, DynString* str
         break;
     }
     case IR_Instruction_Type::VARIABLE_DEFINITION: {
-        dynstring_append_formated(string, "VARIABLE_DEFINITION %s", instruction->options.variable_definition.symbol->id->characters);
+        string->append("VARIABLE_DEFINITION ")->append(instruction->options.variable_definition.symbol->id);
         if (instruction->options.variable_definition.initial_value.available) {
-            string_append(string, ", value: ");
+            string->append(", value: ");
             ir_data_access_append_to_string(instruction->options.variable_definition.initial_value.value, string, code_block, compilation_data);
         }
         break;
@@ -327,7 +327,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, DynString* str
             indent_string(string, indentation + 1);
             Optional<Enum_Member> member = enum_type_find_member_by_value(enum_type, switch_case->value);
             assert(member.available, "");
-            dynstring_append_formated(string, "Case %s: \n", member.value.name->characters);
+            string->append("Case ")->append(member.value.name)->append(": ");
             ir_code_block_append_to_string(switch_case->block, string, indentation + 2, compilation_data);
         }
         indent_string(string, indentation + 1);
@@ -390,7 +390,7 @@ void ir_code_block_append_to_string(IR_Code_Block* code_block, DynString* string
         auto& reg = code_block->registers[i];
         indent_string(string, indentation + 1);
         if (reg.name.available) {
-            dynstring_append_formated(string, "#%d %s: ", i, reg.name.value->characters);
+            string->append_formated("#%d ", i)->append(reg.name.value);
         }
         else {
             dynstring_append_formated(string, "#%d: ", i);
@@ -808,7 +808,7 @@ IR_Data_Access* ir_generator_generate_cast(IR_Data_Access* source, IR_Data_Acces
 
     auto type_system = ir_generator->compilation_data->type_system;
     auto& types = type_system->predefined_types;
-    auto& ids = ir_generator->compilation_data->identifier_pool.predefined_ids;
+    auto& ids = ir_generator->compilation_data->predefined_ids;
     auto source_type = source->datatype;
 
     auto move_access_to_destination = [&](IR_Data_Access* access) -> IR_Data_Access* {
@@ -986,7 +986,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
     auto type_system = compilation_data->type_system;
     auto& types = type_system->predefined_types;
     auto& gen = *ir_generator;
-    auto& ids = compilation_data->identifier_pool.predefined_ids;
+    auto& ids = compilation_data->predefined_ids;
     auto ir_block = gen.current_block;
 
     auto backup_expr = gen.current_expr;
@@ -1177,18 +1177,16 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
                     call_signature_add_parameter(signature, ids.value, datatype, true, false, false);
                     call_signature_add_return_type(signature, upcast(types.string), compilation_data);
                     signature = call_signature_register(signature, compilation_data);
-                    DynString* name = nullptr;
+                    Identifier name;
                     {
-                        Arena* arena = &compilation_data->tmp_arena;
-                        auto checkpoint = arena->make_checkpoint();
-                        SCOPE_EXIT(checkpoint.rewind());
-                        DynString buffer = dynstring_create(arena);
+                        SCRATCH_ARENA_MAKE_SCOPED(compilation_data->identifier_pool.arena);
+                        DynString buffer = dynstring_create(scratch_arena);
                         static int counter = 0;
                         buffer.append("_enum_as_string_");
                         buffer.append(enumeration->name);
                         buffer.append_formated("_%d", counter);
                         counter += 1;
-                        name = identifier_pool_add(&compilation_data->identifier_pool, buffer);
+                        name = identifier_pool_add(&compilation_data->identifier_pool, buffer.to_string());
                     }
 
                     Upp_Function* function = upp_function_create_empty(signature, name, compilation_data);
@@ -1226,7 +1224,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
                         return_instr.type = IR_Instruction_Type::RETURN;
                         return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_DATA;
                         return_instr.options.return_instr.options.return_value = 
-                            ir_data_access_create_constant(constant_pool->add_string_assume_valid(*member.name));
+                            ir_data_access_create_constant(constant_pool->add_string(member.name.to_string()));
                         add_instruction(return_instr);
                     }
                     add_instruction(switch_instr);
@@ -2337,7 +2335,7 @@ void ir_generator_finish(Compilation_Data* compilation_data)
     {
         auto entry_function = upp_function_create_empty(
             compilation_data->empty_call_signature,
-            identifier_pool_add(&compilation_data->identifier_pool, string_create_static("__upp_entry_function_")), compilation_data
+            identifier_pool_add(&compilation_data->identifier_pool, string_make("__upp_entry_function_")), compilation_data
         );
         entry_function->ir_block = ir_code_block_create(entry_function);
         compilation_data->entry_function = entry_function;

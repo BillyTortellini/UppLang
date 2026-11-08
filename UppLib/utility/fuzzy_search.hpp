@@ -1,11 +1,11 @@
 #pragma once
 
 #include "../datastructures/string.hpp"
-#include "../datastructures/dynamic_array.hpp"
+#include "../datastructures/array.hpp"
 
 struct Fuzzy_Item
 {
-    DynString item_name;
+    String item_name;
     int user_index;
 
     // Ranking metrics
@@ -17,8 +17,8 @@ struct Fuzzy_Item
     int max_substring_distance; // Distance between substrings, e.g. search "add_foo" ranks "add_2foo" higher than "add_something_foo"
 };
 
-void fuzzy_search_start_search(DynString search_term, int max_result_count);
-void fuzzy_search_add_item(DynString item_name, int user_index = 0);
+void fuzzy_search_start_search(String search_term, int max_result_count);
+void fuzzy_search_add_item(String item_name, int user_index = 0);
 int fuzzy_search_get_item_count();
 // If cutoff is set, matches will be cut-off if they differ too much
-Dynamic_Array<Fuzzy_Item> fuzzy_search_get_results(bool cutoff_between_large_match_differences, int min_cutoff_length);
+Array<Fuzzy_Item> fuzzy_search_get_results(bool allow_cutoff, int min_cutoff_length);

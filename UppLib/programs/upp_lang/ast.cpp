@@ -431,45 +431,45 @@ namespace AST
 		{
 		case Expression_Type::BINARY_OPERATION: 
 		{
-			string_append(str, "Binop \"");
+			str->append("Binop \"");
 			switch (expr->options.binop.type)
 			{
-			case AST::Binop::ADDITION: string_append(str, "+"); break;
-			case AST::Binop::SUBTRACTION: string_append(str, "-"); break;
-			case AST::Binop::DIVISION: string_append(str, "/"); break;
-			case AST::Binop::MULTIPLICATION: string_append(str, "*"); break;
-			case AST::Binop::MODULO: string_append(str, "%"); break;
-			case AST::Binop::AND: string_append(str, "&&"); break;
-			case AST::Binop::OR: string_append(str, "||"); break;
-			case AST::Binop::EQUAL: string_append(str, "=="); break;
-			case AST::Binop::NOT_EQUAL: string_append(str, "!="); break;
-			case AST::Binop::LESS: string_append(str, "<"); break;
-			case AST::Binop::LESS_OR_EQUAL: string_append(str, "<="); break;
-			case AST::Binop::GREATER: string_append(str, ">"); break;
-			case AST::Binop::GREATER_OR_EQUAL: string_append(str, ">="); break;
-			case AST::Binop::POINTER_EQUAL: string_append(str, "*=="); break;
-			case AST::Binop::POINTER_NOT_EQUAL: string_append(str, "*!="); break;
-			case AST::Binop::INVALID: string_append(str, "INVALID"); break;
+			case AST::Binop::ADDITION: str->append("+"); break;
+			case AST::Binop::SUBTRACTION: str->append("-"); break;
+			case AST::Binop::DIVISION: str->append("/"); break;
+			case AST::Binop::MULTIPLICATION: str->append("*"); break;
+			case AST::Binop::MODULO: str->append("%"); break;
+			case AST::Binop::AND: str->append("&&"); break;
+			case AST::Binop::OR: str->append("||"); break;
+			case AST::Binop::EQUAL: str->append("=="); break;
+			case AST::Binop::NOT_EQUAL: str->append("!="); break;
+			case AST::Binop::LESS: str->append("<"); break;
+			case AST::Binop::LESS_OR_EQUAL: str->append("<="); break;
+			case AST::Binop::GREATER: str->append(">"); break;
+			case AST::Binop::GREATER_OR_EQUAL: str->append(">="); break;
+			case AST::Binop::POINTER_EQUAL: str->append("*=="); break;
+			case AST::Binop::POINTER_NOT_EQUAL: str->append("*!="); break;
+			case AST::Binop::INVALID: str->append("INVALID"); break;
 			default: panic("");
 			}
-			string_append(str, "\"");
+			str->append("\"");
 			break;
 		}
 		case Expression_Type::UNARY_OPERATION:
 		{
-			string_append(str, "Unop \""); break;
+			str->append("Unop \""); break;
 			switch (expr->options.unop.type)
 			{
-			case Unop::NOT: string_append(str, "!"); break;
-			case Unop::ADDRESS_OF: string_append(str, "*"); break;
-			case Unop::DEREFERENCE: string_append(str, "&"); break;
-			case Unop::NEGATE: string_append(str, "-"); break;
+			case Unop::NOT: str->append("!"); break;
+			case Unop::ADDRESS_OF: str->append("*"); break;
+			case Unop::DEREFERENCE: str->append("&"); break;
+			case Unop::NEGATE: str->append("-"); break;
 			default: panic("");
 			}
-			string_append(str, "Unop \""); break;
+			str->append("Unop \""); break;
 			break;
 		}
-		case Expression_Type::PATTERN_VARIABLE: string_append(str, "Pattern_Variable"); break;
+		case Expression_Type::PATTERN_VARIABLE: str->append("Pattern_Variable"); break;
 		case Expression_Type::FUNCTION_CALL: dynstring_append_formated(str, "Function Call"); break;
 		case Expression_Type::BAKE: dynstring_append_formated(str, "Bake Expr"); break;
 		case Expression_Type::INSTANCIATE: dynstring_append_formated(str, "#instanciate"); break;
@@ -484,7 +484,7 @@ namespace AST
 			case Literal_Type::INTEGER: dynstring_append_formated(str, "%d", read.options.int_val); break;
 			case Literal_Type::FLOAT_VAL: dynstring_append_formated(str, "%f", read.options.float_val); break;
 			case Literal_Type::NULL_VAL: dynstring_append_formated(str, "null"); break;
-			case Literal_Type::STRING: dynstring_append_formated(str, "%s", read.options.string->characters); break;
+			case Literal_Type::STRING: str->append('"')->append(read.options.string.string)->append('"'); break;
 			case Literal_Type::CODE_POINT: dynstring_append_formated(str, "'#%d'", read.options.codepoint); break;
 			default: panic("");
 			}
@@ -513,7 +513,7 @@ namespace AST
 		switch (base->type)
 		{
 		case Node_Type::SYMBOL_NODE: {
-			dynstring_append_formated(str, "SYMBOL_NODE %s", ((Symbol_Node*)base)->name->characters);
+			str->append("SYMBOL_NODE ")->append(((Symbol_Node*)base)->name.string);
 			break;
 		}
 		case Node_Type::ROOT: {
@@ -526,17 +526,17 @@ namespace AST
 			auto def = (Definition*)base;
 			switch (def->type)
 			{
-			case Definition_Type::FAST_CALL: string_append(str, "fast_call"); break;
-			case Definition_Type::VARIABLE: string_append(str, "var"); break;
-			case Definition_Type::GLOBAL: string_append(str, "global"); break;
-			case Definition_Type::CONSTANT: string_append(str, "const"); break; 
-			case Definition_Type::FUNCTION: string_append(str, "fn"); break; 
-			case Definition_Type::ENUM: string_append(str, "enum"); break; 
-			case Definition_Type::CUSTOM_OPERATOR: string_append(str, "operator"); break; 
+			case Definition_Type::FAST_CALL: str->append("fast_call"); break;
+			case Definition_Type::VARIABLE: str->append("var"); break;
+			case Definition_Type::GLOBAL: str->append("global"); break;
+			case Definition_Type::CONSTANT: str->append("const"); break; 
+			case Definition_Type::FUNCTION: str->append("fn"); break; 
+			case Definition_Type::ENUM: str->append("enum"); break; 
+			case Definition_Type::CUSTOM_OPERATOR: str->append("operator"); break; 
 			case Definition_Type::STRUCT: 
 			{
 				auto& struct_node = def->options.structure;
-				string_append(str, struct_node.is_union ? "union " : "struct "); 
+				str->append(struct_node.is_union ? "union " : "struct "); 
 				break;
 			}
 			case Definition_Type::IMPORT:
@@ -544,13 +544,13 @@ namespace AST
 				auto& import = def->options.import;
 				dynstring_append_formated(str, "IMPORT");
 				if (import.is_transitive) {
-					string_append(str, " transitive");
+					str->append(" transitive");
 				}
 				if (import.import_symbols_set) {
-					string_append(str, " symbols");
+					str->append(" symbols");
 				}
 				if (import.import_operators_set) {
-					string_append(str, " operators");
+					str->append(" operators");
 				}
 				break;
 			}
@@ -560,24 +560,24 @@ namespace AST
 
 				switch (extern_import.type)
 				{
-				case Extern_Type::FUNCTION: string_append(str, "fn"); break;
-				case Extern_Type::GLOBAL: string_append(str, "global"); break;
+				case Extern_Type::FUNCTION: str->append("fn"); break;
+				case Extern_Type::GLOBAL: str->append("global"); break;
 				case Extern_Type::COMPILER_SETTING: 
 				{
 					switch (extern_import.options.setting.type)
 					{
-					case Extern_Compiler_Setting::DEFINITION: string_append(str, "Macro/Definition");
-					case Extern_Compiler_Setting::HEADER_FILE: string_append(str, "Header file");
-					case Extern_Compiler_Setting::LIBRARY: string_append(str, "Library");
-					case Extern_Compiler_Setting::LIBRARY_DIRECTORY: string_append(str, "Lib-Directory");
-					case Extern_Compiler_Setting::INCLUDE_DIRECTORY: string_append(str, "Include-Directory");
-					case Extern_Compiler_Setting::SOURCE_FILE: string_append(str, "Source-File");
+					case Extern_Compiler_Setting::DEFINITION: str->append("Macro/Definition");
+					case Extern_Compiler_Setting::HEADER_FILE: str->append("Header file");
+					case Extern_Compiler_Setting::LIBRARY: str->append("Library");
+					case Extern_Compiler_Setting::LIBRARY_DIRECTORY: str->append("Lib-Directory");
+					case Extern_Compiler_Setting::INCLUDE_DIRECTORY: str->append("Include-Directory");
+					case Extern_Compiler_Setting::SOURCE_FILE: str->append("Source-File");
 					default: panic("");
 					}
-					string_append(str, extern_import.options.setting.value->characters);
+					str->append(extern_import.options.setting.value.string);
 					break;
 				}
-				case Extern_Type::STRUCT: string_append(str, "struct"); break;
+				case Extern_Type::STRUCT: str->append("struct"); break;
 				default: panic("");
 				}
 				break;
@@ -592,10 +592,10 @@ namespace AST
 		}
 		case Node_Type::SUBTYPE_INITIALIZER: {
 			auto init = (Subtype_Initializer*)base;
-			string_append(str, "SUBTYPE_INIT");
+			str->append("SUBTYPE_INIT");
 			if (init->name.available) {
-				string_append_character(str, ' ');
-				string_append(str, init->name.value->characters);
+				str->append(' ');
+				str->append(init->name.value.string);
 			}
 			break;
 		}
@@ -612,20 +612,20 @@ namespace AST
 			auto arg = (Argument*)base;
 			if (arg->name.available) {
 				dynstring_append_formated(str, " ");
-				string_append_string(str, arg->name.value);
+				str->append(arg->name.value.string);
 			}
 			break;
 		}
 		case Node_Type::ENUM_MEMBER: {
 			auto mem = (Enum_Member_Node*)base;
 			dynstring_append_formated(str, "ENUM_MEMBER ");
-			string_append_string(str, mem->name);
+			str->append(mem->name.string);
 			break;
 		}
 		case Node_Type::STRUCT_MEMBER: {
 			auto mem = (Structure_Member_Node*)base;
 			dynstring_append_formated(str, "STRUCT_MEMBER ");
-			string_append_string(str, mem->name);
+			str->append(mem->name.string);
 			break;
 		}
 		case Node_Type::PARAMETER: {
@@ -659,7 +659,7 @@ namespace AST
 				case Literal_Type::INTEGER: dynstring_append_formated(str, "%d", read.options.int_val); break;
 				case Literal_Type::FLOAT_VAL: dynstring_append_formated(str, "%f", read.options.float_val); break;
 				case Literal_Type::NULL_VAL: dynstring_append_formated(str, "null"); break;
-				case Literal_Type::STRING: dynstring_append_formated(str, "%s", read.options.string->characters); break;
+				case Literal_Type::STRING: str->append(read.options.string.string); break;
 				case Literal_Type::CODE_POINT: dynstring_append_formated(str, "'#%d'", read.options.codepoint); break;
 				default: panic("");
 				}
@@ -669,7 +669,7 @@ namespace AST
 			case Expression_Type::MEMBER_ACCESS: dynstring_append_formated(str, "MEMBER_ACCESS"); break;
 			case Expression_Type::SUBTYPE_ACCESS: {
 				dynstring_append_formated(str, "SUBTYPE_ACCESS"); 
-				string_append_string(str, expr->options.subtype_access.name);
+				str->append(expr->options.subtype_access.name.string);
 				break;
 			}
 			case Expression_Type::BASETYPE_ACCESS: dynstring_append_formated(str, "BASETYPE_ACCESS"); break;
@@ -750,10 +750,10 @@ namespace AST
 
 	void base_print(Node* node)
 	{
-		DynString text = dynstring_create(1024);
-		SCOPE_EXIT(string_destroy(&text));
+		SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+		DynString text = dynstring_create(scratch_arena);
 		base_append_to_string_recursive(node, &text, 0);
-		logg("AST:\n------------------------\n%s\n", text.characters);
+		logg("AST:\n------------------------\n%.%s\n", text.size, text.characters);
 	}
 
 	int binop_priority(Binop binop)
@@ -784,9 +784,9 @@ namespace AST
 	void path_lookup_append_to_string(Path_Lookup* path, DynString* string)
 	{
 		for (int i = 0; i < path->parts.size; i++) {
-			dynstring_append_formated(string, "%s", path->parts[i]->name->characters);
+			string->append(path->parts[i]->name.string);
 			if (i != path->parts.size - 1) {
-				string_append_character(string, '~');
+				string->append('~');
 			}
 		}
 	}

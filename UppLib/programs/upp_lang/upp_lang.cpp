@@ -169,7 +169,7 @@ void upp_lang_main()
     //test_things();
     //return;
 
-    Window* window = window_create("Test", 0);
+    Window* window = window_create(string_make("Test"), 0);
     SCOPE_EXIT(window_destroy(window));
     Window_State* window_state = window_get_window_state(window);
     rendering_core_initialize(window_state->width, window_state->height, window_state->dpi);
@@ -179,7 +179,7 @@ void upp_lang_main()
     // glGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &maxAttribs);
     // logg("Maximum attribs: %d\n", maxAttribs);
 
-    Text_Renderer* text_renderer = text_renderer_create_from_font_atlas_file("resources/fonts/glyph_atlas.atlas");
+    Text_Renderer* text_renderer = text_renderer_create_from_font_atlas_file(string_make("resources/fonts/glyph_atlas.atlas"));
     SCOPE_EXIT(text_renderer_destroy(text_renderer));
 
     Renderer_2D* renderer_2D = renderer_2D_create(text_renderer);
@@ -187,7 +187,7 @@ void upp_lang_main()
 
     syntax_editor_initialize(text_renderer, renderer_2D, window, window_get_input(window));
     SCOPE_EXIT(syntax_editor_destroy());
-    syntax_editor_load_state(string_create_static("upp_code/session.ses"));
+    syntax_editor_load_state(string_make("upp_code/session.ses"));
 
     // Background
     Camera_3D* camera = camera_3D_create(math_degree_to_radians(90), 0.1f, 100.0f);
@@ -203,7 +203,7 @@ void upp_lang_main()
 
     // Set Window/Rendering Options
     {
-        window_load_position(window, "window_pos.set");
+        window_load_position(window, string_make("window_pos.set"));
         //window_set_size(window, 800, 600);
         //window_set_position(window, -1234, 96);
         //window_set_fullscreen(window, true);
@@ -253,8 +253,8 @@ void upp_lang_main()
             if (input->close_request_issued || 
                 (input->key_pressed[(int)Key_Code::ESCAPE] && (input->key_down[(int)Key_Code::SHIFT] || input->key_down[(int) Key_Code::CTRL]))) 
             {
-                syntax_editor_save_state(string_create_static("upp_code/session.ses"));
-                window_save_position(window, "window_pos.set");
+                syntax_editor_save_state(string_make("upp_code/session.ses"));
+                window_save_position(window, string_make("window_pos.set"));
                 window_close(window);
                 break;
             }

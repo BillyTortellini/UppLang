@@ -18,14 +18,14 @@ BinaryParser binary_parser_create_from_bytes(Array<byte> data_to_read)
     return result;
 }
 
-Optional<BinaryParser> binary_parser_create_from_file(const char* filename)
+Optional<BinaryParser> binary_parser_create_from_file(String filename)
 {
     BinaryParser result;
     result.current_position = 0;
 
     SCRATCH_ARENA_MAKE_SCOPED(nullptr);
 
-    Optional<Array<byte>> file_data = file_io_load_binary_file(string_create_static(filename), scratch_arena);
+    Optional<Array<byte>> file_data = file_io_load_binary_file(filename, scratch_arena);
     if (!file_data.available) {
         return optional_make_failure<BinaryParser>();
     }
@@ -37,8 +37,8 @@ void binary_parser_destroy(BinaryParser* parser) {
     dynamic_array_destroy(&parser->data);
 }
 
-bool binary_parser_write_to_file(BinaryParser* parser, const char* filepath) {
-    return file_io_write_binary_file(string_create_static(filepath), dynamic_array_as_array(&parser->data));
+bool binary_parser_write_to_file(BinaryParser* parser, String filepath) {
+    return file_io_write_binary_file(filepath, dynamic_array_as_array(&parser->data));
 }
 
 Array<byte> binary_parser_get_data(BinaryParser* parser) {

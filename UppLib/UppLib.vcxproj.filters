@@ -103,12 +103,6 @@
     <Filter Include="Source Files\Programs\Imgui_Test">
       <UniqueIdentifier>{41595b8d-31e9-4144-aad9-62bd3c180cf8}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Header Files\Programs\Test">
-      <UniqueIdentifier>{b7e6fafc-a884-4a82-8c1b-0baa109e1a49}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Source Files\Programs\Test">
-      <UniqueIdentifier>{70188079-535c-47da-abab-f7adc6b52dc9}</UniqueIdentifier>
-    </Filter>
     <Filter Include="Natvis">
       <UniqueIdentifier>{c352fd7c-1f54-448c-8968-fdb2ba083e38}</UniqueIdentifier>
     </Filter>
@@ -330,9 +324,6 @@
     <ClInclude Include="utility\ui_system.hpp">
       <Filter>Header Files\Utility</Filter>
     </ClInclude>
-    <ClInclude Include="programs\test\test.hpp">
-      <Filter>Header Files\Programs\Test</Filter>
-    </ClInclude>
     <ClInclude Include="programs\upp_lang\memory_source.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
@@ -347,6 +338,9 @@
     </ClInclude>
     <ClInclude Include="programs\rendering_rework\rendering_rework.hpp">
       <Filter>Header Files\Programs\Rendering_Rework</Filter>
+    </ClInclude>
+    <ClInclude Include="utility\identifier_pool.hpp">
+      <Filter>Header Files\Utility</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -551,9 +545,6 @@
     <ClCompile Include="utility\ui_system.cpp">
       <Filter>Source Files\Utility</Filter>
     </ClCompile>
-    <ClCompile Include="programs\test\test.cpp">
-      <Filter>Source Files\Programs\Test</Filter>
-    </ClCompile>
     <ClCompile Include="programs\upp_lang\memory_source.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
@@ -568,6 +559,9 @@
     </ClCompile>
     <ClCompile Include="programs\rendering_rework\rendering_rework.cpp">
       <Filter>Source Files\Programs\Rendering_Rework</Filter>
+    </ClCompile>
+    <ClCompile Include="utility\identifier_pool.cpp">
+      <Filter>Source Files\Utility</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

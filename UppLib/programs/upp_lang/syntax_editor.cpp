@@ -6,7 +6,6 @@
 #include "../../math/vectors.hpp"
 #include "../../rendering/text_renderer.hpp"
 #include "../../rendering/renderer_2d.hpp"
-#include "../../utility/file_io.hpp"
 #include "../../utility/character_info.hpp"
 #include "../../utility/fuzzy_search.hpp"
 #include "../../utility/gui.hpp"
@@ -43,51 +42,15 @@ const int MIN_CURSOR_DISTANCE = 2;
 
 
 // WORD_POOL
-struct String_View
+struct Refcount_Word
 {
 	char* characters;
 	u32 size;
-};
-
-String_View string_view_make(char* characters, u32 size)
-{
-	String_View result;
-	result.characters = characters;
-	result.size = size;
-	return result;
-}
-
-String_View string_view_from_cstring(const char* str)
-{
-	return string_view_make((char*)str, strlen(str));
-}
-
-String_View string_view_from_string(DynString string)
-{
-	return string_view_make(string.characters, (u32)string.size);
-}
-
-DynString string_view_to_string(String_View view)
-{
-	return string_create_static_with_size(view.characters, (int)view.size);
-}
-
-u64 hash_string_view(String_View* string_view)
-{
-	if (string_view->size == 0) return 0x2342343;
-	return hash_memory(array_create_static<byte>((byte*)string_view->characters, (int)string_view->size));
-}
-
-bool equals_string_view(String_View* a, String_View* b)
-{
-	if (a->size != b->size) return false;
-	return memory_compare(a->characters, b->characters, a->size);
-}
-
-struct String_View_Refcount
-{
-	String_View string_view;
 	u32 reference_count;
+
+	String to_string() {
+		return string_make(characters, size);
+	}
 };
 
 struct Word_Free_List
@@ -103,8 +66,8 @@ const int WORD_POOL_MIN_WORD_SIZE = 3;
 struct Word_Pool
 {
 	Arena* arena;
-	DynTable<String_View, u32> deduplication_table;
-	DynArray<String_View_Refcount> words;
+	DynTable<String, u32> deduplication_table;
+	DynArray<Refcount_Word> words;
 	Word_Free_List free_lists[WORD_POOL_FREELIST_COUNT];
 };
 
@@ -120,8 +83,8 @@ Word_Pool word_pool_create(Arena* arena)
 {
 	Word_Pool result;
 	result.arena = arena;
-	result.deduplication_table = DynTable<String_View, u32>::create(arena, hash_string_view, equals_string_view);
-	result.words = DynArray<String_View_Refcount>::create(arena);
+	result.deduplication_table = DynTable<String, u32>::create(arena, string_hash_pointer, string_equals_pointers);
+	result.words = DynArray<Refcount_Word>::create(arena);
 	result.free_lists[0] = word_free_list_make(8);
 	result.free_lists[1] = word_free_list_make(32);
 	result.free_lists[2] = word_free_list_make(64);
@@ -129,16 +92,16 @@ Word_Pool word_pool_create(Arena* arena)
 	return result;
 }
 
-void word_pool_add_word(Word_Pool* pool, String_View word)
+void word_pool_add_word(Word_Pool* pool, String word)
 {
 	if (word.size <= WORD_POOL_MIN_WORD_SIZE || word.size > WORD_POOL_MAX_WORD_SIZE) return;
 
-	DynTable_Query_Result query_result = pool->deduplication_table.query(word, true);
+	auto query_result = pool->deduplication_table.query(word, true);
 	if (query_result.value_is_in_table)
 	{
-		u32 word_index = *pool->deduplication_table.query_to_value(query_result);
+		u32 word_index = query_result.get_value();
 		assert(word_index < pool->words.size, "");
-		String_View_Refcount& word = pool->words[word_index];
+		Refcount_Word& word = pool->words[word_index];
 		word.reference_count += 1;
 		return;
 	}
@@ -148,107 +111,98 @@ void word_pool_add_word(Word_Pool* pool, String_View word)
 	for (int i = 0; i < WORD_POOL_FREELIST_COUNT; i++) 
 	{
 		Word_Free_List* list = &pool->free_lists[i];
-		if (word.size <= list->element_size) {
+		if (word.size <= (int)list->element_size) {
 			free_list = list;
 			break;
 		}
 	}
 	assert(free_list != nullptr, "");
 
-	String_View allocated_view = string_view_make(nullptr, word.size);
+	Refcount_Word allocated_word;
+	allocated_word.size = word.size;
+	allocated_word.reference_count = 1;
 	if (free_list->next_free == nullptr) 
 	{
-		allocated_view.characters = (char*) pool->arena->allocate_raw(free_list->element_size, 8); // Alignment of 8 because of free-list
+		allocated_word.characters = (char*) pool->arena->allocate_raw(free_list->element_size, 8); // Alignment of 8 because of free-list
 	}
 	else
 	{
-		allocated_view.characters = (char*) free_list->next_free;
+		allocated_word.characters = (char*) free_list->next_free;
 		free_list->next_free = *(void**)free_list->next_free;
 	}
-	memory_copy(allocated_view.characters, word.characters, word.size);
+	memory_copy(allocated_word.characters, (void*)word.characters, word.size);
 
 	// Add to table and dynamic_array
-	pool->deduplication_table.insert_with_query(query_result, allocated_view, pool->words.size);
-	String_View_Refcount refcount;
-	refcount.reference_count = 1;
-	refcount.string_view = allocated_view;
-	pool->words.push_back(refcount);
+	pool->words.push_back(allocated_word);
+	query_result.insert_key_value(string_make(allocated_word.characters, pool->words.size - 1), pool->words.size - 1);
 }
 
-void word_pool_remove_word(Word_Pool* pool, String_View word)
+void word_pool_remove_word(Word_Pool* pool, String word)
 {
 	if (word.size <= WORD_POOL_MIN_WORD_SIZE || word.size > WORD_POOL_MAX_WORD_SIZE) return;
 
-	DynTable_Query_Result query_result = pool->deduplication_table.query(word, false);
+	auto query_result = pool->deduplication_table.query(word, false);
 	assert(query_result.value_is_in_table, "");
 
 	// Decrease reference count
 	u32 word_index = *pool->deduplication_table.query_to_value(query_result);
-	String_View_Refcount& refcount_view = pool->words[word_index];
-	assert(refcount_view.reference_count > 0, "");
-	refcount_view.reference_count -= 1;
-	if (refcount_view.reference_count > 0) return; // Reference decreased, done here 
+	Refcount_Word& refcount_word = pool->words[word_index];
+	assert(refcount_word.reference_count > 0, "");
+	refcount_word.reference_count -= 1;
+	if (refcount_word.reference_count > 0) return; // Reference decreased, done here 
 
-	// Add string_view to free-list
+	// Add character-buffer to free-list
 	Word_Free_List* free_list = nullptr;
 	for (int i = 0; i < WORD_POOL_FREELIST_COUNT; i++) {
 		Word_Free_List* list = &pool->free_lists[i];
-		if (word.size <= list->element_size) {
+		if (word.size <= (int)list->element_size) {
 			free_list = list;
 			break;
 		}
 	}
 	assert(free_list != nullptr, "");
-	*(void**)refcount_view.string_view.characters = free_list->next_free;
-	free_list->next_free = (void*)refcount_view.string_view.characters;
+	*(void**)refcount_word.characters = free_list->next_free;
+	free_list->next_free = (void*)refcount_word.characters;
 
 	// Remove from hashtable
 	pool->deduplication_table.remove_with_query(query_result);
 	// Remove from dynamic-array (And update deduplication table index)
 	if (word_index != pool->words.size - 1) 
 	{
-		String_View_Refcount swap_view = pool->words[pool->words.size - 1];
-		DynTable_Query_Result query_result = pool->deduplication_table.query(swap_view.string_view, false);
+		Refcount_Word swap_view = pool->words[pool->words.size - 1];
+		auto query_result = pool->deduplication_table.query(string_make(swap_view.characters, swap_view.size), false);
 		assert(query_result.value_is_in_table, "");
-		*pool->deduplication_table.query_to_value(query_result) = word_index;
+		*query_result.get_value_pointer() = word_index;
 	}
 	pool->words.swap_remove(word_index);
 }
 
-void word_pool_handle_words_from_line(Word_Pool* pool, Source_Line* line, Arena* tmp_arena, bool remove_words)
+void word_pool_handle_words_from_line(Word_Pool* pool, String line, bool remove_words)
 {
-	assert(tmp_arena != pool->arena, "");
-	auto checkpoint = tmp_arena->make_checkpoint();
-	SCOPE_EXIT(checkpoint.rewind());
-
-	DynArray<Token> line_tokens = DynArray<Token>::create(tmp_arena);
-	tokenizer_tokenize_single_line(line->text, &line_tokens, 0, true);
+	SCRATCH_ARENA_MAKE_SCOPED(pool->arena);
+	DynArray<Token> line_tokens = DynArray<Token>::create(scratch_arena);
+	tokenizer_tokenize_single_line(line, &line_tokens, 0, true);
 	for (int i = 0; i < line_tokens.size; i++) 
 	{
 		Token& token = line_tokens[i];
 		if (token.type != Token_Type::IDENTIFIER) continue;
-		String_View string_view = string_view_from_string(
-			string_create_substring_static(&line->text, token.start, token.end)
-		);
+		String word = string_make_substring(line, token.start, token.end);
 		if (remove_words) {
-			word_pool_remove_word(pool, string_view);
+			word_pool_remove_word(pool, word);
 		}
 		else {
-			word_pool_add_word(pool, string_view);
+			word_pool_add_word(pool, word);
 		}
 	}
 }
 
-void word_pool_handle_words_from_code(Word_Pool* pool, Source_Code* code, Arena* tmp_arena, bool remove_words) 
+void word_pool_handle_words_from_code(Word_Pool* pool, Source_Code* code, bool remove_words) 
 {
-	for (int bundle_index = 0; bundle_index < code->bundles.size; bundle_index++)
-	{
-		Line_Bundle& bundle = code->bundles[bundle_index];
-		for (int in_bundle_index = 0; in_bundle_index < bundle.lines.size; in_bundle_index++)
-		{
-			Source_Line& line = bundle.lines[in_bundle_index];
-			word_pool_handle_words_from_line(pool, &line, tmp_arena, remove_words);
-		}
+	SCRATCH_ARENA_MAKE_SCOPED(pool->arena);
+	DynString line_text = DynString::create(scratch_arena);
+	for (int i = 0; i < code->lines.size; i++) {
+		source_code_line_append_to_string(code, i, line_text.reset());
+		word_pool_handle_words_from_line(pool, line_text.to_string(), remove_words);
 	}
 }
 
@@ -499,13 +453,14 @@ enum class Suggestion_Type
     STRUCT_MEMBER,
     ENUM_MEMBER,
     SYMBOL,
-    FILE
+    FILE,
+	WORD_POOL_WORD
 };
 
 struct Editor_Suggestion
 {
     Suggestion_Type type;
-    String_View text;
+    String text;
     union {
         struct {
             Datatype_Struct* structure;
@@ -532,14 +487,14 @@ struct Particle
 
 struct Watch_Value
 {
-    DynString name;
-    DynString value_as_text;
+    String_List name;
+    String_List value_as_text;
 	bool show_multiline;
 };
 
 struct Pass_Filter
 {
-	DynString required_substring;
+	String_List required_substring;
 	bool is_active;
 	bool connected_to_next;
 };
@@ -594,12 +549,16 @@ struct Syntax_Editor
     Window* window;
     Input* input;
     Directory_Crawler* directory_crawler;
-	Arena arena; // For rendering and other misc things
+
+	Arena arena;
+	Free_List freelist_string_list;
+	Arena frame_arena;
+
 	Word_Pool word_pool;
 	Arena word_pool_arena;
 
 	// Tabs
-    Dynamic_Array<Editor_Tab*> tabs;
+    DynArray<Editor_Tab*> tabs;
     int open_tab_index;
     int main_tab_index; // If -1, use the currently open tab for compiling
 
@@ -616,7 +575,7 @@ struct Syntax_Editor
 
     // Command repeating
     Normal_Mode_Command last_normal_command;
-    Dynamic_Array<Insert_Command> last_insert_commands;
+    DynArray<Insert_Command> last_insert_commands;
     bool record_insert_commands;
     DynString last_recorded_code_completion;
 
@@ -632,7 +591,7 @@ struct Syntax_Editor
     Line_Editor search_text_edit;
     int last_code_completion_tab;
 	bool last_code_completion_was_with_words;
-    Dynamic_Array<Editor_Suggestion> suggestions; // Used both for fuzzy-find and code-completion
+    DynArray<Editor_Suggestion> suggestions; // Used both for fuzzy-find and code-completion
 
     DynString search_text;
     Text_Index search_start_pos;
@@ -640,7 +599,7 @@ struct Syntax_Editor
     bool search_reverse;
 
 	// Error mode 
-    Dynamic_Array<int> error_indices_sorted;
+    DynArray<int> error_indices_sorted;
     int navigate_error_cam_start;
     int navigate_error_index;
 
@@ -659,7 +618,7 @@ struct Syntax_Editor
     Text_Renderer* text_renderer; // Used by gui...
 
 	// Particles
-    Dynamic_Array<Particle> particles;
+    DynArray<Particle> particles;
     double last_update_time;
     Random random;
 
@@ -675,15 +634,15 @@ struct Syntax_Editor
 
     // Debugger
     Debugger* debugger;
-    Dynamic_Array<Watch_Value> watch_values;
+    DynArray<Watch_Value> watch_values;
     int selected_stack_frame;
 
 	// Pass-Filters
 	bool prefer_poly_passes;
 	bool prefer_base_pass;
 	bool pass_filter_ui_open;
-	Dynamic_Array<Pass_Filter> poly_pass_filters;
-	Hashtable<Analysis_Pass*, bool> filtered_passes;
+	DynArray<Pass_Filter> poly_pass_filters;
+	DynTable<Analysis_Pass*, bool> filtered_passes;
 
 	// Editor options
 	bool toggle_options[(int)Toggle_Option::MAX_ENUM_VALUE];
@@ -711,22 +670,33 @@ Error_Display error_display_make(DynString msg, Text_Range range, Compilation_Un
 void syntax_editor_sanitize_cursor();
 Text_Index code_query_text_index_at_last_synchronize(Text_Index text_index, int tab_index, bool move_forwards_in_time);
 unsigned long compiler_thread_entry_fn(void* userdata);
-int line_get_whitespace_indentation(Source_Line* line);
 int line_get_whitespace_indentation(int line_index);
 int line_is_empty(int line_index, bool count_comment_as_empty);
-int line_count_leading_spaces(Source_Line* line);
 int line_count_leading_spaces(int line_index);
 void recent_screen_handle_line_insert(Editor_Tab* tab, int line_index);
 void recent_screen_handle_line_delete(Editor_Tab* tab, int line_index);
 
-DynString line_index_get_text(int line_index, Editor_Tab* tab = nullptr)
+int line_index_get_text_size(int line_index, Editor_Tab* tab = nullptr)
 {
 	if (tab == nullptr) {
 		tab = &syntax_editor.open_tab();
 	}
 	auto code = tab->code;
-	if (line_index < 0 || line_index >= code->line_count) return string_create_static("");
-	return source_code_get_line(code, line_index)->text;
+	if (line_index < 0 || line_index >= code->line_count()) return 0;
+	return tab->code->lines[line_index].text.size;
+}
+
+String line_index_get_text(int line_index, Editor_Tab* tab = nullptr)
+{
+	if (tab == nullptr) {
+		tab = &syntax_editor.open_tab();
+	}
+	auto code = tab->code;
+	if (line_index < 0 || line_index >= code->line_count()) return string_make("", 0);
+
+	DynString text = DynString::create(&syntax_editor.frame_arena);
+	source_code_line_append_to_string(tab->code, line_index, &text);
+	return text.to_string();
 }
 
 
@@ -949,16 +919,16 @@ namespace Folds
 		auto& folds = tab.folds;
 
 		if (folds.size == 0) {
-			return Line_Area::make(ibox1::make_length(0, tab.code->line_count), -1, false);
+			return Line_Area::make(ibox1::make_length(0, tab.code->line_count()), -1, false);
 		}
 
 		if (line_index < 0) {
 			nearby_fold_index = 0;
 			return Line_Area::make(ibox1(line_index, 0), 0, false);
 		}
-		else if (line_index >= tab.code->line_count) {
+		else if (line_index >= tab.code->line_count()) {
 			nearby_fold_index = folds.size - 1;
-			return Line_Area::make(ibox1(tab.code->line_count, line_index + 1), -1, false);
+			return Line_Area::make(ibox1(tab.code->line_count(), line_index + 1), -1, false);
 		}
 
 		nearby_fold_index = math_clamp(nearby_fold_index, 0, (int)folds.size - 1);
@@ -980,7 +950,7 @@ namespace Folds
 			{
 				// Line is after last fold
 				if (nearby_fold_index + 1 >= folds.size) {
-					return Line_Area::make(ibox1(fold.interval.max, tab.code->line_count), nearby_fold_index, false); 
+					return Line_Area::make(ibox1(fold.interval.max, tab.code->line_count()), nearby_fold_index, false); 
 				}
 
 				// Loop stopper, if we are in between folds we return
@@ -1046,7 +1016,7 @@ namespace Folds
 			{
 				Line_Area fold_info = Folds::get_line_area(line_index, nearby_fold_index);
 	
-				if (line_index >= tab.code->line_count) {
+				if (line_index >= tab.code->line_count()) {
 					line_index += steps;
 					steps = 0;
 					break;
@@ -1162,11 +1132,11 @@ namespace Folds
 
 int line_index_move_while_empty(int line_index, int dir, bool move_on_empty, bool move_out_of_condition)
 {
-	int line_count = syntax_editor.open_tab().code->line_count;
+	int line_count = syntax_editor.open_tab().code->line_count();
 
 	auto line_meets_condition = [&](int line_index) -> bool
 	{
-		DynString text = line_index_get_text(line_index);
+		String text = line_index_get_text(line_index);
 		bool whitespace_only = true;
 		for (int i = 0; i < text.size; i++) {
 			if (text[i] != ' ') {
@@ -1211,7 +1181,7 @@ namespace Motions
     }
 
     char get_char(Text_Index& pos, int offset = 0, char invalid_char = '\0') {
-        DynString text = line_index_get_text(pos.line);
+        String text = line_index_get_text(pos.line);
         int p = pos.character + offset;
         if (p < 0 || p >= text.size) return invalid_char;
         return text.characters[p];
@@ -1219,7 +1189,8 @@ namespace Motions
 
     void move_while_in_set(Text_Index& pos, Char_Group group, bool forward = true, bool move_out_of = false)
     {
-		DynString text = line_index_get_text(pos.line);
+        String text = line_index_get_text(pos.line);
+
 		if (!group.contains(text.at(pos.character))) return;
 
         int dir = forward ? 1 : -1;
@@ -1270,7 +1241,8 @@ namespace Motions
 
 	Text_Range text_range_get_string_literal(Text_Index pos)
 	{
-		DynString text = line_index_get_text(pos.line);
+		String text = line_index_get_text(pos.line);
+
         int index = 0;
         bool inside_string = false;
         int string_start = -1;
@@ -1950,14 +1922,14 @@ namespace Text_Editing
 {
 	// Lines are added before the line-index
 	void add_lines(int line_index, int line_count);
-	void insert_text_in_line(Text_Index index, DynString str, bool with_particles);
+	void insert_text_in_line(Text_Index index, String str, bool with_particles);
 
 	Text_Index add_padding_to_index(Text_Index index, bool is_cursor, bool handle_spaces_as_well = true)
 	{
 		Editor_Tab& tab = syntax_editor.open_tab();
 		auto code = tab.code;
-		history_start_complex_command(&tab.history);
-		SCOPE_EXIT(history_stop_complex_command(&tab.history));
+		history_start_complex_command(tab.history);
+		SCOPE_EXIT(history_stop_complex_command(tab.history));
 
 		index.character = math_maximum(0, index.character);
 		if (index.line < 0) 
@@ -1967,14 +1939,14 @@ namespace Text_Editing
 			index.line = 0;
 			tab.cam_start += line_count;
 		}
-		else if (index.line >= code->line_count)
+		else if (index.line >= code->line_count())
 		{
-			int line_count = index.line - code->line_count + 1;
-			Text_Editing::add_lines(code->line_count, line_count);
+			int line_count = index.line - code->line_count() + 1;
+			Text_Editing::add_lines(code->line_count(), line_count);
 		}
 
-		DynString text = line_index_get_text(index.line);
-		int insert_space_count = index.character - text.size;
+		int text_size = line_index_get_text_size(index.line);
+		int insert_space_count = index.character - text_size;
 		if (syntax_editor.mode != Editor_Mode::INSERT && index.character > 0 && is_cursor) {
 			insert_space_count += 1;
 		}
@@ -1982,11 +1954,11 @@ namespace Text_Editing
 		{
 			auto checkpoint = syntax_editor.arena.make_checkpoint();
 			SCOPE_EXIT(checkpoint.rewind());
-			DynString str = dynstring_create(&syntax_editor.arena);
+			DynString str = DynString::create(&syntax_editor.arena);
 			for (int i = 0; i < insert_space_count; i++) {
 				str.append(' ');
 			}
-			Text_Editing::insert_text_in_line(text_index_make(index.line, text.size), str, false);
+			Text_Editing::insert_text_in_line(text_index_make(index.line, text_size), str.to_string(), false);
 		}
 
 		return index;
@@ -2002,6 +1974,7 @@ namespace Text_Editing
     {
         auto& editor = syntax_editor;
         Editor_Tab& tab = editor.open_tab();
+		SCRATCH_ARENA_MAKE_SCOPED(nullptr);
 
 		auto& display_lines = editor.display_lines;
 		if (display_lines.size == 0) return;
@@ -2016,13 +1989,13 @@ namespace Text_Editing
         for (int display_line_index = display_start; display_line_index < display_lines.size; display_line_index++)
         {
 			Display_Line& display_line = display_lines[display_line_index];
-			DynString line_text = line_index_get_text(display_line.line_index);
+			int line_text_size = line_index_get_text_size(display_line.line_index);
 			if (display_line.line_index < range.start.line) continue;
 			if (display_line.line_index > range.end.line) return;
     
 			// Figure out start and end in line
             int start = range.start.line == display_line.line_index ? range.start.character : 0;
-            int end = range.end.line == display_line.line_index ? range.end.character : line_text.size;
+            int end = range.end.line == display_line.line_index ? range.end.character : line_text_size;
             if (display_line.fold_info.inside_fold) {
 				start = 0;
 				end = 4;
@@ -2057,21 +2030,21 @@ namespace Text_Editing
                     vel = vector_normalize_safe(vel);
                     vel = vel * (30 + random_next_float(&editor.random) * 100);
                     p.velocity = vel;
-                    dynamic_array_push_back(&editor.particles, p);
+                    editor.particles.push_back(p);
                 }
             }
         }
     }
 
-    void insert_text_in_line(Text_Index index, DynString str, bool with_particles)
+    void insert_text_in_line(Text_Index index, String str, bool with_particles)
     {
 		Editor_Tab& tab = syntax_editor.open_tab();
-		history_start_complex_command(&tab.history);
-		SCOPE_EXIT(history_stop_complex_command(&tab.history));
+		history_start_complex_command(tab.history);
+		SCOPE_EXIT(history_stop_complex_command(tab.history));
 
 		// Insert text
 		index = add_padding_to_index(index, false);
-        history_insert_text(&tab.history, index, str);
+        history_insert_text(tab.history, index, str);
 
 		// Add particles
         if (with_particles) {
@@ -2088,14 +2061,14 @@ namespace Text_Editing
 		Editor_Tab& tab = syntax_editor.open_tab();
 
 		// Check that range is inside code
-		if (index.line < 0 || index.line >= tab.code->line_count) return;
-		DynString text = line_index_get_text(index.line);
-		index.character = math_clamp(index.character, 0, text.size);
-		char_end = math_clamp(char_end, 0, text.size);
+		if (index.line < 0 || index.line >= tab.code->line_count()) return;
+		int text_size = line_index_get_text_size(index.line);
+		index.character = math_clamp(index.character, 0, text_size);
+		char_end = math_clamp(char_end, 0, text_size);
 		if (char_end <= index.character) return;
 
 		// Delete text
-        history_delete_text(&tab.history, index, char_end);
+        history_delete_text(tab.history, index, char_end);
 		
 		// Add particles
         if (with_particles) {
@@ -2107,16 +2080,16 @@ namespace Text_Editing
 	void add_lines(int line_index, int line_count) // Lines are added before this index
 	{
 		Editor_Tab& tab = syntax_editor.open_tab();
-		history_start_complex_command(&tab.history);
-		SCOPE_EXIT(history_stop_complex_command(&tab.history));
+		history_start_complex_command(tab.history);
+		SCOPE_EXIT(history_stop_complex_command(tab.history));
 
-		if (line_index < 0 || line_index > tab.code->line_count) {
+		if (line_index < 0 || line_index > tab.code->line_count()) {
 			line_index = add_padding_to_index(text_index_make(line_index, 0), false, false).line;
 		}
 
 		// Add lines
 		for (int i = 0; i < line_count; i++) {
-			history_insert_line(&tab.history, line_index);
+			history_insert_line(tab.history, line_index);
 		}
 	}
 
@@ -2124,15 +2097,15 @@ namespace Text_Editing
 	{
         auto& editor = syntax_editor;
 		Editor_Tab& tab = editor.open_tab();
-		history_start_complex_command(&tab.history);
-		SCOPE_EXIT(history_stop_complex_command(&tab.history));
+		history_start_complex_command(tab.history);
+		SCOPE_EXIT(history_stop_complex_command(tab.history));
 
 		if (line_index < 0) {
 			line_count += line_index;
 			line_index = 0;
 		}
-		if (line_index + line_count >= tab.code->line_count) {
-			line_count = tab.code->line_count - line_index;
+		if (line_index + line_count >= tab.code->line_count()) {
+			line_count = tab.code->line_count() - line_index;
 		}
 		if (line_count <= 0) return;
 
@@ -2144,14 +2117,13 @@ namespace Text_Editing
 
 		// Delete lines
 		for (int i = 0; i < line_count; i++) {
-			history_remove_line(&tab.history, line_index);
+			history_remove_line(tab.history, line_index);
 		}
 	}
 		
     void insert_char(Text_Index index, char c, bool with_particles) 
     {
-		char buffer[2] = { c, '\0' };
-		insert_text_in_line(index, string_create_static(&buffer[0]), with_particles);
+		insert_text_in_line(index, string_make(&c, 1), with_particles);
     }
     
     void delete_char(Text_Index index, bool with_particles) {
@@ -2164,7 +2136,7 @@ namespace Text_Editing
         auto& editor = syntax_editor;
         Editor_Tab& tab = syntax_editor.open_tab();
         auto code = tab.code;
-        auto history = &tab.history;
+        auto history = tab.history;
     
 		// Add particles
         if (is_line_motion) { 
@@ -2187,21 +2159,19 @@ namespace Text_Editing
 			if (range.start.line < 0) {
 				range.start = text_index_make(0, 0);
 			}
-			else if (range.start.line >= code->line_count) {
+			else if (range.start.line >= code->line_count()) {
 				return;
 			}
-			DynString text = line_index_get_text(range.start.line);
-			range.start.character = math_clamp(range.start.character, 0, text.size);
+			range.start.character = math_clamp(range.start.character, 0, line_index_get_text_size(range.start.line));
 
 			// Range end
 			if (range.end.line < 0) {
 				return;
 			}
-			else if (range.end.line >= code->line_count) {
-				range.end = text_index_make(code->line_count - 1, line_index_get_text(code->line_count - 1).size);
+			else if (range.end.line >= code->line_count()) {
+				range.end = text_index_make(code->line_count() - 1, line_index_get_text(code->line_count() - 1).size);
 			}
-			text = line_index_get_text(range.end.line);
-			range.end.character = math_clamp(range.end.character, 0, text.size);
+			range.end.character = math_clamp(range.end.character, 0, line_index_get_text_size(range.end.line));
 		}
     
         // Handle single line case
@@ -2217,8 +2187,8 @@ namespace Text_Editing
         delete_text_in_line(range.start, line_index_get_text(range.start.line).size, false);
     
         // Append remaining text of last-line into first line
-		DynString end_line_text = line_index_get_text(range.end.line);
-        DynString remainder = string_create_substring_static(&end_line_text, range.end.character, end_line_text.size);
+		String end_line_text = line_index_get_text(range.end.line);
+        String remainder = string_make_substring(end_line_text, range.end.character, end_line_text.size);
         insert_text_in_line(range.start, remainder, false);
     
         // Delete all lines inbetween
@@ -2248,12 +2218,12 @@ namespace Text_Editing
 	void update_editor_data_before_text_insert(Editor_Tab* editor_tab, int line_index)
 	{
 		syntax_editor.hide_error_mode_display_errors = false;
-		word_pool_handle_words_from_line(&syntax_editor.word_pool, source_code_get_line(editor_tab->code, line_index), &syntax_editor.arena, true);
+		word_pool_handle_words_from_line(&syntax_editor.word_pool, line_index_get_text(line_index, editor_tab), true);
 	}
 
 	void update_editor_data_after_text_insert(Editor_Tab* editor_tab, int line_index)
 	{
-		word_pool_handle_words_from_line(&syntax_editor.word_pool, source_code_get_line(editor_tab->code, line_index), &syntax_editor.arena, false);
+		word_pool_handle_words_from_line(&syntax_editor.word_pool, line_index_get_text(line_index, editor_tab), false);
 	}
 
 	void update_editor_data_before_line_insert(Editor_Tab* editor_tab, int line_index)
@@ -2298,7 +2268,7 @@ namespace Text_Editing
 	void update_editor_data_before_line_delete(Editor_Tab* editor_tab, int line_index)
 	{
 		syntax_editor.hide_error_mode_display_errors = false;
-		word_pool_handle_words_from_line(&syntax_editor.word_pool, source_code_get_line(editor_tab->code, line_index), &syntax_editor.arena, true);
+		word_pool_handle_words_from_line(&syntax_editor.word_pool, line_index_get_text(line_index, editor_tab), true);
 	}
 
 	void update_editor_data_after_line_delete(Editor_Tab* editor_tab, int line_index)
@@ -2590,53 +2560,52 @@ namespace Auto_Format
 		Editor_Tab& tab = syntax_editor.open_tab();
 		auto code = tab.code;
 
-		if (line_index < 0 || line_index >= code->line_count) return;
-		Source_Line* line = source_code_get_line(code, line_index);
+		Arena* scratch_arena = &editor.frame_arena;
+		auto checkpoint = scratch_arena->make_checkpoint();
+		SCOPE_EXIT(checkpoint.rewind());
+
+		if (line_index < 0 || line_index >= code->line_count()) return;
+		String original_text = line_index_get_text(line_index);
 
 		// Empty line or comment handling:
 		if (line_is_empty(line_index, true)) 
 		{
 			// Remove trailing spaces
-			int end = line->text.size;
-			while (end >= 0 && line->text.at(end - 1) == ' ') {
+			int end = original_text.size;
+			while (end >= 0 && original_text.at(end - 1) == ' ') {
 				end -= 1;
 			}
 			end = math_maximum(end, 0);
-			if (end != line->text.size - 1) {
-				Text_Editing::delete_text_in_line(text_index_make(line_index, end), line->text.size, true);
+			if (end != original_text.size - 1) {
+				Text_Editing::delete_text_in_line(text_index_make(line_index, end), original_text.size, true);
 			}
 			return;
 		}
 
-		Arena* tmp_arena = &editor.arena;
-		auto checkpoint = tmp_arena->make_checkpoint();
-		SCOPE_EXIT(checkpoint.rewind());
-
-		auto& text = line->text;
 		int& cursor = tab.cursor.character;
 		int indentation = line_get_whitespace_indentation(line_index);
 		Char_Group space_critical = Char_Group(Char_Group_Type::SPACE_CRITICAL);
 
 		// 1. Create trimmed string where non-essential spaces are removed
-		DynString trimmed_text = dynstring_create(tmp_arena, text.size);
+		DynString trimmed_text = DynString::create(scratch_arena);
 		int cursor_in_trimmed = cursor;
 		{
 			for (int i = 0; i < indentation; i++) {
-				string_append(&trimmed_text, "    ");
+				trimmed_text.append("    ");
 			}
-			for (int i = indentation * 4; i < text.size; i++)
+			for (int i = indentation * 4; i < original_text.size; i++)
 			{
 				char prev = trimmed_text.size > 0 ? trimmed_text[trimmed_text.size-1] : '\0';
-				char c = text[i];
-				char next = i + 1 < text.size ? text[i + 1] : '\0';
+				char c = original_text[i];
+				char next = i + 1 < original_text.size ? original_text[i + 1] : '\0';
 
 				// Handle strings
 				if (c == '"') 
 				{
 					int start = i;
 					i += 1;
-					while (i < text.size) {
-						char c = text[i];
+					while (i < original_text.size) {
+						char c = original_text[i];
 						if (c == '\\') {
 							i += 2;
 							continue;
@@ -2646,13 +2615,13 @@ namespace Auto_Format
 						}
 						i += 1;
 					}
-					DynString substring = string_create_substring_static(&text, start, i + 1); // Without closing "
+					String substring = string_make_substring(original_text, start, i + 1); // Without closing "
 					trimmed_text.append(substring);
 					continue;
 				}
 				// Handle comments
 				if (c == '/' && next == '/') {
-					trimmed_text.append(string_create_substring_static(&text, i, text.size));
+					trimmed_text.append(string_make_substring(original_text, i, original_text.size));
 					break;
 				}
 
@@ -2680,37 +2649,40 @@ namespace Auto_Format
 					}
 					continue;
 				}
-				string_append_character(&trimmed_text, c);
+				trimmed_text.append(c);
 			}
 		}
 
 		// 1.5 Add spaces around cursor in trimmed text if they were there before
 		if (tab.cursor.line == line_index && editor.mode == Editor_Mode::INSERT)
 		{
-			bool space_after  = string_test_char(text, cursor, ' ');
-			bool space_before = string_test_char(text, cursor - 1, ' ');
-			if (space_after && !string_test_char(trimmed_text, cursor_in_trimmed, ' ')) {
-				string_insert_character_before(&trimmed_text, ' ', cursor_in_trimmed);
+			char space_char = ' ';
+			String space_string = string_make(&space_char, 1);
+
+			bool space_after  = string_test_char(original_text, cursor, ' ');
+			bool space_before = string_test_char(original_text, cursor - 1, ' ');
+			if (space_after && !string_test_char(trimmed_text.to_string(), cursor_in_trimmed, ' ')) {
+				dynstring_insert(&trimmed_text, space_string, cursor_in_trimmed);
 			}
-			if (space_before && cursor_in_trimmed > 0 && !string_test_char(trimmed_text, cursor_in_trimmed - 1, ' ')) {
-				string_insert_character_before(&trimmed_text, ' ', cursor_in_trimmed);
+			if (space_before && cursor_in_trimmed > 0 && !string_test_char(trimmed_text.to_string(), cursor_in_trimmed - 1, ' ')) {
+				dynstring_insert(&trimmed_text, space_string, cursor_in_trimmed);
 				cursor_in_trimmed += 1;
 			}
 		}
 
 		// 2. Tokenize trimmed-string
-		DynArray<Token> tokens = DynArray<Token>::create(tmp_arena);
-		tokenizer_tokenize_single_line(trimmed_text, &tokens, line_index, false);
+		DynArray<Token> tokens = DynArray<Token>::create(scratch_arena);
+		tokenizer_tokenize_single_line(trimmed_text.to_string(), &tokens, line_index, false);
 
 		// 3. Re-create line-text from tokens with formating spaces
-		DynString formated_string = dynstring_create(tmp_arena);
+		DynString formated_string = dynstring_create(scratch_arena);
 		for (int i = 0; i < indentation; i++) {
 			formated_string.append("    ");
 		}
 		for (int i = 0; i < tokens.size; i++)
 		{
 			Token& curr = tokens[i];
-			formated_string.append(string_create_substring_static(&trimmed_text, curr.start, curr.end));
+			formated_string.append(string_make_substring(trimmed_text.to_string(), curr.start, curr.end));
 			if (i == tokens.size - 1) break;
 
 			// Add space if necessary
@@ -2749,36 +2721,37 @@ namespace Auto_Format
 
 		if (false)
 		{
-			string_add_null_terminator(&text);
-			string_add_null_terminator(&trimmed_text);
-			string_add_null_terminator(&formated_string);
-			logg("Auto-format:\n");
-			logg("Normal:   \"%s\"\n", text.characters);
-			logg("Trimmed:  \"%s\"\n", trimmed_text.characters);
-			logg("Formated: \"%s\"\n", formated_string.characters);
-			logg("-----------------------\n");
+			DynString output = DynString::create(scratch_arena);
+			output.reset()
+				->append("Auto-format:\n")
+				->append("Normal:   \"")->append(original_text)->append("\"\n")
+				->append("Trimmed:  \"")->append(trimmed_text)->append("\"\n")
+				->append("Formated: \"")->append(formated_string)->append("\"\n")
+				->append("----------------------------\n")
+				;
+			logg(output.to_cstring());
 		}
 
 		// 4. Diff formated-text and actual text
 		int text_index = 0;
 		int formated_index = 0;
 		bool cursor_on_line = tab.cursor.line == line_index;
-		while (text_index < text.size || formated_index < formated_string.size)
+		while (text_index < original_text.size || formated_index < formated_string.size)
 		{
 			if (formated_index >= formated_string.size) {
-				history_delete_text(&tab.history, text_index_make(line_index, text_index), text.size);
+				history_delete_text(tab.history, text_index_make(line_index, text_index), original_text.size);
 				break;
 			}
-			if (text_index >= text.size) 
+			if (text_index >= original_text.size) 
 			{
 				history_insert_text(
-					&tab.history, text_index_make(line_index, text.size),
-					string_create_substring_static(&formated_string, formated_index, formated_string.size)
+					tab.history, text_index_make(line_index, original_text.size),
+					string_make_substring(formated_string.to_string(), formated_index, formated_string.size)
 				);
 				break;
 			}
 
-			char text_char = text[text_index];
+			char text_char = original_text[text_index];
 			char formated_char = formated_string[formated_index];
 
 			if (text_char == formated_char) {
@@ -2789,7 +2762,7 @@ namespace Auto_Format
 
 			if (text_char == ' ') 
 			{
-				history_delete_char(&tab.history, text_index_make(line_index, text_index));
+				history_delete_char(tab.history, text_index_make(line_index, text_index));
 				if (cursor_on_line && editor.mode == Editor_Mode::INSERT && cursor > text_index) {
 					cursor -= 1;
 				}
@@ -2799,7 +2772,7 @@ namespace Auto_Format
 			}
 			else if (formated_char == ' ') 
 			{
-				history_insert_char(&tab.history, text_index_make(line_index, text_index), ' ');
+				history_insert_char(tab.history, text_index_make(line_index, text_index), ' ');
 				if (cursor_on_line && cursor > text_index) {
 					cursor += 1;
 				}
@@ -2814,7 +2787,7 @@ namespace Auto_Format
 
 
 // LINE INFOS
-bool line_is_empty(DynString text, bool count_comment_as_empty)
+bool line_is_empty(String text, bool count_comment_as_empty)
 {
 	for (int i = 0; i < text.size; i++) {
 		char c = text[i];
@@ -2828,16 +2801,11 @@ bool line_is_empty(DynString text, bool count_comment_as_empty)
 	return true;
 }
 
-bool line_is_empty(Source_Line* line, bool count_comment_as_empty)
-{
-	return line_is_empty(line->text, count_comment_as_empty);
-}
-
 int line_is_empty(int line_index, bool count_comment_as_empty)  {
 	return line_is_empty(line_index_get_text(line_index), count_comment_as_empty);
 }
 
-int line_count_leading_spaces(DynString text)
+int line_count_leading_spaces(String text)
 {
 	int index = 0;
 	while (index < text.size && text[index] == ' ') {
@@ -2846,17 +2814,12 @@ int line_count_leading_spaces(DynString text)
 	return index;
 }
 
-int line_count_leading_spaces(Source_Line* line) 
-{
-	return line_count_leading_spaces(line->text);
-}
-
 int line_count_leading_spaces(int line_index) {
 	return line_count_leading_spaces(line_index_get_text(line_index));
 }
 
-int line_get_whitespace_indentation(Source_Line* line) {
-	return line_count_leading_spaces(line) / 4;
+int line_get_whitespace_indentation(String text)  {
+	return line_count_leading_spaces(text) / 4;
 }
 
 int line_get_whitespace_indentation(int line_index)  {
@@ -2894,7 +2857,7 @@ int line_estimate_leading_spaces(int line_index)
 
 	int next_line_index = line_index;
 	int next_space_count = 0;
-	while (next_line_index < tab.code->line_count)
+	while (next_line_index < tab.code->line_count())
 	{
 		if (!line_is_empty(next_line_index, false)) {
 			next_space_count = line_count_leading_spaces(next_line_index);
@@ -2907,7 +2870,7 @@ int line_estimate_leading_spaces(int line_index)
 	if (prev_line_index < 0) {
 		return 0;
 	}
-	if (next_line_index >= tab.code->line_count) {
+	if (next_line_index >= tab.code->line_count()) {
 		return 0;
 		// Alternatively:
 		// return math_maximum(0, prev_space_count - 4); // We are after any block that started before...
@@ -2937,23 +2900,23 @@ Editor_Suggestion suggestion_make_symbol(Symbol* symbol) {
 	Editor_Suggestion result;
 	result.type = Suggestion_Type::SYMBOL;
 	result.options.symbol = symbol;
-	result.text = string_view_from_string(*symbol->id);
+	result.text = *symbol->id.string;
 	return result;
 }
 
-Editor_Suggestion suggestion_make_string_view(String_View view, Syntax_Color color = Syntax_Color::TEXT) {
+Editor_Suggestion suggestion_make_id(Identifier id, Syntax_Color color = Syntax_Color::TEXT) {
 	Editor_Suggestion result;
 	result.type = Suggestion_Type::ID;
-	result.text = view;
 	result.options.id_color = color;
+	result.text = *id.string;
 	return result;
 }
 
-Editor_Suggestion suggestion_make_id(DynString* id, Syntax_Color color = Syntax_Color::TEXT) {
+Editor_Suggestion suggestion_make_word_pool_word(String name, Syntax_Color color = Syntax_Color::TEXT) {
 	Editor_Suggestion result;
-	result.type = Suggestion_Type::ID;
-	result.text = string_view_from_string(*id);
+	result.type = Suggestion_Type::WORD_POOL_WORD;
 	result.options.id_color = color;
+	result.text = name;
 	return result;
 }
 
@@ -2961,24 +2924,24 @@ Editor_Suggestion suggestion_make_file(int file_index) {
 	Editor_Suggestion result;
 	result.type = Suggestion_Type::FILE;
 	result.options.file_index_in_crawler = file_index;
-	result.text = string_view_from_string(directory_crawler_get_content(syntax_editor.directory_crawler)[file_index].filename);
+	result.text = directory_crawler_get_content(syntax_editor.directory_crawler)[file_index].filename;
 	return result;
 }
 
-Editor_Suggestion suggestion_make_struct_member(Datatype_Struct* struct_type, Datatype* member_type, DynString* id) {
+Editor_Suggestion suggestion_make_struct_member(Datatype_Struct* struct_type, Datatype* member_type, Identifier id) {
 	Editor_Suggestion result;
 	result.type = Suggestion_Type::STRUCT_MEMBER;
 	result.options.struct_member.structure = struct_type;
 	result.options.struct_member.member_type = member_type;
-	result.text = string_view_from_string(*id);
+	result.text = *id.string;
 	return result;
 }
 
-Editor_Suggestion suggestion_make_enum_member(Datatype_Enum* enum_type, DynString* id) {
+Editor_Suggestion suggestion_make_enum_member(Datatype_Enum* enum_type, Identifier id) {
 	Editor_Suggestion result;
 	result.type = Suggestion_Type::ENUM_MEMBER;
 	result.options.enum_member.enumeration = enum_type;
-	result.text = string_view_from_string(*id);
+	result.text = *id.string;
 	return result;
 }
 
@@ -2991,7 +2954,7 @@ int compilation_unit_find_tab_index(Compilation_Unit* unit)
 	for (int i = 0; i < tabs.size; i++)
 	{
 		Editor_Tab* tab = tabs[i];
-		if (string_equals(&unit->filepath, &tab->filepath)) {
+		if (unit->filepath == tab->filepath) {
 			return i;
 		}
 	}
@@ -3003,7 +2966,7 @@ Compilation_Unit* tab_to_compilation_unit(Editor_Tab* tab)
 	auto& units = syntax_editor.editor_compilation_data->compilation_units;
 	for (int i = 0; i < units.size; i++)
 	{
-		if (string_equals(&units[i]->filepath, &tab->filepath)) {
+		if (units[i]->filepath == tab->filepath) {
 			return units[i];
 		}
 	}
@@ -3015,38 +2978,40 @@ Compilation_Unit* tab_to_compilation_unit(int tab_index) {
 }
 
 // Returns new tab index (Or current tab if file cannot be loaded)
-int syntax_editor_add_tab(DynString file_path)
+int syntax_editor_add_tab(String file_path)
 {
 	auto& editor = syntax_editor;
+	Arena* scratch_arena = &editor.frame_arena;
 
-	DynString new_filepath = dynstring_copy(file_path);
-	SCOPE_EXIT(string_destroy(&new_filepath)); // Note: on success capacity is set to 0, so it wont be destroyed
+	DynString new_filepath = DynString::create(scratch_arena);
+	new_filepath.append(file_path);
     filepath_relative_to_absolute_path(&new_filepath);
 
 	// Check if file is already open in another tab
 	for (int i = 0; i < editor.tabs.size; i++) {
 		Editor_Tab* tab = editor.tabs[i];
-		if (string_equals(&new_filepath, &tab->filepath)) return i;
+		if (new_filepath.to_string() == tab->filepath) return i;
 	}
 
 	// Return current tab if file cannot be loaded
-	if (file_io_get_file_info(new_filepath).status != File_Info_Status::SUCCESS) {
+	if (file_io_get_file_info(new_filepath.to_string()).status != File_Info_Status::SUCCESS) {
 		return editor.open_tab_index;
 	}
 
 	// Create new tab
 	Editor_Tab* tab = new Editor_Tab;
-	tab->filepath = new_filepath;
+	tab->arena = Arena::create();
+	tab->filepath = string_allocate_copy(new_filepath.to_string(), tab->arena.upcast());
 	new_filepath.capacity = 0; // Take ownership
 	tab->code = source_code_load_from_file(tab->filepath);
-	word_pool_handle_words_from_code(&editor.word_pool, tab->code, &editor.arena, false);
+	word_pool_handle_words_from_code(&editor.word_pool, tab->code, false);
 
 	tab->requires_recompile = true;
 	tab->history = code_history_create(tab);
-	tab->last_code_info_synch = history_get_timestamp(&tab->history);
-	tab->last_compiler_synchronized = history_get_timestamp(&tab->history);
+	tab->last_code_info_synch = history_get_timestamp(tab->history);
+	tab->last_compiler_synchronized = history_get_timestamp(tab->history);
 	tab->last_code_completion_info_index = -1;
-	tab->last_render_timestamp = history_get_timestamp(&tab->history);
+	tab->last_render_timestamp = history_get_timestamp(tab->history);
 	tab->last_code_completion_query_pos = text_index_make(-1, -1);
 	tab->last_render_cursor_pos = text_index_make(0, 0);
 	tab->cursor = text_index_make(0, 0);
@@ -3054,7 +3019,6 @@ int syntax_editor_add_tab(DynString file_path)
 	tab->move_to_horizontal_start = false;
 	tab->cam_start = 0;
 
-	tab->arena = Arena::create();
 	tab->folds = DynArray<Code_Fold>::create(&tab->arena);
 	tab->next_free_child_fold = -1;
 	tab->child_folds = DynArray<Code_Fold>::create(&tab->arena);
@@ -3063,14 +3027,16 @@ int syntax_editor_add_tab(DynString file_path)
 	tab->screen_count = 0;
 	tab->current_screen_index = 0;
 
-	dynamic_array_push_back(&syntax_editor.tabs, tab);
+	syntax_editor.tabs.push_back(tab);
 	return syntax_editor.tabs.size - 1;
 }
 
 void editor_tab_destroy(Editor_Tab* tab) 
 {
-	code_history_destroy(&tab->history);
+	code_history_destroy(tab->history);
 	tab->arena.destroy();
+
+	// Don't destroy code if a compilation unit is currently using it? Why
 	for (int i = 0; i < syntax_editor.editor_compilation_data->compilation_units.size; i += 1) {
 		Compilation_Unit* unit = syntax_editor.editor_compilation_data->compilation_units[i];
 		if (unit->code == tab->code) {
@@ -3082,33 +3048,35 @@ void editor_tab_destroy(Editor_Tab* tab)
 		source_code_destroy(tab->code);
 		tab->code = nullptr;
 	}
-	string_destroy(&tab->filepath);
+
 	delete tab;
 }
 
-struct Comparator_Compiler_Error
+Order_Comparison_Result error_index_sort_fn(int* ap, int* bp, void* userdata)
 {
-	bool operator()(const int& a_index, const int& b_index)
-	{
-		auto& editor = syntax_editor;
-		Code_Error& a = editor.editor_compilation_data->code_errors[a_index];
-		Code_Error& b = editor.editor_compilation_data->code_errors[b_index];
+	auto& editor = syntax_editor;
 
-		int tab_a = compilation_unit_find_tab_index(a.unit);
-		int tab_b = compilation_unit_find_tab_index(b.unit);
+	int index_a = *ap;
+	int index_b = *bp;
 
-		if (tab_a != tab_b) {
-			return tab_a < tab_b;
-		}
+	Code_Error& a = editor.editor_compilation_data->code_errors[index_a];
+	Code_Error& b = editor.editor_compilation_data->code_errors[index_b];
 
-		Text_Index start_a = a.ranges.last().start;
-		Text_Index start_b = b.ranges.last().start;
-		if (start_a.line != start_b.line) {
-			return start_a.line < start_b.line;
-		}
-		return start_a.character < start_b.character;
+	int tab_a = compilation_unit_find_tab_index(a.unit);
+	int tab_b = compilation_unit_find_tab_index(b.unit);
+
+	if (tab_a != tab_b) {
+		return tab_a < tab_b ? Order_Comparison_Result::LESS : Order_Comparison_Result::GREATER;
 	}
-};
+
+	Text_Index start_a = a.ranges.last().start;
+	Text_Index start_b = b.ranges.last().start;
+	if (start_a.line != start_b.line) {
+		return start_a.line < start_b.line ? Order_Comparison_Result::LESS : Order_Comparison_Result::GREATER;
+	}
+	if (start_a.character == start_b.character) return Order_Comparison_Result::EQUAL;
+	return start_a.character < start_b.character ? Order_Comparison_Result::LESS : Order_Comparison_Result::GREATER;
+}
 
 void sort_error_indices()
 {
@@ -3116,12 +3084,12 @@ void sort_error_indices()
 	auto& errors = editor.editor_compilation_data->code_errors;
 	auto& indices = editor.error_indices_sorted;
 
-	dynamic_array_reset(&indices);
-	dynamic_array_reserve(&indices, errors.size);
+	indices.reset();
+	indices.reserve(errors.size);
 	for (int i = 0; i < errors.size; i++) {
-		dynamic_array_push_back(&indices, i);
+		indices.push_back(i);
 	}
-	dynamic_array_sort(&indices, Comparator_Compiler_Error());
+	array_sort(indices.as_array(), error_index_sort_fn, nullptr);
 }
 
 void syntax_editor_switch_tab(int new_tab_index)
@@ -3143,13 +3111,13 @@ void syntax_editor_close_tab(int tab_index, bool force_close = false)
 
 	syntax_editor_save_text_file();
 
-	word_pool_handle_words_from_code(&editor.word_pool, editor.tabs[tab_index]->code, &editor.arena, true);
+	word_pool_handle_words_from_code(&editor.word_pool, editor.tabs[tab_index]->code, true);
 
 	Editor_Tab* tab = editor.tabs[tab_index];
 	editor_tab_destroy(editor.tabs[tab_index]);
-	dynamic_array_remove_ordered(&editor.tabs, tab_index);
+	editor.tabs.remove_ordered(tab_index);
 
-	editor.open_tab_index = math_minimum(editor.tabs.size - 1, editor.open_tab_index);
+	editor.open_tab_index = math_minimum((int)editor.tabs.size - 1, editor.open_tab_index);
 	if (tab_index < editor.last_compile_main_tab_index) {
 		editor.last_compile_main_tab_index -= 1;
 	}
@@ -3173,6 +3141,21 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 	gui_initialize(text_renderer, window);
 	ui_system_initialize();
 
+	syntax_editor.arena = Arena::create();
+	Arena* arena = &syntax_editor.arena;
+	syntax_editor.frame_arena = Arena::create();
+	syntax_editor.freelist_string_list = Free_List::create<String_List_Node>(syntax_editor.arena.upcast());
+	syntax_editor.tabs = DynArray<Editor_Tab*>::create(arena);
+
+	// All things with arena
+	syntax_editor.source_to_display_line_mapping = DynTable<int, int>::create(arena, hash_i32, equals_i32);
+	syntax_editor.display_lines = DynArray<Display_Line>::create(arena);
+	syntax_editor.command_buffer = dynstring_create(arena);
+	syntax_editor.fuzzy_search_text = dynstring_create(arena);
+	syntax_editor.search_text = dynstring_create(arena);
+	syntax_editor.yank_string = dynstring_create(arena);
+	syntax_editor.last_recorded_code_completion = dynstring_create(arena);
+
 	syntax_editor.word_pool_arena = Arena::create();
 	syntax_editor.word_pool = word_pool_create(&syntax_editor.word_pool_arena);
 
@@ -3183,35 +3166,25 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 	syntax_editor.compile_count = 0;
 	syntax_editor.random = random_make_time_initalized();
 	syntax_editor.last_update_time = timer_current_time_in_seconds();
-	syntax_editor.particles = dynamic_array_create<Particle>();
+	syntax_editor.particles = DynArray<Particle>::create(arena);
 	syntax_editor.directory_crawler = directory_crawler_create();
 	syntax_editor.frame_index = 1;
 	syntax_editor.last_compile_was_with_code_gen = false;
-	syntax_editor.arena = Arena::create();
 
 	syntax_editor.font_renderer = Font_Renderer::create(512);
-	syntax_editor.font_main = syntax_editor.font_renderer->add_raster_font("resources/fonts/consola.ttf", 18);
-	syntax_editor.font_smaller = syntax_editor.font_renderer->add_raster_font("resources/fonts/consola.ttf", 16);
+	syntax_editor.font_main = syntax_editor.font_renderer->add_raster_font(string_make("resources/fonts/consola.ttf"), 18);
+	syntax_editor.font_smaller = syntax_editor.font_renderer->add_raster_font(string_make("resources/fonts/consola.ttf"), 16);
 	syntax_editor.font_renderer->finish_atlas();
-	syntax_editor.source_to_display_line_mapping = DynTable<int, int>::create(&syntax_editor.arena, hash_i32, equals_i32);
-	syntax_editor.display_lines = DynArray<Display_Line>::create(&syntax_editor.arena);
 
 	syntax_editor.visible_line_count = (int)(rendering_core.render_information.backbuffer_height / syntax_editor.font_main->char_size.y) + 1;
-	syntax_editor.command_buffer = dynstring_create();
-
-	syntax_editor.fuzzy_search_text = dynstring_create();
-	syntax_editor.suggestions = dynamic_array_create<Editor_Suggestion>();
-	syntax_editor.search_text = dynstring_create();
-
-	syntax_editor.yank_string = dynstring_create();
+	syntax_editor.suggestions = DynArray<Editor_Suggestion>::create(arena);
 	syntax_editor.yank_was_line = false;
 
 	syntax_editor.last_normal_command.type = Normal_Command_Type::MOVEMENT;
 	syntax_editor.last_normal_command.options.movement.type = Movement_Type::MOVE_LEFT;
 	syntax_editor.last_normal_command.options.movement.repeat_count = 0;
-	syntax_editor.last_insert_commands = dynamic_array_create<Insert_Command>();
+	syntax_editor.last_insert_commands = DynArray<Insert_Command>::create(arena);
 	syntax_editor.record_insert_commands = true;
-	syntax_editor.last_recorded_code_completion = dynstring_create();
 
 	syntax_editor.text_renderer = text_renderer;
 	syntax_editor.renderer_2D = renderer_2D;
@@ -3225,14 +3198,14 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 
 	syntax_editor.show_semantic_infos = false;
 
-	syntax_editor.error_indices_sorted = dynamic_array_create<int>();
+	syntax_editor.error_indices_sorted = DynArray<int>::create(arena);
 
-	syntax_editor.watch_values = dynamic_array_create<Watch_Value>();
+	syntax_editor.watch_values = DynArray<Watch_Value>::create(arena);
 	syntax_editor.selected_stack_frame = 0;
 
 	syntax_editor.pass_filter_ui_open = false;
-	syntax_editor.poly_pass_filters = dynamic_array_create<Pass_Filter>();
-	syntax_editor.filtered_passes = hashtable_create_pointer_empty<Analysis_Pass*, bool>(1);
+	syntax_editor.poly_pass_filters = DynArray<Pass_Filter>::create(arena);
+	syntax_editor.filtered_passes = DynTable<Analysis_Pass*, bool>::create_pointer(arena);
 	syntax_editor.prefer_poly_passes = true;
 	syntax_editor.prefer_base_pass = false;
 
@@ -3249,8 +3222,7 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 	compiler_thread_data.compiler_thread = thread_create(compiler_thread_entry_fn, &syntax_editor.compiler_thread_data);
 
 	// Open initial tab
-	DynString default_filename = string_create_static("upp_code/editor_text.upp");
-	int tab_index = syntax_editor_add_tab(default_filename);
+	int tab_index = syntax_editor_add_tab(string_make("upp_code/editor_text.upp"));
 	syntax_editor_switch_tab(tab_index);
 	assert(tab_index != -1, "");
 	syntax_editor.open_tab_index = 0;
@@ -3274,7 +3246,11 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 	// Add default words
 	{
 		auto helper_add_word = [](const char* word) {
-			word_pool_add_word(&syntax_editor.word_pool, string_view_from_cstring(word));
+			word_pool_add_word(&syntax_editor.word_pool, string_make(word));
+		};
+		
+		auto helper_add_id = [](Identifier id) {
+			word_pool_add_word(&syntax_editor.word_pool, *id.string);
 		};
 
 		helper_add_word("loop");
@@ -3337,22 +3313,22 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 			case Datatype_Type::ENUM: 
 			{
 				Datatype_Enum* enum_type = downcast<Datatype_Enum>(datatype);
-				helper_add_word(enum_type->name->characters);
+				helper_add_id(enum_type->name);
 				for (int j = 0; j < enum_type->members.size; j++)
 				{
 					Enum_Member& member = enum_type->members[j];
-					helper_add_word(member.name->characters);
+					helper_add_id(member.name);
 				}
 				break;
 			}
 			case Datatype_Type::STRUCT:
 			{
 				Datatype_Struct* structure = downcast<Datatype_Struct>(datatype);
-				helper_add_word(structure->name->characters);
+				helper_add_id(structure->name);
 				for (int j = 0; j < structure->members.size; j++)
 				{
 					Struct_Member& member = structure->members[j];
-					helper_add_word(member.name->characters);
+					helper_add_id(member.name);
 				}
 				break;
 			}
@@ -3381,52 +3357,31 @@ void syntax_editor_destroy()
 	ui_system_shutdown();
 	debugger_destroy(editor.debugger);
 	directory_crawler_destroy(editor.directory_crawler);
-	dynamic_array_destroy(&editor.particles);
-	dynamic_array_destroy(&editor.suggestions);
-	string_destroy(&syntax_editor.command_buffer);
-	string_destroy(&syntax_editor.yank_string);
-	string_destroy(&syntax_editor.fuzzy_search_text);
-	string_destroy(&syntax_editor.search_text);
-	dynamic_array_destroy(&syntax_editor.error_indices_sorted);
-	editor.arena.destroy();
 	editor.font_renderer->destroy();
-
-	dynamic_array_destroy(&editor.last_insert_commands);
-	string_destroy(&editor.last_recorded_code_completion);
 
 	for (int i = 0; i < editor.tabs.size; i++) {
 		editor_tab_destroy(editor.tabs[i]);
 	}
-	dynamic_array_destroy(&editor.tabs);
-
-	for (int i = 0; i < editor.watch_values.size; i++) {
-		string_destroy(&editor.watch_values[i].name);
-		string_destroy(&editor.watch_values[i].value_as_text);
-	}
-	dynamic_array_destroy(&editor.watch_values);
-
-	for (int i = 0; i < editor.poly_pass_filters.size; i++) {
-		string_destroy(&editor.poly_pass_filters[i].required_substring);
-	}
-	dynamic_array_destroy(&editor.poly_pass_filters);
-	hashtable_destroy(&editor.filtered_passes);
 
 	fiber_pool_destroy(editor.fiber_pool);
 
 	editor.word_pool_arena.destroy();
+	editor.frame_arena.destroy();
+	editor.arena.destroy();
 }
 
 void syntax_editor_save_text_file()
 {
+	SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+	DynString tmp_string = dynstring_create(scratch_arena);
+
 	auto& editor = syntax_editor;
 	for (int i = 0; i < editor.tabs.size; i++)
 	{
 		Editor_Tab* tab = editor.tabs[i];
-		DynString whole_text = dynstring_create(256);
-		SCOPE_EXIT(string_destroy(&whole_text));
-		source_code_append_to_string(tab->code, &whole_text);
+		source_code_append_to_string(tab->code, tmp_string.reset());
 		auto path = tab->filepath;
-		auto success = file_io_write_text_file(path, whole_text);
+		auto success = file_io_write_text_file(path, tmp_string.to_string());
 		if (!success) {
 			logg("Saving file failed for path \"%s\"\n", path.characters);
 		}
@@ -3490,7 +3445,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 		bool code_has_changed = false;
 		for (int i = 0; i < editor.tabs.size; i++) {
 			auto& tab = *editor.tabs[i];
-			if (tab.history.current != tab.last_compiler_synchronized.node_index || tab.requires_recompile) {
+			if (tab.history->current != tab.last_compiler_synchronized.node_index || tab.requires_recompile) {
 				code_has_changed = true;
 			}
 		}
@@ -3563,8 +3518,8 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 		compilation_data_destroy(old_data);
 
 		sort_error_indices();
-		dynamic_array_reset(&editor.suggestions);
-		hashtable_reset(&editor.filtered_passes);
+		editor.suggestions.reset();
+		editor.filtered_passes.reset();
 		editor.compile_count += 1;
 	}
 
@@ -3576,7 +3531,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 			Editor_Tab& tab = *editor.tabs[i];
 
 			Compilation_Unit* unit = compilation_data_add_compilation_unit_unique(compilation_data, tab.filepath, false, false);
-			auto now = history_get_timestamp(&tab.history);
+			auto now = history_get_timestamp(tab.history);
 			if (unit->code == nullptr) // If this is the first compilation_unit for this file, just copy it over
 			{
 				unit->code = source_code_copy(tab.code);
@@ -3590,7 +3545,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 			{
 				Dynamic_Array<Code_Change> changes = dynamic_array_create<Code_Change>();
 				SCOPE_EXIT(dynamic_array_destroy(&changes));
-				history_get_changes_between(&tab.history, tab.last_compiler_synchronized, now, &changes);
+				history_get_changes_between(tab.history, tab.last_compiler_synchronized, now, &changes);
 				for (int i = 0; i < changes.size; i++) {
 					code_change_apply(unit->code, &changes[i], true, nullptr); // Note: This does not go through history
 				}
@@ -3725,7 +3680,7 @@ bool syntax_editor_toggle_line_breakpoint(int tab_index, int line_index)
 {
 	if (tab_index < 0 || tab_index >= syntax_editor.tabs.size) return false;
 	auto& tab = *syntax_editor.tabs[tab_index];
-	if (line_index < 0 || line_index >= tab.code->line_count) return false;
+	if (line_index < 0 || line_index >= tab.code->line_count()) return false;
 
 	auto& breakpoints = tab.breakpoints;
 	int index = -1;
@@ -3759,14 +3714,15 @@ bool syntax_editor_toggle_line_breakpoint(int tab_index, int line_index)
 	return false;
 }
 
-void syntax_editor_save_state(DynString file_path)
+void syntax_editor_save_state(String file_path)
 {
 	auto& editor = syntax_editor;
 
+	SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+	DynString output = dynstring_create(scratch_arena);
+
 	syntax_editor_save_text_file();
 
-	DynString output = dynstring_create();
-	SCOPE_EXIT(string_destroy(&output));
 	dynstring_append_formated(&output, "open_tab=%d\n", editor.open_tab_index);
 	dynstring_append_formated(&output, "main_tab=%d\n", editor.main_tab_index);
 
@@ -3787,7 +3743,7 @@ void syntax_editor_save_state(DynString file_path)
 		}
 	}
 	for (int i = 0; i < editor.watch_values.size; i++) {
-		dynstring_append_formated(&output, "watch_value=%s\n", editor.watch_values[i].name.characters);
+		output.append("watch_value=")->append(editor.watch_values[i].name)->append('\n');
 	}
 	for (int i = 0; i < (int)Toggle_Option::MAX_ENUM_VALUE; i++)
 	{
@@ -3795,18 +3751,19 @@ void syntax_editor_save_state(DynString file_path)
 		dynstring_append_formated(&output, "%s=%s\n", toggle_option_as_string(option), (syntax_editor.get_option_value(option) ? "true" : "false"));
 	}
 
-	file_io_write_text_file(file_path, output);
+	file_io_write_text_file(file_path, output.to_string());
 }
 
-void syntax_editor_load_state(DynString file_path)
+void syntax_editor_load_state(String file_path)
 {
 	auto& editor = syntax_editor;
 	editor.mode = Editor_Mode::NORMAL;
 
 	SCRATCH_ARENA_MAKE_SCOPED(&editor.arena);
+	DynString session_text = DynString::create(scratch_arena);
 
-	auto file_opt = file_io_load_text_file(file_path, scratch_arena);
-	if (!file_opt.available) {
+	bool load_success = file_io_load_text_file(file_path, &session_text);
+	if (!load_success) {
 		return;
 	}
 
@@ -3818,46 +3775,39 @@ void syntax_editor_load_state(DynString file_path)
 		}
 		for (int i = 0; i < editor.watch_values.size; i++) {
 			auto& value = editor.watch_values[i];
-			string_destroy(&value.name);
-			string_destroy(&value.value_as_text);
+			value.name.deallocate();
+			value.value_as_text.deallocate();
 		}
-		dynamic_array_reset(&editor.watch_values);
+		editor.watch_values.reset();
 	}
 
-	DynString session = file_opt.value;
-	Array<DynString> lines = string_split(session, '\n');
-	SCOPE_EXIT(string_split_destroy(lines));
+	Array<String> lines = string_split(session_text.to_string(), '\n', scratch_arena);
 
 	bool last_tab_valid = false;
 	int last_tab_index = -1;
 	bool first_tab = true;
 	int open_tab_index = -5;
 	int main_tab_index = -5;
-	DynString setting = dynstring_create(16);
-	SCOPE_EXIT(string_destroy(&setting));
-	DynString value = dynstring_create(16);
-	SCOPE_EXIT(string_destroy(&value));
 	for (int i = 0; i < lines.size; i++)
 	{
-		DynString line = lines[i];
-		auto seperator = string_find_character_index(&line, '=', 0);
+		String line = lines[i];
+		auto seperator = string_find_character_index(line, '=', 0);
 		if (!seperator.available) {
+			logg("Syntax_editor_load_state: line #%d without seperator '=', skipping", i);
 			continue;
 		}
-		dynstring_reset(&setting);
-		string_append_string(&setting, &string_create_substring_static(&line, 0, seperator.value));
-		dynstring_reset(&value);
-		string_append_string(&value, &string_create_substring_static(&line, seperator.value + 1, line.size));
+		String setting = string_make_substring(line, 0, seperator.value);
+		String value = string_make_substring(line, seperator.value + 1, line.size);
 		if (setting.size == 0 || value.size == 0) continue;
 
 		int* int_value_to_set = nullptr;
-		if (string_equals_cstring(&setting, "open_tab")) {
+		if (setting == string_make("open_tab")) {
 			int_value_to_set = &open_tab_index;
 		}
-		else if (string_equals_cstring(&setting, "main_tab")) {
+		else if (setting == string_make("main_tab")) {
 			int_value_to_set = &main_tab_index;
 		}
-		else if (string_equals_cstring(&setting, "tab"))
+		else if (setting == string_make("tab"))
 		{
 			if (first_tab) {
 				first_tab = false;
@@ -3871,25 +3821,24 @@ void syntax_editor_load_state(DynString file_path)
 			syntax_editor_switch_tab(syntax_editor_add_tab(value));
 			last_tab_valid = true;
 		}
-		else if (string_equals_cstring(&setting, "cursor_char")) {
+		else if (setting == string_make("cursor_char")) {
 			if (last_tab_valid) {
 				int_value_to_set = &editor.tabs[editor.open_tab_index]->cursor.character;
 			}
 		}
-		else if (string_equals_cstring(&setting, "cursor_line")) {
+		else if (setting == string_make("cursor_line")) {
 			if (last_tab_valid) {
 				int_value_to_set = &editor.tabs[editor.open_tab_index]->cursor.line;
 			}
 		}
-		else if (string_equals_cstring(&setting, "cam_start")) {
+		else if (setting == string_make("cam_start")) {
 			if (last_tab_valid) {
 				int_value_to_set = &editor.tabs[editor.open_tab_index]->cam_start;
 			}
 		}
-		else if (string_equals_cstring(&setting, "fold"))
+		else if (setting == string_make("fold"))
 		{
-			auto parts = string_split(value, ';');
-			SCOPE_EXIT(string_split_destroy(parts));
+			auto parts = string_split(value, ';', scratch_arena);
 			if (parts.size != 2) {
 				continue;
 			}
@@ -3897,10 +3846,10 @@ void syntax_editor_load_state(DynString file_path)
 			int start, end;
 			bool success = true;
 
-			auto int_parse = string_parse_int(&parts[0]);
+			auto int_parse = string_parse_int(parts[0]);
 			success = success && int_parse.available;
 			if (int_parse.available) { start = int_parse.value; }
-			int_parse = string_parse_int(&parts[1]);
+			int_parse = string_parse_int(parts[1]);
 			success = success && int_parse.available;
 			if (int_parse.available) { end = int_parse.value; }
 
@@ -3912,17 +3861,17 @@ void syntax_editor_load_state(DynString file_path)
 				Folds::add_fold(ibox1(start, end));
 			}
 		}
-		else if (string_equals_cstring(&setting, "breakpoint"))
+		else if (setting == string_make("breakpoint"))
 		{
 			if (last_tab_valid) {
 				Editor_Tab& tab = syntax_editor.open_tab();
 
-				auto int_parse = string_parse_int(&value);
+				auto int_parse = string_parse_int(value);
 				if (!int_parse.available) {
 					continue;
 				}
 				int line_no = int_parse.value;
-				if (line_no < 0 || line_no >= tab.code->line_count) {
+				if (line_no < 0 || line_no >= tab.code->line_count()) {
 					printf("Invalid breakpoint in session file\n");
 					continue;
 				}
@@ -3930,12 +3879,12 @@ void syntax_editor_load_state(DynString file_path)
 				syntax_editor_toggle_line_breakpoint(editor.open_tab_index, line_no);
 			}
 		}
-		else if (string_equals_cstring(&setting, "watch_value")) {
+		else if (setting == string_make("watch_value")) {
 			Watch_Value watch_value;
-			watch_value.name = dynstring_copy(value);
-			watch_value.value_as_text = dynstring_create();
+			watch_value.name = String_List::create(editor.freelist_string_list.upcast(), value);
+			watch_value.value_as_text = String_List::create_empty(editor.freelist_string_list.upcast());
 			watch_value.show_multiline = false;
-			dynamic_array_push_back(&editor.watch_values, watch_value);
+			editor.watch_values.push_back(watch_value);
 		}
 		else 
 		{
@@ -3944,7 +3893,7 @@ void syntax_editor_load_state(DynString file_path)
 			for (int i = 0; i < (int)Toggle_Option::MAX_ENUM_VALUE; i++) 
 			{
 				Toggle_Option option = (Toggle_Option)i;
-				if (string_equals_cstring(&setting, toggle_option_as_string(option))) {
+				if (setting == string_make(toggle_option_as_string(option))) {
 					toggle_option_index = i;
 					break;
 				}
@@ -3955,16 +3904,16 @@ void syntax_editor_load_state(DynString file_path)
 			}
 			else 
 			{
-				if (!string_equals_cstring(&value, "true") && !string_equals_cstring(&value, "false")) {
+				if (value != string_make("true") && value != string_make("false")) {
 					continue;
 				}
-				syntax_editor.toggle_options[toggle_option_index] = string_equals_cstring(&value, "true");
+				syntax_editor.toggle_options[toggle_option_index] = value == string_make("true");
 			}
 		}
 
 		if (int_value_to_set != nullptr)
 		{
-			auto int_parse = string_parse_int(&value);
+			auto int_parse = string_parse_int(value);
 			if (int_parse.available) {
 				*int_value_to_set = int_parse.value;
 			}
@@ -3972,7 +3921,7 @@ void syntax_editor_load_state(DynString file_path)
 	}
 
 	if (editor.tabs.size == 0) {
-		syntax_editor_switch_tab(syntax_editor_add_tab(string_create_static("upp_code/editor_text.upp")));
+		syntax_editor_switch_tab(syntax_editor_add_tab(string_make("upp_code/editor_text.upp")));
 		editor.main_tab_index = -1;
 	}
 	else
@@ -3998,21 +3947,6 @@ Error_Display error_display_make(DynString msg, Text_Range range, Compilation_Un
 	result.is_token_range_duplicate = is_token_range_duplicate;
 	result.semantic_error_index = semantic_error_index;
 	return result;
-}
-
-char get_cursor_char(char dummy_char)
-{
-	auto& editor = syntax_editor;
-	Editor_Tab& tab = syntax_editor.open_tab();
-	auto& c = tab.cursor;
-
-	int index = c.character;
-	if (editor.mode == Editor_Mode::INSERT) {
-		index -= 1;
-	}
-	DynString text = line_index_get_text(c.line);
-	if (index >= text.size || index < 0) return dummy_char;
-	return text.characters[index];
 }
 
 Text_Index sanitize_index(Text_Index index) 
@@ -4252,7 +4186,7 @@ Text_Index code_query_text_index_at_last_synchronize(Text_Index text_index, int 
 	auto& tab = *syntax_editor.tabs[tab_index];
 
 	// Get changes since last sync
-	auto now = history_get_timestamp(&tab.history);
+	auto now = history_get_timestamp(tab.history);
 	if (tab.last_compiler_synchronized.node_index == now.node_index) {
 		return text_index;
 	}
@@ -4260,10 +4194,10 @@ Text_Index code_query_text_index_at_last_synchronize(Text_Index text_index, int 
 	Dynamic_Array<Code_Change> changes = dynamic_array_create<Code_Change>();
 	SCOPE_EXIT(dynamic_array_destroy(&changes));
 	if (move_forwards_in_time) {
-		history_get_changes_between(&tab.history, tab.last_compiler_synchronized, now, &changes);
+		history_get_changes_between(tab.history, tab.last_compiler_synchronized, now, &changes);
 	}
 	else {
-		history_get_changes_between(&tab.history, now, tab.last_compiler_synchronized, &changes);
+		history_get_changes_between(tab.history, now, tab.last_compiler_synchronized, &changes);
 	}
 
 	// Go through changes and update infos
@@ -4418,15 +4352,14 @@ void analysis_pass_append_polymorphic_infos(Analysis_Pass* pass, DynString* stri
 				state.type = Pattern_Variable_State_Type::UNSET;
 			}
 
-			DynString* name = variable.symbol_node->name;
+			Identifier name = variable.symbol_node->name;
 			for (int i = 0; i < indentation; i++) {
-				string_append(string, "  ");
+				string->append("  ");
 			}
-			string_append_string(string, name);
-			string_append(string, "=");
+			string->append(name)->append('=');
 
 			if (state.type != Pattern_Variable_State_Type::SET) {
-				string_append(string, "Not Set\n");
+				string->append("Not Set\n");
 				continue;
 			}
 
@@ -4441,7 +4374,7 @@ void analysis_pass_append_polymorphic_infos(Analysis_Pass* pass, DynString* stri
 			);
 
 			if (i != poly_header->pattern_variables.size - 1) {
-				string_append(string, "\n");
+				string->append("\n");
 			}
 
 			indentation += 1;
@@ -4452,7 +4385,7 @@ void analysis_pass_append_polymorphic_infos(Analysis_Pass* pass, DynString* stri
 bool analysis_pass_passes_filters(Analysis_Pass* pass)
 {
 	// Check if pass already ran through filter
-	bool* is_preferred_opt = hashtable_find_element(&syntax_editor.filtered_passes, pass);
+	bool* is_preferred_opt = syntax_editor.filtered_passes.find(pass);
 	if (is_preferred_opt != nullptr) {
 		return *is_preferred_opt;
 	}
@@ -4460,37 +4393,37 @@ bool analysis_pass_passes_filters(Analysis_Pass* pass)
 	// Check if valid/polymorphic
 	if (pass == nullptr) {
 		if (!syntax_editor.prefer_poly_passes) {
-			hashtable_insert_element(&syntax_editor.filtered_passes, pass, true);
+			syntax_editor.filtered_passes.insert(pass, true);
 			return true;
 		}
 		return false;
 	}
 	if (pass->origin_workload == nullptr) {
 		if (!syntax_editor.prefer_poly_passes) {
-			hashtable_insert_element(&syntax_editor.filtered_passes, pass, true);
+			syntax_editor.filtered_passes.insert(pass, true);
 			return true;
 		}
 		return false;
 	}
 
 	// Generate pass-string (Contains Template-Values as text)
-	DynString pass_string = dynstring_create(32);
-	SCOPE_EXIT(string_destroy(&pass_string));
+	SCRATCH_ARENA_MAKE_SCOPED(syntax_editor.filtered_passes.arena);
+	DynString pass_string = dynstring_create(scratch_arena);
 	bool is_poly, is_base;
 	analysis_pass_append_polymorphic_infos(pass, &pass_string, is_poly, is_base);
 	string_style_remove_codes(&pass_string);
 
 	// I'm currently assuming that if we don't have templated values, then it's non-polymorphic
 	if (!is_poly) {
-		hashtable_insert_element(&syntax_editor.filtered_passes, pass, !syntax_editor.prefer_poly_passes);
+		syntax_editor.filtered_passes.insert(pass, !syntax_editor.prefer_poly_passes);
 		return !syntax_editor.prefer_poly_passes;
 	}
 	if (syntax_editor.prefer_base_pass) {
-		hashtable_insert_element(&syntax_editor.filtered_passes, pass, is_base);
+		syntax_editor.filtered_passes.insert(pass, is_base);
 		return is_base;
 	}
 	else if (is_base) {
-		hashtable_insert_element(&syntax_editor.filtered_passes, pass, false);
+		syntax_editor.filtered_passes.insert(pass, false);
 		return false;
 	}
 
@@ -4508,9 +4441,14 @@ bool analysis_pass_passes_filters(Analysis_Pass* pass)
 		while (i < filters.size)
 		{
 			Pass_Filter* filter = &filters[i];
-			if (filter->is_active && filter->required_substring.size > 0) {
+			if (filter->is_active && filter->required_substring.size > 0) 
+			{
+				auto checkpoint = scratch_arena->make_checkpoint();
+				SCOPE_EXIT(checkpoint.rewind());
+				DynString required_substring = DynString::create(scratch_arena);
+				required_substring.append(filter->required_substring);
 				at_least_one_active_filter = true;
-				bool pass = string_contains_substring(pass_string, 0, filter->required_substring) != -1;
+				bool pass = string_contains_substring(pass_string.to_string(), required_substring.to_string()) != -1;
 				if (!pass) {
 					passes_filter = false;
 				}
@@ -4530,7 +4468,7 @@ bool analysis_pass_passes_filters(Analysis_Pass* pass)
 	}
 
 	// Cache filter result
-	hashtable_insert_element(&syntax_editor.filtered_passes, pass, passed_filters);
+	syntax_editor.filtered_passes.insert(pass, passed_filters);
 	return passed_filters;
 }
 
@@ -4575,10 +4513,13 @@ Position_Info code_query_find_position_infos(Text_Index index, DynArray<int>* er
 	auto& editor = syntax_editor;
 	Editor_Tab& tab = syntax_editor.open_tab();
 
-	if (index.line < 0 || index.line >= tab.code->line_count) return result;
+	if (index.line < 0 || index.line >= tab.code->line_count()) return result;
 
-	auto line = source_code_get_line(tab.code, index.line);
-	auto& analysis_items = line->item_infos;
+	SCRATCH_ARENA_MAKE_SCOPED(errors_to_fill->arena);
+	DynArray<Editor_Info_Reference> analysis_items = DynArray<Editor_Info_Reference>::create(scratch_arena);
+	source_code_line_get_items(tab.code, index.line, &analysis_items);
+	int line_text_size = line_index_get_text_size(index.line);
+
 	int previous_expr_depth = -1;
 	int previous_call_depth = -1;
 	for (int i = 0; i < analysis_items.size; i++)
@@ -4592,7 +4533,7 @@ Position_Info code_query_find_position_infos(Text_Index index, DynArray<int>* er
 		else {
 			on_item = index.character >= item.start_char && index.character < item.end_char;
 		}
-		if (item.start_char == line->text.size && index.character == line->text.size - 1) {
+		if (item.start_char == line_text_size && index.character == line_text_size - 1) {
 			on_item = true;
 		}
 		if (!on_item) continue;
@@ -4717,13 +4658,13 @@ Symbol_Table* code_query_find_symbol_table_at_position(Text_Index index)
 
 
 // Code Completion
-void suggestions_fill_with_file_directory(DynString search_path)
+void suggestions_fill_with_file_directory(String search_path)
 {
 	auto& editor = syntax_editor;
 	Editor_Tab& tab = syntax_editor.open_tab();
 
-	Array<DynString> path_parts = string_split(search_path, '/');
-	SCOPE_EXIT(string_split_destroy(path_parts));
+	SCRATCH_ARENA_MAKE_SCOPED(editor.suggestions.arena);
+	Array<String> path_parts = string_split(search_path, '/', scratch_arena);
 
 	Directory_Crawler* crawler = editor.directory_crawler;
 	directory_crawler_set_path_to_file_dir(crawler, tab.filepath);
@@ -4731,12 +4672,12 @@ void suggestions_fill_with_file_directory(DynString search_path)
 	bool success = true;
 	for (int i = 0; i < path_parts.size - 1 && success; i++)
 	{
-		DynString part = path_parts[i];
+		String part = path_parts[i];
 		auto files = directory_crawler_get_content(crawler);
 		bool found = false;
 		for (int j = 0; j < files.size; j++) {
 			auto file = files[j];
-			if (string_equals(&file.filename, &part)) {
+			if (string_equals(file.filename, part)) {
 				directory_crawler_go_down_one_directory(crawler, j);
 				found = true;
 				break;
@@ -4756,7 +4697,7 @@ void suggestions_fill_with_file_directory(DynString search_path)
 	for (int i = 0; i < files.size; i++) {
 		auto& file = files[i];
 		if (!file.is_directory) {
-			if (!cstring_ends_with(file.filename.characters, ".upp")) {
+			if (!string_ends_with(file.filename, string_make(".upp"))) {
 				continue;
 			}
 		}
@@ -4765,15 +4706,15 @@ void suggestions_fill_with_file_directory(DynString search_path)
 
 	auto items = fuzzy_search_get_results(true, 3);
 	auto& suggestions = editor.suggestions;
-	dynamic_array_reset(&suggestions);
+	suggestions.reset();
 	for (int i = 0; i < items.size; i++) {
-		dynamic_array_push_back(&suggestions, suggestion_make_file(items[i].user_index));
+		suggestions.push_back(suggestion_make_file(items[i].user_index));
 	}
 }
 
 bool text_index_inside_comment_or_string_literal(Text_Index index, bool& out_inside_literal)
 {
-	DynString text = line_index_get_text(index.line);
+	String text = line_index_get_text(index.line);
 	out_inside_literal = false;
 
 	bool in_literal = false;
@@ -4812,14 +4753,14 @@ bool text_index_inside_comment_or_string_literal(Text_Index index, bool& out_ins
 struct String_Path_Lookup_Info
 {
 	DynArray<Symbol*> symbols;
-	DynString last_part;
+	String last_part;
 };
 
-String_Path_Lookup_Info string_path_lookup_resolve(DynString path_lookup_text, Symbol_Table* symbol_table, Import_Type import_type, Arena* arena)
+String_Path_Lookup_Info string_path_lookup_resolve(String path_lookup_text, Symbol_Table* symbol_table, Import_Type import_type, Arena* arena)
 {
 	String_Path_Lookup_Info result;
 	result.symbols = DynArray<Symbol*>::create(arena);
-	result.last_part = string_create_static("");
+	result.last_part = string_make("");
 
 	// No suggestions if text is empty
 	if (path_lookup_text.size == 0) {
@@ -4827,9 +4768,8 @@ String_Path_Lookup_Info string_path_lookup_resolve(DynString path_lookup_text, S
 	}
 	assert(symbol_table != nullptr, "Note: Previously there was some text that this may be null on the very first compile");
 
-	Array<DynString> path_parts = string_split(path_lookup_text, '~');
-	SCOPE_EXIT(string_split_destroy(path_parts));
-	DynString last_part = path_parts[path_parts.size - 1];
+	Array<String> path_parts = string_split(path_lookup_text, '~', arena);
+	String last_part = path_parts[path_parts.size - 1];
 	result.last_part = last_part;
 
 	Symbol_Query_Info query_info = symbol_query_info_make(Symbol_Access_Level::INTERNAL, import_type, true);
@@ -4849,9 +4789,9 @@ String_Path_Lookup_Info string_path_lookup_resolve(DynString path_lookup_text, S
 	// Follow path
 	for (int i = start_index; i < path_parts.size - 1; i++)
 	{
-		DynString part = path_parts[i];
+		String part = path_parts[i];
 
-		DynString* id = identifier_pool_add(&syntax_editor.editor_compilation_data->identifier_pool, part);
+		Identifier id = identifier_pool_add(&syntax_editor.editor_compilation_data->identifier_pool, part);
 		DynArray<Symbol*> symbols = symbol_table_query_id(symbol_table, id, query_info, arena);
 
 		// After first lookup the query-type changes
@@ -4884,6 +4824,9 @@ void code_completion_find_suggestions()
 	Editor_Tab& tab = syntax_editor.open_tab();
 	auto& suggestions = editor.suggestions;
 	auto& cursor = tab.cursor;
+	auto& ids = syntax_editor.editor_compilation_data->predefined_ids;
+
+	Arena* scratch_arena = &editor.frame_arena;
 
 	// Early exit if we have suggestions cached
 	bool complete_with_words = editor.get_option_value(Toggle_Option::WORD_COMPLETION_INSTEAD_OF_CODE_COMPLETION);
@@ -4897,15 +4840,15 @@ void code_completion_find_suggestions()
 	tab.last_code_completion_info_index = editor.compile_count;
 	tab.last_code_completion_query_pos = cursor;
 	editor.last_code_completion_tab = editor.open_tab_index;
-	dynamic_array_reset(&suggestions);
+	suggestions.reset();
 
 	if (complete_with_words)
 	{
-		auto helper_string_get_char = [](DynString str, int index) -> char {
+		auto helper_string_get_char = [](String str, int index) -> char {
 			if (index >= 0 && index < str.size) return str.characters[index];
 			return '\0';
 		};
-		DynString line_text = line_index_get_text(cursor.line);
+		String line_text = line_index_get_text(cursor.line);
 		int character_pos = cursor.character;
 
 		// Find word end (There could be spaces etc. after last word
@@ -4923,22 +4866,22 @@ void code_completion_find_suggestions()
 			word_start -= 1;
 		}
 
-		String_View query_word = string_view_from_string(string_create_substring_static(&line_text, word_start, word_end));
-		fuzzy_search_start_search(string_view_to_string(query_word), 10);
+		String query_word = string_make_substring(line_text, word_start, word_end);
+		fuzzy_search_start_search(query_word, 10);
 		Word_Pool& word_pool = editor.word_pool;
 		for (int i = 0; i < word_pool.words.size; i++) {
-			String_View_Refcount pool_word = word_pool.words[i];
+			Refcount_Word pool_word = word_pool.words[i];
 			// Don't display current word as suggestion if it's the only instance of the word
-			if (pool_word.reference_count == 1 && equals_string_view(&query_word, &pool_word.string_view)) {
+			if (pool_word.reference_count == 1 && query_word == pool_word.to_string()) {
 				continue;
 			}
-			fuzzy_search_add_item(string_view_to_string(pool_word.string_view), i);
+			fuzzy_search_add_item(pool_word.to_string(), i);
 		}
 
 		// Add results to suggestions
 		auto results = fuzzy_search_get_results(true, 3);
 		for (int i = 0; i < results.size; i++) {
-			dynamic_array_push_back(&suggestions, suggestion_make_string_view(word_pool.words[results[i].user_index].string_view));
+			suggestions.push_back(suggestion_make_word_pool_word(word_pool.words[results[i].user_index].to_string()));
 		}
 		return;
 	}
@@ -4950,11 +4893,10 @@ void code_completion_find_suggestions()
 	}
 
 	// Tokenize code
-	Arena tmp_arena = Arena::create();
-	SCOPE_EXIT(tmp_arena.destroy());
-	DynString line_text = line_index_get_text(tab.cursor.line);
+	String line_text = line_index_get_text(tab.cursor.line);
 	int cursor_token_index = 0;
-	DynArray<Token> tokens = tokenize_partial_code(tab.code, cursor, &tmp_arena, cursor_token_index, true, false);
+	DynArray<Token> tokens = DynArray<Token>::create(scratch_arena);
+	tokenize_partial_code(tab.code, &tokens, cursor, cursor_token_index, true, false);
 	// Tokenize partial code prefers later tokens if the text-index is inbetween two tokens, but for completion we want the first token
 	if (cursor_token_index - 1 >= 0 && cursor_token_index - 1 < tokens.size) {
 		Token& prev = tokens[cursor_token_index - 1];
@@ -4964,9 +4906,8 @@ void code_completion_find_suggestions()
 	}
 
 	auto helper_test_char = [&](int index, char c) -> bool {
-		DynString& str = line_text;
-		if (index < 0 || index >= str.size) return false;
-		return str.characters[index] == c;
+		if (index < 0 || index >= line_text.size) return false;
+		return line_text.characters[index] == c;
 	};
 	auto helper_test_token = [&](int token_index, Token_Type type) -> bool {
 		if (token_index < 0 || token_index >= tokens.size) return false;
@@ -4995,28 +4936,27 @@ void code_completion_find_suggestions()
 		if (helper_test_token(cursor_token_index - 1, Token_Type::IMPORT) &&
 			cursor.line == cursor_token.line && cursor.character > cursor_token.start && cursor.character < cursor_token.end)
 		{
-			DynString file_path = string_create_substring_static(&line_text, cursor_token.start + 1, cursor.character);
+			String file_path = string_make_substring(line_text, cursor_token.start + 1, cursor.character);
 			suggestions_fill_with_file_directory(file_path);
 		}
 		return; // Don't show suggestions inside string
 	}
 
 	// Start search with partially typed word
-	DynString fuzzy_search_string = string_create_static("");
+	String fuzzy_search_string = string_make("", 0);
 	if (cursor_token.type == Token_Type::IDENTIFIER || token_type_is_keyword(cursor_token.type)) {
-		fuzzy_search_string = string_create_substring_static(&line_text, cursor_token.start, cursor_token.end);
+		fuzzy_search_string = string_make_substring(line_text, cursor_token.start, cursor_token.end);
 	}
 	Dynamic_Array<Editor_Suggestion> unranked_suggestions = dynamic_array_create<Editor_Suggestion>();
 	SCOPE_EXIT(dynamic_array_destroy(&unranked_suggestions));
-	auto& ids = syntax_editor.editor_compilation_data->identifier_pool.predefined_ids;
 	fuzzy_search_start_search(fuzzy_search_string, 10);
 	Symbol_Table* symbol_table = code_query_find_symbol_table_at_position(cursor);
 
 	// Hashtag completion
 	if (helper_test_char(cursor.character - 1, '#'))
 	{
-		auto helper_add_id = [&](DynString* id) {
-			fuzzy_search_add_item(*id, unranked_suggestions.size);
+		auto helper_add_id = [&](Identifier id) {
+			fuzzy_search_add_item(id.to_string(), unranked_suggestions.size);
 			dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(id));
 		};
 		helper_add_id(ids.hashtag_bake);
@@ -5051,13 +4991,13 @@ void code_completion_find_suggestions()
 		// First resolve path
 		Import_Type import_type = Import_Type::SYMBOLS;
 		Token path_start_token = helper_get_token(path_start_index);
-		DynString path_string = string_create_substring_static(&line_text, path_start_token.start, cursor.character);
-		DynArray<Symbol*> symbols = string_path_lookup_resolve(path_string, symbol_table, import_type, &tmp_arena).symbols;
+		String path_string = string_make_substring(line_text, path_start_token.start, cursor.character);
+		DynArray<Symbol*> symbols = string_path_lookup_resolve(path_string, symbol_table, import_type, scratch_arena).symbols;
 
 		// Add symbols to results 
 		for (int i = 0; i < symbols.size; i++) {
 			Symbol* symbol = symbols[i];
-			fuzzy_search_add_item(*symbol->id, unranked_suggestions.size);
+			fuzzy_search_add_item(symbol->id.to_string(), unranked_suggestions.size);
 			dynamic_array_push_back(&unranked_suggestions, suggestion_make_symbol(symbol));
 		}
 	}
@@ -5091,17 +5031,17 @@ void code_completion_find_suggestions()
 				{
 				case Builtin_Type::STRING: 
 				{
-					fuzzy_search_add_item(string_create_static("data"), unranked_suggestions.size);
+					fuzzy_search_add_item(string_make("data"), unranked_suggestions.size);
 					dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.data));
-					fuzzy_search_add_item(string_create_static("size"), unranked_suggestions.size);
+					fuzzy_search_add_item(string_make("size"), unranked_suggestions.size);
 					dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.size));
 					break;
 				}
 				case Builtin_Type::ANY: 
 				{
-					fuzzy_search_add_item(string_create_static("data"), unranked_suggestions.size);
+					fuzzy_search_add_item(string_make("data"), unranked_suggestions.size);
 					dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.data));
-					fuzzy_search_add_item(string_create_static("type"), unranked_suggestions.size);
+					fuzzy_search_add_item(string_make("type"), unranked_suggestions.size);
 					dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.size));
 					break;
 				}
@@ -5110,9 +5050,9 @@ void code_completion_find_suggestions()
 			}
 			case Datatype_Type::ARRAY:
 			case Datatype_Type::SLICE: {
-				fuzzy_search_add_item(string_create_static("data"), unranked_suggestions.size);
+				fuzzy_search_add_item(string_make("data"), unranked_suggestions.size);
 				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.data));
-				fuzzy_search_add_item(string_create_static("size"), unranked_suggestions.size);
+				fuzzy_search_add_item(string_make("size"), unranked_suggestions.size);
 				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.size));
 				break;
 			}
@@ -5122,7 +5062,7 @@ void code_completion_find_suggestions()
 				auto& members = structure->members;
 				for (int i = 0; i < members.size; i++) {
 					auto& mem = members[i];
-					fuzzy_search_add_item(*mem.name, unranked_suggestions.size);
+					fuzzy_search_add_item(mem.name.to_string(), unranked_suggestions.size);
 					dynamic_array_push_back(&unranked_suggestions, suggestion_make_struct_member(structure, mem.datatype, mem.name));
 				}
 				break;
@@ -5131,7 +5071,7 @@ void code_completion_find_suggestions()
 				auto& members = downcast<Datatype_Enum>(type)->members;
 				for (int i = 0; i < members.size; i++) {
 					auto& mem = members[i];
-					fuzzy_search_add_item(*mem.name, unranked_suggestions.size);
+					fuzzy_search_add_item(mem.name.to_string(), unranked_suggestions.size);
 					dynamic_array_push_back(&unranked_suggestions, suggestion_make_enum_member(downcast<Datatype_Enum>(type), mem.name));
 				}
 				break;
@@ -5157,7 +5097,7 @@ void code_completion_find_suggestions()
 		}
 
 		DynArray<Symbol*> symbols = symbol_table_query_all_symbols(
-			symbol_table, symbol_query_info_make(Symbol_Access_Level::INTERNAL, Import_Type::SYMBOLS, true), &tmp_arena
+			symbol_table, symbol_query_info_make(Symbol_Access_Level::INTERNAL, Import_Type::SYMBOLS, true), scratch_arena
 		);
 		// Filter symbols that match the first argument given
 		for (int i = 0; i < symbols.size; i++)
@@ -5171,7 +5111,6 @@ void code_completion_find_suggestions()
 			});
 
 			// Handle aliases
-			DynString* original_id = symbol->id;
 			while (symbol->type == Symbol_Type::ALIAS) {
 				symbol = symbol->options.alias_for;
 			}
@@ -5257,7 +5196,7 @@ void code_completion_find_suggestions()
 				// Check if patterns match (simple version for editor)
 				Datatype* src = src_mods.base_type;
 				Datatype* dst = dst_mods.base_type;
-				Pattern_Matcher pattern_matcher = pattern_matcher_make(editor.editor_compilation_data, &tmp_arena);
+				Pattern_Matcher pattern_matcher = pattern_matcher_make(editor.editor_compilation_data, scratch_arena);
 				remove_symbol = pattern_matcher_match_types(pattern_matcher, src, dst);
 				if (!pattern_match_result_check_constraints_pairwise(pattern_matcher)) {
 					remove_symbol = true;
@@ -5276,7 +5215,7 @@ void code_completion_find_suggestions()
 		// Add symbols to results 
 		for (int i = 0; i < symbols.size; i++) {
 			Symbol* symbol = symbols[i];
-			fuzzy_search_add_item(*symbol->id, unranked_suggestions.size);
+			fuzzy_search_add_item(symbol->id.to_string(), unranked_suggestions.size);
 			dynamic_array_push_back(&unranked_suggestions, suggestion_make_symbol(symbol));
 		}
 	}
@@ -5321,7 +5260,7 @@ void code_completion_find_suggestions()
 		{
 			for (int i = 0; i < parent_struct->subtypes.size; i++) {
 				Datatype_Struct* subtype = parent_struct->subtypes[i];
-				fuzzy_search_add_item(*subtype->name, unranked_suggestions.size);
+				fuzzy_search_add_item(subtype->name.to_string(), unranked_suggestions.size);
 				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(subtype->name, Syntax_Color::SUBTYPE));
 			}
 		}
@@ -5335,7 +5274,7 @@ void code_completion_find_suggestions()
 		for (int i = 0; i < id_ranges.size; i++) {
 			auto id_range = id_ranges[i];
 			if (text_range_contains(id_range.range, prev_cursor_index)) {
-				fuzzy_search_add_item(*id_range.block_id, unranked_suggestions.size);
+				fuzzy_search_add_item(id_range.block_id.to_string(), unranked_suggestions.size);
 				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(id_range.block_id));
 			}
 		}
@@ -5347,8 +5286,8 @@ void code_completion_find_suggestions()
 		if (token_index == 0) // import operators should not count as operators keyword
 		{
 			for (int i = 0; i < (int)Custom_Operator_Type::INVALID; i++) {
-				DynString* id = ids.custom_operator_function_names[i];
-				fuzzy_search_add_item(*id, unranked_suggestions.size);
+				Identifier id = ids.custom_operator_function_names[i];
+				fuzzy_search_add_item(id.to_string(), unranked_suggestions.size);
 				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(id));
 			}
 		}
@@ -5361,18 +5300,18 @@ void code_completion_find_suggestions()
 		if (symbol_table != nullptr)
 		{
 			auto results = symbol_table_query_all_symbols(
-				symbol_table, symbol_query_info_make(Symbol_Access_Level::INTERNAL, Import_Type::SYMBOLS, true), &tmp_arena
+				symbol_table, symbol_query_info_make(Symbol_Access_Level::INTERNAL, Import_Type::SYMBOLS, true), scratch_arena
 			);
 			for (int i = 0; i < results.size; i++) {
-				fuzzy_search_add_item(*results[i]->id, unranked_suggestions.size);
+				fuzzy_search_add_item(results[i]->id.to_string(), unranked_suggestions.size);
 				dynamic_array_push_back(&unranked_suggestions, suggestion_make_symbol(results[i]));
 			}
 		}
 
 		// Experimental: Add longer keywords to suggestions
-		fuzzy_search_add_item(*ids.defer_restore, unranked_suggestions.size);
+		fuzzy_search_add_item(ids.defer_restore.to_string(), unranked_suggestions.size);
 		dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.defer_restore, Syntax_Color::KEYWORD));
-		fuzzy_search_add_item(*ids.defer, unranked_suggestions.size);
+		fuzzy_search_add_item(ids.defer.to_string(), unranked_suggestions.size);
 		dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.defer, Syntax_Color::KEYWORD));
 	}
 
@@ -5386,7 +5325,7 @@ void code_completion_find_suggestions()
 			for (int i = 0; i < signature->parameters.size; i++) {
 				auto param_info = signature->parameters[i];
 				if (i == signature->return_type_index) continue;
-				fuzzy_search_add_item(*param_info.name, unranked_suggestions.size);
+				fuzzy_search_add_item(param_info.name.to_string(), unranked_suggestions.size);
 				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(param_info.name));
 			}
 		}
@@ -5401,7 +5340,7 @@ void code_completion_find_suggestions()
 	// Add results to suggestions
 	auto results = fuzzy_search_get_results(true, 3);
 	for (int i = 0; i < results.size; i++) {
-		dynamic_array_push_back(&syntax_editor.suggestions, unranked_suggestions[results[i].user_index]);
+		syntax_editor.suggestions.push_back(unranked_suggestions[results[i].user_index]);
 	}
 }
 
@@ -5410,17 +5349,17 @@ void code_completion_insert_suggestion()
 	auto& editor = syntax_editor;
 	Editor_Tab& tab = syntax_editor.open_tab();
 
-	DynString replace_string;
+	String replace_string = string_make("");
 	if (editor.record_insert_commands)
 	{
 		auto& suggestions = editor.suggestions;
 		dynstring_reset(&editor.last_recorded_code_completion);
 		if (suggestions.size == 0) return;
-		replace_string = string_view_to_string(suggestions[0].text);
-		string_append_string(&editor.last_recorded_code_completion, &replace_string);
+		replace_string = suggestions[0].text;
+		editor.last_recorded_code_completion.reset()->append(replace_string);
 	}
 	else {
-		replace_string = editor.last_recorded_code_completion;
+		replace_string = editor.last_recorded_code_completion.to_string();
 	}
 	if (replace_string.size == 0) return;
 	if (tab.cursor.character == 0) return;
@@ -5453,10 +5392,10 @@ void editor_enter_insert_mode()
 		return;
 	}
 	if (syntax_editor.record_insert_commands) {
-		dynamic_array_reset(&syntax_editor.last_insert_commands);
+		syntax_editor.last_insert_commands.reset();
 	}
 	syntax_editor.mode = Editor_Mode::INSERT;
-	history_start_complex_command(&tab.history);
+	history_start_complex_command(tab.history);
 }
 
 void editor_leave_insert_mode()
@@ -5469,9 +5408,9 @@ void editor_leave_insert_mode()
 	}
 	tab.move_cursor_horizontal_on_vertical_movement = false;
 	syntax_editor.mode = Editor_Mode::NORMAL;
-	history_stop_complex_command(&tab.history);
-	history_set_cursor_pos(&tab.history, tab.cursor);
-	dynamic_array_reset(&editor.suggestions);
+	history_stop_complex_command(tab.history);
+	history_set_cursor_pos(tab.history, tab.cursor);
+	editor.suggestions.reset();
 }
 
 void editor_split_line_at_cursor(int indentation_offset)
@@ -5481,12 +5420,12 @@ void editor_split_line_at_cursor(int indentation_offset)
 	auto& mode = editor.mode;
 	auto& cursor = tab.cursor;
 
-	DynString text = line_index_get_text(cursor.line);
+	String text = line_index_get_text(cursor.line);
 	int line_size = text.size; // Text may be invalid after applying history changes
-	DynString cutout = string_create_substring_static(&text, cursor.character, text.size);
+	String cutout = string_make_substring(text, cursor.character, text.size);
 
-	history_start_complex_command(&tab.history);
-	SCOPE_EXIT(history_stop_complex_command(&tab.history));
+	history_start_complex_command(tab.history);
+	SCOPE_EXIT(history_stop_complex_command(tab.history));
 	Text_Editing::add_padding_to_cursor();
 
 	int new_line_index = cursor.line + 1;
@@ -5506,11 +5445,11 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 	Editor_Tab& tab = syntax_editor.open_tab();
 	auto code = tab.code;
 
-	Arena* arena = &syntax_editor.arena;
-	auto checkpoint = arena->make_checkpoint();
+	Arena* scratch_arena = &syntax_editor.frame_arena;
+	auto checkpoint = scratch_arena->make_checkpoint();
 	SCOPE_EXIT(checkpoint.rewind());
 
-	DynString line_text = line_index_get_text(pos.line);
+	String line_text = line_index_get_text(pos.line);
 
 	auto do_char_search = [&](bool forward, bool search_towards, bool sneak_search) 
 	{
@@ -5706,7 +5645,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 		}
 		case Movement_Type::GOTO_END_OF_TEXT: 
 		{
-			pos = text_index_make(code->line_count - 1, 0);
+			pos = text_index_make(code->line_count() - 1, 0);
 			repeat_movement = false;
 			break;
 		}
@@ -5818,7 +5757,8 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 			// The question is what to do when not on such a thing, currently nothing
 			Token_Type type = Token_Type::INVALID;
 			int token_index = 0;
-			DynArray<Token> tokens = tokenize_partial_code(tab.code, pos, arena, token_index, true, false);
+			DynArray<Token> tokens = DynArray<Token>::create(scratch_arena);
+			tokenize_partial_code(tab.code, &tokens, pos, token_index, true, false);
 
 			Text_Range range = text_range_make(pos, pos);
 			switch (c) {
@@ -5847,7 +5787,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 			}
 
 			if (type != Token_Type::INVALID) {
-				ivec2 token_range = tokens_get_parenthesis_range(tokens, token_index, type, arena);
+				ivec2 token_range = tokens_get_parenthesis_range(tokens, token_index, type);
 				range = Motions::token_range_to_text_range(pos, token_range, tokens);
 			}
 
@@ -5903,7 +5843,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 			int block_indentation = pos.character / 4;
 			int line_index = pos.line;
 			// Line is empty == move forwards until we hit a block at our indentation
-			while (line_index < code->line_count && line_is_empty(line_index, false)) {
+			while (line_index < code->line_count() && line_is_empty(line_index, false)) {
 				line_index += 1;
 			}
 				
@@ -5912,7 +5852,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 			if (pos.line != block_range.end.line) {
 				pos.line = block_range.end.line;
 			}
-			else if (pos.line <= code->line_count) {
+			else if (pos.line <= code->line_count()) {
 				pos.line = pos.line + 1;
 				block_range = motion_evaluate(Parsing::motion_make(Motion_Type::BLOCK, movement.repeat_count, false), pos);
 				pos.line = block_range.end.line;
@@ -5984,7 +5924,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 		case Movement_Type::REPEAT_TEXT_SEARCH:
 		{
 			Editor_Tab& tab = syntax_editor.open_tab();
-			auto& search_text = editor.search_text;
+			String search_text = editor.search_text.to_string();
 
 			bool search_reverse = editor.search_reverse;
 			if (movement.type == Movement_Type::REPEAT_TEXT_SEARCH_REVERSE) {
@@ -5999,10 +5939,10 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 			// Otherwise go through lines from start and try to find occurance
 			Text_Index index = pos;
 			bool found = false;
-			for (int offset = 0; offset < tab.code->line_count; offset += 1)
+			for (int offset = 0; offset < tab.code->line_count(); offset += 1)
 			{
-				int line_index = math_modulo(index.line + offset * (search_reverse ? -1 : 1), tab.code->line_count);
-				DynString line_text = line_index_get_text(line_index);
+				int line_index = math_modulo(index.line + offset * (search_reverse ? -1 : 1), tab.code->line_count());
+				String line_text = line_index_get_text(line_index);
 
 				if (search_reverse)
 				{
@@ -6011,7 +5951,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 					}
 
 					// Search substrings until last substring is found...
-					int last_substring_start = string_contains_substring(line_text, 0, search_text);
+					int last_substring_start = string_contains_substring(line_text, search_text);
 					if (last_substring_start == -1) {
 						continue;
 					}
@@ -6021,7 +5961,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 						max = index.character - 1;
 					}
 					while (last_substring_start + 1 < max) {
-						int substr = string_contains_substring(line_text, last_substring_start + 1, search_text);
+						int substr = string_contains_substring(line_text, search_text, last_substring_start + 1);
 						if (substr == -1 || substr > max) {
 							break;
 						}
@@ -6040,7 +5980,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 					if (line_index == index.line) {
 						pos = index.character + 1;
 					}
-					int start = string_contains_substring(line_text, pos, search_text);
+					int start = string_contains_substring(line_text, search_text, pos);
 					if (start != -1) {
 						index = text_index_make(line_index, start);
 						found = true;
@@ -6059,7 +5999,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 
 		pos = sanitize_index(pos);
 		center_camera_on_cursor_if_cursor_not_visible();
-		DynString line_text = line_index_get_text(pos.line);
+		String line_text = line_index_get_text(pos.line);
 		if (is_cursor_movement && !is_pure_vertical_movement) {
 			tab.move_cursor_horizontal_on_vertical_movement = false;
 		}
@@ -6074,8 +6014,8 @@ Text_Range motion_evaluate(const Motion& motion, Text_Index pos)
 	Editor_Tab& tab = syntax_editor.open_tab();
 	auto code = tab.code;
 
-	Arena* arena = &syntax_editor.arena;
-	auto checkpoint = arena->make_checkpoint();
+	Arena* scratch_arena = &syntax_editor.arena;
+	auto checkpoint = scratch_arena->make_checkpoint();
 	SCOPE_EXIT(checkpoint.rewind());
 
 	Char_Group whitespaces(Char_Group_Type::WHITESPACE);
@@ -6166,11 +6106,12 @@ Text_Range motion_evaluate(const Motion& motion, Text_Index pos)
 		}
 
 		int token_index = 0;
-		DynArray<Token> tokens = tokenize_partial_code(tab.code, pos, arena, token_index, true, false);
+		DynArray<Token> tokens = DynArray<Token>::create(scratch_arena);
+		tokenize_partial_code(tab.code, &tokens, pos, token_index, true, false);
 		ivec2 token_range = ivec2(-1);
 		for (int i = 0; i < motion.repeat_count; i++)
 		{
-			ivec2 new_range = tokens_get_parenthesis_range(tokens, token_index, type, arena);
+			ivec2 new_range = tokens_get_parenthesis_range(tokens, token_index, type);
 			if (new_range.x == -1) {
 				break;
 			}
@@ -6231,8 +6172,8 @@ Text_Range motion_evaluate(const Motion& motion, Text_Index pos)
 		for (int i = 0; i < forward_count; i++)
 		{
 			line_end += 1;
-			line_end = math_minimum(tab.code->line_count, line_end);
-			while (line_end < tab.code->line_count)
+			line_end = math_minimum(tab.code->line_count(), line_end);
+			while (line_end < tab.code->line_count())
 			{
 				if (line_is_empty(line_end + 1, false)) {
 					line_end += 1;
@@ -6271,7 +6212,7 @@ Text_Range motion_evaluate(const Motion& motion, Text_Index pos)
 		start_indentation = math_minimum(start_indentation, pos.character / 4); // Also use cursor as block indentation indicator
 		int target_indent = math_maximum(0, start_indentation - (motion.repeat_count - 1));
 		if (target_indent <= 0) {
-			result = text_range_make(text_index_make(0, 0), text_index_make_line_end(code, code->line_count -1));
+			result = text_range_make(text_index_make(0, 0), text_index_make_line_end(code, code->line_count() - 1));
 			break;
 		}
 
@@ -6282,7 +6223,7 @@ Text_Range motion_evaluate(const Motion& motion, Text_Index pos)
 			if (prev_indent < target_indent) break;
 			block_start -= 1;
 		}
-		while (block_end + 1 < code->line_count) {
+		while (block_end + 1 < code->line_count()) {
 			int next_indent = line_estimate_indentation(block_end + 1);
 			if (next_indent < target_indent) break;
 			block_end += 1;
@@ -6304,7 +6245,7 @@ Text_Range motion_evaluate(const Motion& motion, Text_Index pos)
 
 		if (motion.contains_edges) {
 			line_start = math_maximum(0, line_start - 1);
-			line_end = math_minimum(code->line_count - 1, line_end + 1);
+			line_end = math_minimum(code->line_count() - 1, line_end + 1);
 		}
 
 		result.start = text_index_make(line_start, 0);
@@ -6343,37 +6284,36 @@ void text_range_append_to_string(Text_Range range, DynString* str)
 
 	// Handle single line case first
 	if (range.start.line == range.end.line) {
-		DynString line_text = line_index_get_text(range.start.line);
-		DynString substring = string_create_substring_static(&line_text, range.start.character, range.end.character);
-		string_append_string(str, &substring);
+		String line_text = line_index_get_text(range.start.line);
+		String substring = string_make_substring(line_text, range.start.character, range.end.character);
+		str->append(substring);
 		return;
 	}
 
 	// Append first line
-	DynString start_line_text = line_index_get_text(range.start.line);
-	DynString substring = string_create_substring_static(&start_line_text, range.start.character, start_line_text.size);
-	string_append_string(str, &substring);
+	String start_line_text = line_index_get_text(range.start.line);
+	String substring = string_make_substring(start_line_text, range.start.character, start_line_text.size);
+	str->append(substring);
 
 	// Append lines until end
-	for (int i = range.start.line + 1; i <= range.end.line && i < code->line_count; i++)
+	for (int i = range.start.line + 1; i <= range.end.line && i < code->line_count(); i++)
 	{
-		DynString line_text = line_index_get_text(i);
-		string_append_character(str, '\n');
+		String line_text = line_index_get_text(i);
+		str->append('\n');
 
 		// Append line content
 		if (i == range.end.line) {
-			DynString substring = string_create_substring_static(&line_text, 0, range.end.character);
-			string_append_string(str, &substring);
+			str->append(string_make_substring(line_text, 0, range.end.character));
 		}
 		else {
-			string_append_string(str, &line_text);
+			str->append(line_text);
 		}
 	}
 }
 
 struct Yank_Line
 {
-	DynString text;
+	String text;
 	int indentation;
 };
 
@@ -6385,7 +6325,7 @@ void syntax_editor_insert_yank(bool before_cursor)
 	Editor_Tab& tab = syntax_editor.open_tab();
 	auto code = tab.code;
 	auto& cursor = tab.cursor;
-	auto history = &tab.history;
+	auto history = tab.history;
 
 	Arena* temp_arena = &editor.arena;
 	auto checkpoint = temp_arena->make_checkpoint();
@@ -6405,7 +6345,7 @@ void syntax_editor_insert_yank(bool before_cursor)
 			if (c == '\n')
 			{
 				Yank_Line yank;
-				yank.text = string_create_substring_static(&editor.yank_string, last_line_start, i);
+				yank.text = string_make_substring(editor.yank_string.to_string(), last_line_start, i);
 				yank.indentation = 0;
 				yank_lines.push_back(yank);
 				last_line_start = i + 1;
@@ -6414,7 +6354,7 @@ void syntax_editor_insert_yank(bool before_cursor)
 		
 		// Insert last yank line
 		Yank_Line yank;
-		yank.text = string_create_substring_static(&editor.yank_string, last_line_start, editor.yank_string.size);
+		yank.text = string_make_substring(editor.yank_string.to_string(), last_line_start, editor.yank_string.size);
 		yank.indentation = 0;
 		yank_lines.push_back(yank);
 
@@ -6423,7 +6363,7 @@ void syntax_editor_insert_yank(bool before_cursor)
 		for (int i = editor.yank_was_line ? 0 : 1; i < yank_lines.size; i++) {
 			Yank_Line& line = yank_lines[i];
 			line.indentation = line_count_leading_spaces(line.text) / 4;
-			line.text = string_create_substring_static(&line.text, line.indentation * 4, line.text.size);
+			line.text = string_make_substring(line.text, line.indentation * 4, line.text.size);
 			if (!line_is_empty(line.text, false)) {
 				min_indentation = math_minimum(line.indentation, min_indentation);
 			}
@@ -6468,9 +6408,9 @@ void syntax_editor_insert_yank(bool before_cursor)
 			}
 
 			// Append first line cutoff to last line, e.g. asdf|what and then put needs to add what to the end
-			DynString line_text = line_index_get_text(pos.line);
+			String line_text = line_index_get_text(pos.line);
 			int cutoff_start = pos.character + first_line.text.size;
-			DynString substring = string_create_substring_static(&line_text, cutoff_start, line_text.size);
+			String substring = string_make_substring(line_text, cutoff_start, line_text.size);
 			Text_Editing::insert_text_in_line(text_index_make_line_end(code, pos.line + yank_lines.size - 1), substring, false);
 			Text_Editing::delete_text_in_line(text_index_make(pos.line, cutoff_start), line_text.size, false);
 		}
@@ -6506,10 +6446,11 @@ void normal_command_execute(Normal_Mode_Command & command)
 	auto& tab = syntax_editor.open_tab();
 	auto code = tab.code;
 	auto& cursor = tab.cursor;
-	auto history = &tab.history;
+	auto history = tab.history;
 	const bool inline_folds = syntax_editor.get_option_value(Toggle_Option::SHOW_FOLDS_INLINE);
 
-	DynString line_text = line_index_get_text(cursor.line);
+	String line_text = line_index_get_text(cursor.line);
+	Arena* scratch_arena = &editor.frame_arena;
 
 	// Filter commands during debug mode
 	bool debugger_running = debugger_get_state(editor.debugger).process_state != Debug_Process_State::NO_ACTIVE_PROCESS;
@@ -6661,9 +6602,9 @@ void normal_command_execute(Normal_Mode_Command & command)
 			dynstring_reset(&editor.yank_string);
 			for (int i = start_line; i <= end_line; i += 1) {
 				auto line_text = line_index_get_text(i);
-				string_append_string(&editor.yank_string, &line_text);
+				editor.yank_string.append(& line_text);
 				if (i != end_line) {
-					string_append_character(&editor.yank_string, '\n');
+					editor.yank_string.append('\n');
 				}
 			}
 		}
@@ -6816,7 +6757,7 @@ void normal_command_execute(Normal_Mode_Command & command)
 		int next_tab_index = editor.open_tab_index;
 		if (repeat_count != 0) {
 			next_tab_index = repeat_count - 1;
-			next_tab_index = math_clamp(next_tab_index, 0, editor.tabs.size - 1);
+			next_tab_index = math_clamp(next_tab_index, 0, (int)editor.tabs.size - 1);
 		}
 		else {
 			next_tab_index = next_tab_index + (command.type == Normal_Command_Type::GOTO_NEXT_TAB ? 1 : -1);
@@ -6874,7 +6815,7 @@ void normal_command_execute(Normal_Mode_Command & command)
 		syntax_editor_wait_for_newest_compiler_info(false);
 		dynstring_reset(&editor.fuzzy_search_text);
 		editor.search_text_edit = line_editor_make();
-		dynamic_array_reset(&editor.suggestions);
+		editor.suggestions.reset();
 		editor.mode = Editor_Mode::FUZZY_FIND_DEFINITION;
 		break;
 	}
@@ -6916,10 +6857,9 @@ void normal_command_execute(Normal_Mode_Command & command)
 		if (text_index_equal(range.start, range.end)) break;
 
 		assert(range.start.line == range.end.line && range.start.line == cursor.line, "");
-		DynString substr = string_create_substring_static(&line_text, range.start.character, range.end.character);
+		String substr = string_make_substring(line_text, range.start.character, range.end.character);
 		editor.search_reverse = false;
-		dynstring_reset(&editor.search_text);
-		string_append_string(&editor.search_text, &substr);
+		editor.search_text.reset()->append(substr);
 
 		cursor = movement_evaluate(Parsing::movement_make(Movement_Type::REPEAT_TEXT_SEARCH, 1), cursor, true);
 		recent_screens_store_current();
@@ -6930,9 +6870,7 @@ void normal_command_execute(Normal_Mode_Command & command)
 		if (command.repeat_count <= 0) break;
 
 		Text_Editing::add_padding_to_cursor();
-		auto checkpoint = editor.arena.make_checkpoint();
-		SCOPE_EXIT(checkpoint.rewind());
-		DynString indent_str = dynstring_create(&editor.arena);
+		DynString indent_str = dynstring_create(scratch_arena);
 		for (int i = 0; i < command.repeat_count; i++) {
 			indent_str.append("    ");
 		}
@@ -6940,7 +6878,7 @@ void normal_command_execute(Normal_Mode_Command & command)
 		Motion motion = command.options.motion;
 		Text_Range range = motion_evaluate(motion, cursor);
 		for (int i = range.start.line; i <= range.end.line; i++) {
-			Text_Editing::insert_text_in_line(text_index_make(i, 0), indent_str, true);
+			Text_Editing::insert_text_in_line(text_index_make(i, 0), indent_str.to_string(), true);
 		}
 		break;
 	}
@@ -6975,7 +6913,7 @@ void normal_command_execute(Normal_Mode_Command & command)
 
 		// Figure out start/end of current block
 		Text_Range range = motion_evaluate(command.options.motion, cursor);
-		if (range.start.line <= 0 && range.end.line >= code->line_count - 1) break; // Don't fold whole code
+		if (range.start.line <= 0 && range.end.line >= code->line_count() - 1) break; // Don't fold whole code
 		Folds::add_fold(ibox1(range.start.line, range.end.line + 1));
 		break;
 	}
@@ -7187,15 +7125,12 @@ void insert_command_execute(Insert_Command input)
 	auto& mode = editor.mode;
 	auto& tab = syntax_editor.open_tab();
 	auto code = tab.code;
-	auto history = &tab.history;
+	auto history = tab.history;
 	auto& cursor = tab.cursor;
 	auto& pos = cursor.character;
 
-	DynString text = line_index_get_text(cursor.line);
-
-	Arena* tmp_arena = &editor.arena;
-	auto checkpoint = tmp_arena->make_checkpoint();
-	SCOPE_EXIT(checkpoint.rewind());
+	String text = line_index_get_text(cursor.line);
+	Arena* scratch_arena = &editor.frame_arena;
 
 	history_start_complex_command(history);
 	SCOPE_EXIT(history_stop_complex_command(history));
@@ -7213,7 +7148,7 @@ void insert_command_execute(Insert_Command input)
 	);
 
 	if (editor.record_insert_commands) {
-		dynamic_array_push_back(&editor.last_insert_commands, input);
+		editor.last_insert_commands.push_back(input);
 	}
 
 	// Handle Universal Inputs
@@ -7270,11 +7205,11 @@ void insert_command_execute(Insert_Command input)
 
 		Text_Editing::add_padding_to_cursor();
 		int space_count = 4 - (pos % 4);
-		DynString space_str = dynstring_create(tmp_arena);
+		DynString space_str = dynstring_create(scratch_arena);
 		for (int i = 0; i < space_count; i++) {
 			space_str.append(' ');
 		}
-		history_insert_text(history, cursor, space_str);
+		history_insert_text(history, cursor, space_str.to_string());
 		pos += space_count;
 		auto_format = false;
 		break;
@@ -7336,7 +7271,7 @@ void insert_command_execute(Insert_Command input)
 			}
 
 			Text_Index insert_index = text_index_make_line_end(code, cursor.line - 1);
-			history_insert_text(history, insert_index, string_create_substring_static(&text, cursor.character, text.size));
+			history_insert_text(history, insert_index, string_make_substring(text, cursor.character, text.size));
 			history_remove_line(history, cursor.line);
 			cursor = insert_index;
 			break;
@@ -7558,6 +7493,8 @@ void syntax_editor_process_key_message(Key_Message & msg)
 	auto& mode = syntax_editor.mode;
 	auto& editor = syntax_editor;
 
+	Arena* scratch_arena = &editor.frame_arena;
+
 	using Parsing::Parse_Result;
 	using Parsing::Parse_Result_Type;
 	using Parsing::parse_insert_command;
@@ -7660,7 +7597,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 
 		// Otherwise try to parse command
 		int index = 0;
-		string_append_character(&cmd_buffer, msg.character);;
+		cmd_buffer.append(msg.character);;
 
 		if (cmd_buffer.size > 0 && cmd_buffer[0] == 'm')
 		{
@@ -7755,7 +7692,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 
 		// Otherwise try to parse command
 		int index = 0;
-		string_append_character(&cmd_buffer, msg.character);;
+		cmd_buffer.append(msg.character);;
 
 		Parse_Result<Normal_Mode_Command> result = parse_normal_command(index);
 		if (result.type == Parse_Result_Type::SUCCESS) {
@@ -7805,7 +7742,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 		// Exit if requested
 		if (msg.key_code == Key_Code::L && msg.ctrl_down && msg.key_down) {
 			editor.mode = Editor_Mode::NORMAL;
-			dynamic_array_reset(&editor.suggestions);
+			editor.suggestions.reset();
 			return;
 		}
 
@@ -7830,12 +7767,9 @@ void syntax_editor_process_key_message(Key_Message & msg)
 				if (file_info.is_directory) {
 					return;
 				}
-				DynString full_path = dynstring_copy(directory_crawler_get_path(editor.directory_crawler));
-				SCOPE_EXIT(string_destroy(&full_path));
-				string_append(&full_path, "/");
-				string_append_string(&full_path, &file_info.filename);
-
-				int tab_index = syntax_editor_add_tab(full_path);
+				DynString full_path = dynstring_create_copy(directory_crawler_get_path(editor.directory_crawler), scratch_arena);
+				full_path.append('/')->append(file_info.filename);
+				int tab_index = syntax_editor_add_tab(full_path.to_string());
 				syntax_editor_switch_tab(tab_index);
 			}
 			Folds::remove_folds_on_line(editor.open_tab().cursor.line);
@@ -7848,20 +7782,20 @@ void syntax_editor_process_key_message(Key_Message & msg)
 		if (auto_complete && msg.key_down && editor.suggestions.size > 0)
 		{
 			auto sugg = editor.suggestions[0];
-			auto& search = editor.fuzzy_search_text;
+			DynString& search = editor.fuzzy_search_text;
 			if (sugg.type == Suggestion_Type::SYMBOL)
 			{
 				auto symbol = sugg.options.symbol;
 
 				int reset_pos = 0;
-				Optional<int> result = string_find_character_index_reverse(&search, '~', search.size - 1);
+				Optional<int> result = string_find_character_index_reverse(search.to_string(), '~', search.size - 1);
 				if (result.available) {
 					reset_pos = result.value + 1;
 				}
 				dynstring_remove_substring(&search, reset_pos, search.size);
-				string_append_string(&search, symbol->id);
+				search.append(symbol->id);
 				if (symbol->type == Symbol_Type::MODULE) {
-					string_append_character(&search, '~');
+					search.append('~');
 				}
 				changed = true;
 			}
@@ -7871,14 +7805,14 @@ void syntax_editor_process_key_message(Key_Message & msg)
 				Directory_Item file_info = directory_crawler_get_content(editor.directory_crawler)[sugg.options.file_index_in_crawler];
 
 				int reset_pos = 0;
-				Optional<int> result = string_find_character_index_reverse(&search, '/', search.size - 1);
+				Optional<int> result = string_find_character_index_reverse(search.to_string(), '/', search.size - 1);
 				if (result.available) {
 					reset_pos = result.value + 1;
 				}
 				dynstring_remove_substring(&search, reset_pos, search.size);
-				string_append_string(&search, &file_info.filename);
+				search.append(file_info.filename);
 				if (file_info.is_directory) {
-					string_append_character(&search, '/');
+					search.append('/');
 				}
 				changed = true;
 			}
@@ -7900,9 +7834,9 @@ void syntax_editor_process_key_message(Key_Message & msg)
 			auto& tab = syntax_editor.open_tab();
 
 			// Special code path for file search
-			DynString search_text = editor.fuzzy_search_text;
+			String search_text = editor.fuzzy_search_text.to_string();
 			if (search_text.size >= 2 && search_text.characters[0] == '.' && search_text.characters[1] == '/') {
-				search_text = string_create_substring_static(&editor.fuzzy_search_text, 2, editor.fuzzy_search_text.size);
+				search_text = string_make_substring(search_text, 2, editor.fuzzy_search_text.size);
 				suggestions_fill_with_file_directory(search_text);
 				break;
 			}
@@ -7920,14 +7854,14 @@ void syntax_editor_process_key_message(Key_Message & msg)
 			for (int i = 0; i < lookup_info.symbols.size; i++) {
 				auto symbol = lookup_info.symbols[i];
 				if (symbol->definition_node != nullptr) { // Symbol needs to be defined in code to jump to it
-					fuzzy_search_add_item(*symbol->id, i);
+					fuzzy_search_add_item(symbol->id.to_string(), i);
 				}
 			}
 			auto items = fuzzy_search_get_results(true, 3);
 			auto& suggestions = editor.suggestions;
-			dynamic_array_reset(&suggestions);
+			suggestions.reset();
 			for (int i = 0; i < items.size; i++) {
-				dynamic_array_push_back(&suggestions, suggestion_make_symbol(lookup_info.symbols[items[i].user_index]));
+				suggestions.push_back(suggestion_make_symbol(lookup_info.symbols[items[i].user_index]));
 			}
 		}
 		break;
@@ -8010,7 +7944,7 @@ int ir_block_find_first_instruction_hitting_statement_rec(IR_Code_Block * block,
 struct Watch_Value_Post_Op
 {
 	bool is_member_access;
-	DynString member_name;
+	String member_name;
 	int array_access;
 };
 
@@ -8019,26 +7953,30 @@ void watch_values_update()
 	auto& editor = syntax_editor;
 	auto debugger = editor.debugger;
 	auto debugger_state = debugger_get_state(debugger);
+	Arena* scratch_arena = &editor.frame_arena;
 	if (debugger_state.process_state != Debug_Process_State::HALTED) {
 		return;
 	}
 
-	Dynamic_Array<Watch_Value_Post_Op> post_ops = dynamic_array_create<Watch_Value_Post_Op>();
-	SCOPE_EXIT(dynamic_array_destroy(&post_ops));
-	Dynamic_Array<u8> byte_buffer = dynamic_array_create<u8>(16);
-	SCOPE_EXIT(dynamic_array_destroy(&byte_buffer));
+	DynString tmp_string = DynString::create(scratch_arena);
+	DynArray<Watch_Value_Post_Op> post_ops = DynArray<Watch_Value_Post_Op>::create(scratch_arena);
+	DynArray<u8> byte_buffer = DynArray<u8>::create(scratch_arena);
 	for (int i = 0; i < editor.watch_values.size; i++)
 	{
 		auto& watch_value = editor.watch_values[i];
-		dynstring_reset(&watch_value.value_as_text);
+		watch_value.value_as_text.deallocate();
+
+		post_ops.reset();
+		byte_buffer.reset();
+		tmp_string.reset();
 
 		// Parse post-ops
 		bool success = true;
-		DynString value_name = string_create_substring_static(&watch_value.name, 0, watch_value.name.size);
-		dynamic_array_reset(&post_ops);
+		String value_name = string_make("", 0);
 		{
+			String text = tmp_string.reset()->append(watch_value.name)->to_string();
+
 			int index = 0;
-			auto& text = watch_value.name;
 			int first_op_index = text.size + 1;
 
 			// Skip characters until first . or [
@@ -8054,7 +7992,7 @@ void watch_values_update()
 				}
 				index += 1;
 			}
-			value_name = string_create_substring_static(&watch_value.name, 0, index);
+			value_name = string_make_substring(text, 0, index);
 
 			// Parse post ops
 			while (index < text.size && success)
@@ -8078,8 +8016,8 @@ void watch_values_update()
 					if (member_access_start != member_access_end) {
 						Watch_Value_Post_Op op;
 						op.is_member_access = true;
-						op.member_name = string_create_substring_static(&text, member_access_start, member_access_end);
-						dynamic_array_push_back(&post_ops, op);
+						op.member_name = string_make_substring(text, member_access_start, member_access_end);
+						post_ops.push_back(op);
 					}
 					else {
 						success = false;
@@ -8111,7 +8049,8 @@ void watch_values_update()
 					Watch_Value_Post_Op op;
 					op.is_member_access = false;
 					op.array_access = value;
-					dynamic_array_push_back(&post_ops, op);
+					op.member_name = string_make("", 0);
+					post_ops.push_back(op);
 				}
 				else {
 					index += 1;
@@ -8120,19 +8059,19 @@ void watch_values_update()
 		}
 
 		if (!success) {
-			dynstring_append_formated(&watch_value.value_as_text, "Parsing Watch-Value failed");
+			watch_value.value_as_text.set(tmp_string.reset()->append("Parsing Watch-Value failed")->to_string());
 			continue;
 		}
 
 		// Read value
 		Debugger_Value_Read result = debugger_read_variable_value(debugger, value_name, &byte_buffer, editor.selected_stack_frame, 3);
 		if (!result.success) {
-			dynstring_append_formated(&watch_value.value_as_text, result.error_msg);
+			watch_value.value_as_text.set( result.error_msg);
 			continue;
 		}
 
 		// Apply post ops to value
-		byte* value_ptr = byte_buffer.data;
+		byte* value_ptr = byte_buffer.buffer.data;
 		Memory_Source local_source = Memory_Source(nullptr);
 		Datatype* type = result.result_type;
 		for (int i = 0; i < post_ops.size && success; i++)
@@ -8144,12 +8083,12 @@ void watch_values_update()
 			{
 				void* pointer = nullptr;
 				if (!local_source.read_single_value(value_ptr, &pointer)) {
-					string_append(&watch_value.value_as_text, "Pointer dereference failed!");
+					watch_value.value_as_text.set(string_make("Pointer dereference failed!"));
 					success = false;
 					break;
 				}
 				if (pointer == nullptr) {
-					string_append(&watch_value.value_as_text, "Auto-derefernce failed, pointer was null");
+					watch_value.value_as_text.set(string_make("Auto-derefernce failed, pointer was null"));
 					success = false;
 					break;
 				}
@@ -8161,7 +8100,7 @@ void watch_values_update()
 			if (post_op.is_member_access)
 			{
 				if (type->type != Datatype_Type::STRUCT) {
-					string_append(&watch_value.value_as_text, "Member access only valid on structs in Watch-values");
+					watch_value.value_as_text.set(string_make("Member access only valid on structs in Watch-values"));
 					success = false;
 					break;
 				}
@@ -8170,14 +8109,14 @@ void watch_values_update()
 				int member_index = -1;
 				for (int i = 0; i < structure->members.size; i++) {
 					auto member = structure->members[i];
-					if (string_equals(member.name, &post_op.member_name)) {
+					if (member.name.to_string() == post_op.member_name) {
 						member_index = i;
 						break;
 					}
 				}
 
 				if (member_index == -1) {
-					string_append(&watch_value.value_as_text, "Struct did not contain member");
+					watch_value.value_as_text.set(string_make("Struct did not contain member"));
 					success = false;
 					break;
 				}
@@ -8195,7 +8134,7 @@ void watch_values_update()
 				{
 					auto array_type = downcast<Datatype_Array>(type);
 					if (!array_type->count_known) {
-						string_append(&watch_value.value_as_text, "Array count not known");
+						watch_value.value_as_text.set(string_make("Array count not known"));
 						success = false;
 						break;
 					}
@@ -8207,12 +8146,12 @@ void watch_values_update()
 					auto slice_type = downcast<Datatype_Slice>(type);
 					Upp_Slice_Base slice_value;
 					if (!local_source.read_single_value(value_ptr, &slice_value)) {
-						string_append(&watch_value.value_as_text, "Slice memory access failed");
+						watch_value.value_as_text.set(string_make("Slice memory access failed"));
 						success = false;
 						break;
 					}
 					if (slice_value.data == nullptr) {
-						string_append(&watch_value.value_as_text, "Slice data was nullptr");
+						watch_value.value_as_text.set(string_make("Slice data was nullptr"));
 						success = false;
 						break;
 					}
@@ -8223,19 +8162,19 @@ void watch_values_update()
 					element_count = slice_value.size;
 				}
 				else {
-					string_append(&watch_value.value_as_text, "Array access only valid on Arrays/Slices");
+					watch_value.value_as_text.set(string_make("Array access only valid on Arrays/Slices"));
 					success = false;
 					break;
 				}
 
 				// Add array-offset to value-ptr
 				if (post_op.array_access < 0 || post_op.array_access >= element_count) {
-					string_append(&watch_value.value_as_text, "Array access index out of bounds");
+					watch_value.value_as_text.set(string_make("Array access index out of bounds"));
 					success = false;
 					break;
 				}
 				if (!element_type->memory_info.available) {
-					string_append(&watch_value.value_as_text, "Array memory not available");
+					watch_value.value_as_text.set(string_make("Array memory not available"));
 					success = false;
 					break;
 				}
@@ -8255,10 +8194,11 @@ void watch_values_update()
 			format.show_datatype = false;
 		}
 		datatype_append_value_to_string(
-			type, &watch_value.value_as_text, value_ptr, 
+			type, tmp_string.reset(), value_ptr,
 			format, 0, local_source, debugger_state.memory_source, editor.editor_compilation_data->type_system
 		);
-		string_style_remove_codes(&watch_value.value_as_text);
+		string_style_remove_codes(&tmp_string);
+		watch_value.value_as_text.set(tmp_string.to_string());
 	}
 }
 
@@ -8307,8 +8247,7 @@ void syntax_editor_update(bool& animations_running)
 	animations_running = false;
 
 	UI_Input_Info input_info = ui_system_start_frame(input);
-	DynString tmp_str = dynstring_create();
-	SCOPE_EXIT(string_destroy(&tmp_str));
+	DynString tmp_str = dynstring_create(&editor.frame_arena);
 
 	// Update particles
 	{
@@ -8319,17 +8258,16 @@ void syntax_editor_update(bool& animations_running)
 		// Remove all 'old' particles
 		auto& particles = editor.particles;
 		{
-			Dynamic_Array<Particle> survivors = dynamic_array_create<Particle>(particles.size);
+			int next_valid = 0;
 			for (int i = 0; i < particles.size; i++) {
 				auto& p = particles[i];
 				if (p.creation_time + p.life_time < time) {
 					continue;
 				}
-				dynamic_array_push_back(&survivors, p);
+				particles[next_valid] = particles[i];
+				next_valid += 1;
 			}
-
-			dynamic_array_destroy(&editor.particles);
-			editor.particles = survivors;
+			particles.rollback_to_size(next_valid);
 		}
 
 		// Move particles
@@ -8356,11 +8294,9 @@ void syntax_editor_update(bool& animations_running)
 	{
 		editor_leave_insert_mode();
 		editor.mode = Editor_Mode::NORMAL;
-		DynString filename = dynstring_create();
-		SCOPE_EXIT(string_destroy(&filename));
-		bool worked = file_io_open_file_selection_dialog(&filename);
+		bool worked = file_io_open_file_selection_dialog(tmp_str.reset());
 		if (worked) {
-			int tab_index = syntax_editor_add_tab(filename);
+			int tab_index = syntax_editor_add_tab(tmp_str.to_string());
 			syntax_editor_switch_tab(tab_index);
 		}
 	}
@@ -8402,7 +8338,7 @@ void syntax_editor_update(bool& animations_running)
 	{
 		bool filters_updated = false;
 
-		auto window = ui_system_add_window(window_style_make_floating("Pass-Filters"));
+		auto window = ui_system_add_window(window_style_make_floating(string_make("Pass-Filters")));
 		ui_system_push_active_container(window.container, false);
 		SCOPE_EXIT(ui_system_pop_active_container());
 
@@ -8413,7 +8349,7 @@ void syntax_editor_update(bool& animations_running)
 			editor.prefer_poly_passes = new_prefer;
 			filters_updated = true;
 		}
-		ui_system_push_label("Prefer polymorphic-passes", false);
+		ui_system_push_label(string_make("Prefer polymorphic-passes"), false);
 		ui_system_pop_active_container();
 
 		line_container = ui_system_push_line_container();
@@ -8423,10 +8359,10 @@ void syntax_editor_update(bool& animations_running)
 			editor.prefer_base_pass = prefer_base;
 			filters_updated = true;
 		}
-		ui_system_push_label("Prefer base-pass", false);
+		ui_system_push_label(string_make("Prefer base-pass"), false);
 		ui_system_pop_active_container();
 
-		ui_system_push_label("Filters:", false);
+		ui_system_push_label(string_make("Filters:"), false);
 		auto& filters = editor.poly_pass_filters;
 		for (int i = 0; i < filters.size; i++)
 		{
@@ -8446,36 +8382,35 @@ void syntax_editor_update(bool& animations_running)
 				filters_updated = true;
 			}
 
-			auto update = ui_system_push_text_input(filter.required_substring);
+			auto update = ui_system_push_text_input(tmp_str.reset()->append(filter.required_substring)->to_string());
 			if (update.text_was_changed) {
-				dynstring_reset(&filter.required_substring);
-				string_append_string(&filter.required_substring, &update.new_text);
+				filter.required_substring.set(update.new_text);
 				filters_updated = true;
 			}
 
 			bool remove = ui_system_push_icon_button(ui_icon_make(Icon_Type::X_MARK, Icon_Rotation::NONE, vec3(1, 0, 0)), true);
 			if (remove) {
-				string_destroy(&filter.required_substring);
+				filter.required_substring.deallocate();
 				filters_updated = true;
-				dynamic_array_remove_ordered(&filters, i);
+				filters.remove_ordered(i);
 				i -= 1;
 				continue;
 			}
 		}
 
-		auto input = ui_system_push_button("Add Filter");
+		auto input = ui_system_push_button(string_make("Add Filter"));
 		if (input.was_pressed)
 		{
 			Pass_Filter filter;
 			filter.connected_to_next = false;
 			filter.is_active = true;
-			filter.required_substring = dynstring_create("");
-			dynamic_array_push_back(&editor.poly_pass_filters, filter);
+			filter.required_substring = String_List::create_empty(editor.freelist_string_list.upcast());
+			editor.poly_pass_filters.push_back(filter);
 			filters_updated = true;
 		}
 
 		static bool section_line_passes_open = true;
-		auto section_info = ui_system_push_subsection(section_line_passes_open, "Line-Passes", true);
+		auto section_info = ui_system_push_subsection(section_line_passes_open, string_make("Line-Passes"), true);
 		section_line_passes_open = section_info.enabled;
 		if (section_info.enabled)
 		{
@@ -8483,19 +8418,19 @@ void syntax_editor_update(bool& animations_running)
 			SCOPE_EXIT(ui_system_pop_active_container());
 
 			// Show all passes on current line
-			Dynamic_Array<Analysis_Pass*> passes = dynamic_array_create<Analysis_Pass*>();
-			SCOPE_EXIT(dynamic_array_destroy(&passes));
+			DynArray<Analysis_Pass*> passes = DynArray<Analysis_Pass*>::create(&editor.frame_arena);
 
 			auto& tab = editor.open_tab();
-			if (tab.cursor.line >= 0 && tab.cursor.line < tab.code->line_count) 
+			if (tab.cursor.line >= 0 && tab.cursor.line < tab.code->line_count()) 
 			{
-				auto line = source_code_get_line(editor.open_tab().code, editor.open_tab().cursor.line);
-				for (int i = 0; i < line->item_infos.size; i++) {
-					auto& item = line->item_infos[i];
+				DynArray<Editor_Info_Reference> line_infos = DynArray<Editor_Info_Reference>::create(&editor.frame_arena);
+				source_code_line_get_items(tab.code, tab.cursor.line, &line_infos);
+				for (int i = 0; i < line_infos.size; i++) {
+					auto& item = line_infos[i];
 					for (int j = 0; j < item.editor_info_mapping_count; j++) {
 						auto& semantic_info = editor.editor_compilation_data->semantic_infos[item.editor_info_mapping_start_index + j];
 						if (semantic_info.pass == nullptr) continue; // Markup Editor Infos don't have a pass
-						dynamic_array_push_back(&passes, semantic_info.pass);
+						passes.push_back(semantic_info.pass);
 					}
 				}
 			}
@@ -8505,7 +8440,7 @@ void syntax_editor_update(bool& animations_running)
 				auto pass = passes[i];
 				for (int j = i + 1; j < passes.size; j++) {
 					if (passes[j] == pass) {
-						dynamic_array_swap_remove(&passes, j);
+						passes.swap_remove(j);
 						j -= 1;
 					}
 				}
@@ -8521,23 +8456,22 @@ void syntax_editor_update(bool& animations_running)
 				analysis_pass_append_polymorphic_infos(pass, &tmp_str, is_poly, is_base);
 				string_style_remove_codes(&tmp_str);
 
-				DynString tmp_header = dynstring_create();
-				SCOPE_EXIT(string_destroy(&tmp_header));
+				DynString tmp_header = DynString::create(&editor.frame_arena);
 				dynstring_append_formated(&tmp_header, "pass: %p ", pass);
 				if (is_base) {
-					string_append(&tmp_header, "Base ");
+					tmp_header.append("Base ");
 				}
 				else if (is_poly) {
-					string_append(&tmp_header, "Instance ");
+					tmp_header.append("Instance ");
 				}
 				else {
-					string_append(&tmp_header, "Normal ");
+					tmp_header.append("Normal ");
 				}
-				string_append(&tmp_header, passes_filter ? "PASSES" : "FILTERED");
+				tmp_header.append(passes_filter ? "PASSES" : "FILTERED");
 
 				auto header_container = ui_system_push_indented_container(0, passes_filter, syntax_color_to_vec3(Syntax_Color::BG_HIGHLIGHT));
 				ui_system_push_active_container(header_container, true);
-				ui_system_push_label(tmp_header, false);
+				ui_system_push_label(tmp_header.to_string(), false);
 
 				if (!is_poly || is_base) {
 					continue;
@@ -8546,10 +8480,9 @@ void syntax_editor_update(bool& animations_running)
 				auto container = ui_system_push_indented_container(2, false, vec3(0.0f));
 				ui_system_push_active_container(container, false);
 
-				Array<DynString> lines = string_split(tmp_str, '\n');
-				SCOPE_EXIT(string_split_destroy(lines));
+				Array<String> lines = string_split(tmp_str.to_string(), '\n', &editor.frame_arena);
 				for (int i = 0; i < lines.size; i++) {
-					DynString& line = lines[i];
+					String line = lines[i];
 					if (line.size == 0) continue;
 					ui_system_push_label(line, false);
 				}
@@ -8558,7 +8491,7 @@ void syntax_editor_update(bool& animations_running)
 		}
 
 		if (filters_updated) {
-			hashtable_reset(&editor.filtered_passes);
+			editor.filtered_passes.reset();
 		}
 	}
 
@@ -8578,12 +8511,12 @@ void syntax_editor_update(bool& animations_running)
 
 	if (show_debugger_ui)
 	{
-		Window_Handle handle = ui_system_add_window(window_style_make_anchored("Debugger_Info"));
+		Window_Handle handle = ui_system_add_window(window_style_make_anchored(string_make("Debugger_Info")));
 		ui_system_push_active_container(handle.container, false);
 		SCOPE_EXIT(ui_system_pop_active_container());
 
 		static bool status_open = true;
-		UI_Subsection_Info subsection_info = ui_system_push_subsection(status_open, "Status", false);
+		UI_Subsection_Info subsection_info = ui_system_push_subsection(status_open, string_make("Status"), false);
 		status_open = subsection_info.enabled;
 		if (status_open)
 		{
@@ -8593,24 +8526,18 @@ void syntax_editor_update(bool& animations_running)
 			if (debugger_running)
 			{
 				Array<Stack_Frame> stack_frames = debugger_get_stack_frames(editor.debugger);
-				Dynamic_Array<DynString> strings = dynamic_array_create<DynString>(stack_frames.size);
-				SCOPE_EXIT(
-					for (int i = 0; i < strings.size; i++) {
-						string_destroy(&strings[i]);
-					}
-				dynamic_array_destroy(&strings);
-					);
+				DynArray<String> strings = DynArray<String>::create(&editor.frame_arena, stack_frames.size);
 
 				for (int i = 0; i < stack_frames.size; i++)
 				{
 					Stack_Frame& frame = stack_frames[i];
-					DynString str = dynstring_create();
+					DynString str = dynstring_create(&editor.frame_arena);
 					str.append_formated("%2d ", i);
 
 					bool found_info = false;
 					Assembly_Source_Information info = debugger_get_assembly_source_information(editor.debugger, frame.instruction_pointer);
 					if (info.upp_function != nullptr) {
-						string_append_string(&str, info.upp_function->name);
+						str.append(info.upp_function->name);
 						found_info = true;
 					}
 
@@ -8620,13 +8547,13 @@ void syntax_editor_update(bool& animations_running)
 						closest_symbol_info_append_to_string(editor.debugger, symbol_info, &str);
 					}
 
-					dynamic_array_push_back(&strings, str);
+					strings.push_back(str.to_string());
 				}
 
-				ui_system_push_next_component_label("Stack-Frames:");
+				ui_system_push_next_component_label(string_make("Stack-Frames:"));
 				static Dropdown_State dropdown_state;
 				dropdown_state.value = editor.selected_stack_frame;
-				ui_system_push_dropdown(dropdown_state, dynamic_array_as_array(&strings));
+				ui_system_push_dropdown(dropdown_state, strings.as_array());
 				if (dropdown_state.value_was_changed)
 				{
 					editor.selected_stack_frame = dropdown_state.value;
@@ -8642,12 +8569,12 @@ void syntax_editor_update(bool& animations_running)
 				ui_system_pop_active_container();
 			}
 			else {
-				ui_system_push_label("Debugger not running", false);
+				ui_system_push_label(string_make("Debugger not running"), false);
 			}
 		}
 
 		static bool breakpoints_open = true;
-		subsection_info = ui_system_push_subsection(breakpoints_open, "Breakpoints", true);
+		subsection_info = ui_system_push_subsection(breakpoints_open, string_make("Breakpoints"), true);
 		breakpoints_open = subsection_info.enabled;
 		if (breakpoints_open)
 		{
@@ -8674,9 +8601,9 @@ void syntax_editor_update(bool& animations_running)
 					}
 
 					dynstring_reset(&tmp_str);
-					DynString src_text = line_index_get_text(breakpoint.line_number, &tab);
-					dynstring_append_formated(&tmp_str, "#%05d, \"%s\"", breakpoint.line_number, src_text.characters);
-					ui_system_push_label(tmp_str.characters, false);
+					String src_text = line_index_get_text(breakpoint.line_number, &tab);
+					tmp_str.reset()->append_formated("#%05d, \"", breakpoint.line_number)->append(src_text)->append('\"');
+					ui_system_push_label(tmp_str.to_string(), false);
 				}
 				};
 
@@ -8686,14 +8613,13 @@ void syntax_editor_update(bool& animations_running)
 				auto& tab = *editor.tabs[i];
 				if (i == editor.open_tab_index) continue;
 				if (tab.breakpoints.size == 0) continue;
-				DynString name = filepath_get_parts(tab.filepath).filename;
-				ui_system_push_label(name, false);
+				ui_system_push_label(filepath_get_parts(tab.filepath).filename, false);
 				push_tab_breakpoints(i);
 			}
 		}
 
 		static bool watch_window_open = true;
-		subsection_info = ui_system_push_subsection(watch_window_open, "Watch_Window", true);
+		subsection_info = ui_system_push_subsection(watch_window_open, string_make("Watch_Window"), true);
 		watch_window_open = subsection_info.enabled;
 		if (watch_window_open)
 		{
@@ -8706,11 +8632,10 @@ void syntax_editor_update(bool& animations_running)
 				auto& watch_value = watch_values[i];
 				ui_system_push_active_container(ui_system_push_line_container(), false);
 
-				Text_Input_State state = ui_system_push_text_input(watch_value.name);
+				Text_Input_State state = ui_system_push_text_input(tmp_str.reset()->append(watch_value.name)->to_string());
 				if (state.text_was_changed) {
-					dynstring_reset(&watch_value.name);
-					string_append_string(&watch_value.name, &state.new_text);
-					dynstring_reset(&watch_value.value_as_text);
+					watch_value.name.set(state.new_text);
+					watch_value.value_as_text.reset();
 					update_watch_values = true;
 					animations_running = true;
 				}
@@ -8724,9 +8649,9 @@ void syntax_editor_update(bool& animations_running)
 				bool pressed = ui_system_push_icon_button(ui_icon_make(Icon_Type::X_MARK, Icon_Rotation::NONE, vec3(1, 0, 0)), true);
 				ui_system_pop_active_container();
 				if (pressed) {
-					string_destroy(&watch_value.name);
-					string_destroy(&watch_value.value_as_text);
-					dynamic_array_remove_ordered(&watch_values, i);
+					watch_value.name.deallocate();
+					watch_value.value_as_text.deallocate();
+					watch_values.remove_ordered(i);
 					i -= 1;
 					animations_running = true;
 					continue;
@@ -8736,15 +8661,14 @@ void syntax_editor_update(bool& animations_running)
 					continue;
 				}
 
-				Array<DynString> lines = string_split(watch_value.value_as_text, '\n');
-				SCOPE_EXIT(string_split_destroy(lines));
+				Array<String> lines = string_split(tmp_str.reset()->append(watch_value.value_as_text)->to_string(), '\n', &editor.frame_arena);
 				for (int i = 0; i < lines.size; i++) {
 					ui_system_push_label(lines[i], false);
 				}
 			}
 
-			ui_system_push_next_component_label("New:");
-			Text_Input_State input = ui_system_push_text_input(string_create_static("Expression"));
+			ui_system_push_next_component_label(string_make("New:"));
+			Text_Input_State input = ui_system_push_text_input(string_make("Expression"));
 			if (input.text_was_changed)
 			{
 				bool is_valid = true;
@@ -8758,10 +8682,10 @@ void syntax_editor_update(bool& animations_running)
 
 				if (is_valid) {
 					Watch_Value new_value;
-					new_value.name = dynstring_copy(input.new_text);
-					new_value.value_as_text = dynstring_create();
+					new_value.name = String_List::create(editor.freelist_string_list.upcast(), input.new_text);
+					new_value.value_as_text = String_List::create_empty(editor.freelist_string_list.upcast());
 					new_value.show_multiline = false;
-					dynamic_array_push_back(&editor.watch_values, new_value);
+					editor.watch_values.push_back(new_value);
 					watch_values_update();
 				}
 			}
@@ -8776,11 +8700,11 @@ void syntax_editor_update(bool& animations_running)
 			show_editor_settings_ui = false;
 		}
 
-		Window_Handle handle = ui_system_add_window(window_style_make_floating("Editor_Settings"));
+		Window_Handle handle = ui_system_add_window(window_style_make_floating(string_make("Editor_Settings")));
 		ui_system_push_active_container(handle.container, false);
 		SCOPE_EXIT(ui_system_pop_active_container());
 
-		ui_system_push_label("Execute Binary:", false);
+		ui_system_push_label(string_make("Execute Binary:"), false);
 		bool prev_value = compiler_execute_binary;
 	    bool new_value = ui_system_push_checkbox(compiler_execute_binary);
 		if (prev_value != new_value) {
@@ -8798,7 +8722,7 @@ void syntax_editor_update(bool& animations_running)
 		for (int i = 0; i < (int)Toggle_Option::MAX_ENUM_VALUE; i++)
 		{
 			Toggle_Option toggle_option = (Toggle_Option)i;
-			ui_system_push_label(toggle_option_as_string(toggle_option), false);
+			ui_system_push_label(string_make(toggle_option_as_string(toggle_option)), false);
 			editor.toggle_options[i] = ui_system_push_checkbox(editor.toggle_options[i]);
 		}
 	}
@@ -8822,24 +8746,24 @@ void syntax_editor_update(bool& animations_running)
 			for (int i = 0; i < editor.tabs.size; i++)
 			{
 				auto& tab = *editor.tabs[i];
-				DynString name = tab.filepath;
+				String name = tab.filepath;
 				int start = 0;
 				int end = name.size;
 
-				Optional<int> path_found = string_find_character_index_reverse(&name, '/', name.size - 1);
+				Optional<int> path_found = string_find_character_index_reverse(name, '/', name.size - 1);
 				if (path_found.available) {
 					start = path_found.value + 1;
 				}
-				path_found = string_find_character_index_reverse(&name, '\\', name.size - 1);
+				path_found = string_find_character_index_reverse(name, '\\', name.size - 1);
 				if (path_found.available) {
 					if (path_found.value + 1 > start) {
 						start = path_found.value + 1;
 					}
 				}
-				if (cstring_ends_with(name.characters, ".upp")) {
+				if (string_ends_with(name, string_make(".upp"))) {
 					end = name.size - 4;
 				}
-				name = string_create_substring_static(&name, start, end);
+				name = string_make_substring(name, start, end);
 
 				vec4 bg_color = vec4(0.3f, 0.3f, 0.3f, 1.0f);
 				if (editor.open_tab_index == i) {
@@ -8892,7 +8816,7 @@ void syntax_editor_update(bool& animations_running)
 			gui_node_set_padding(debug_container, 3, 3);
 			gui_node_set_layout(debug_container, GUI_Stack_Direction::LEFT_TO_RIGHT, GUI_Alignment::MIN);
 
-			gui_push_text(debug_container, string_create_static("Debugger running!"), vec4(1.0f));
+			gui_push_text(debug_container, string_make("Debugger running!"), vec4(1.0f));
 		}
 		auto code_node = gui_add_node(root_node, gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_none());
 		if (code_node.first_time_created) {
@@ -8998,9 +8922,9 @@ void syntax_editor_update(bool& animations_running)
 
 		double started = debugger_start_process(
 			editor.debugger,
-			"D:/Projects/UppLang/backend/build/main.exe",
-			"D:/Projects/UppLang/backend/build/main.pdb",
-			"D:/Projects/UppLang/backend/build/main.obj",
+			string_make("D:/Projects/UppLang/backend/build/main.exe"),
+			string_make("D:/Projects/UppLang/backend/build/main.pdb"),
+			string_make("D:/Projects/UppLang/backend/build/main.obj"),
 			editor.editor_compilation_data
 		);
 
@@ -9035,29 +8959,26 @@ void syntax_editor_update(bool& animations_running)
 	if (errors.size == 0)
 	{
 		auto exit_code = compiler_execute(editor.editor_compilation_data);
-		DynString output = dynstring_create(256);
-		SCOPE_EXIT(string_destroy(&output));
-		exit_code_append_to_string(&output, exit_code);
-		logg("\nProgram Exit with Code: %s\n", output.characters);
+		exit_code_append_to_string(tmp_str.reset(), exit_code);
+		logg("\nProgram Exit with Code: %s\n", tmp_str.to_cstring());
 	}
 	else
 	{
 		// Print errors
 		logg("Could not run program, there were errors:\n");
-		DynString tmp = dynstring_create();
-		SCOPE_EXIT(string_destroy(&tmp));
+		tmp_str.reset();
 
 		// Append Parser errors
 		for (int i = 0; i < errors.size; i++)
 		{
 			const auto& error = errors[i];
-			dynstring_append_formated(&tmp, "\t%s\n", error.msg);
+			tmp_str.append('\t')->append(error.msg)->append('\n');
 		}
 
 		// Append semantic errors
-		compilation_data_append_code_errors_to_string(editor.editor_compilation_data, &tmp, 1);
-		string_style_remove_codes(&tmp);
-		logg(tmp.characters);
+		compilation_data_append_code_errors_to_string(editor.editor_compilation_data, &tmp_str, 1);
+		string_style_remove_codes(&tmp_str);
+		logg(tmp_str.to_cstring());
 
 		// Enter error-show mode
 		auto cmd = Parsing::normal_mode_command_make(Normal_Command_Type::ENTER_SHOW_ERROR_MODE, 1);
@@ -9224,22 +9145,23 @@ void syntax_editor_render()
 	auto& editor = syntax_editor;
 	editor.frame_index += 1;
 
-	Arena& arena = editor.arena;
-	arena.reset(true);
+	SCOPE_EXIT(editor.frame_arena.reset(true));
+
+	Arena* scratch_arena = &editor.frame_arena;
 
 	// Prepare Render
 	syntax_editor_sanitize_cursor();
 	ivec2 screen_size = ivec2(rendering_core.render_information.backbuffer_width, rendering_core.render_information.backbuffer_height);
 
 	auto state_2D = pipeline_state_make_alpha_blending();
-	auto pass_context = rendering_core_query_renderpass("Context pass", state_2D, 0);
-	auto pass_2D = rendering_core_query_renderpass("2D state", state_2D, 0);
+	auto pass_context = rendering_core_query_renderpass(string_make("Context pass"), state_2D, 0);
+	auto pass_2D = rendering_core_query_renderpass(string_make("2D state"), state_2D, 0);
 
 	auto particle_state = pipeline_state_make_alpha_blending();
 	particle_state.blending_state.equation = Blend_Equation::MAXIMUM;
 	particle_state.blending_state.source      = Blend_Operand::ONE;
 	particle_state.blending_state.destination = Blend_Operand::ONE;
-	auto pass_particles = rendering_core_query_renderpass("particles", particle_state, 0);
+	auto pass_particles = rendering_core_query_renderpass(string_make("particles"), particle_state, 0);
 
 	render_pass_add_dependency(pass_2D, rendering_core.predefined.main_pass);
 	render_pass_add_dependency(pass_context, pass_2D);
@@ -9252,26 +9174,9 @@ void syntax_editor_render()
 	{
 		auto& particles = editor.particles;
 
-		// Remove all 'old' particles
-		{
-			const float SURVIVAL_TIME = 2.0f;
-			float time = (float)editor.last_update_time;
-			Dynamic_Array<Particle> survivors = dynamic_array_create<Particle>(particles.size);
-			for (int i = 0; i < particles.size; i++) {
-				auto& p = particles[i];
-				if (p.creation_time + SURVIVAL_TIME < time) {
-					continue;
-				}
-				dynamic_array_push_back(&survivors, p);
-			}
-
-			dynamic_array_destroy(&editor.particles);
-			editor.particles = survivors;
-		}
-
 		auto& predef = rendering_core.predefined;
 		auto description = vertex_description_create({ predef.position2D, predef.color4, predef.texture_coordinates, predef.index });
-		auto mesh = rendering_core_query_mesh("particles", description, true);
+		auto mesh = rendering_core_query_mesh(string_make("particles"), description, true);
 
 		// For each particle push the mesh
 		auto positions = mesh_push_attribute_slice(mesh, predef.position2D, particles.size * 4);
@@ -9310,7 +9215,7 @@ void syntax_editor_render()
 			indices[i * 6 + 5] = i * 4 + 3;
 		}
 
-		auto shader = rendering_core_query_shader("particle.glsl");
+		auto shader = rendering_core_query_shader(string_make("particle.glsl"));
 		render_pass_draw(pass_particles, shader, mesh, Mesh_Topology::TRIANGLES, {});
 	}
 
@@ -9324,7 +9229,7 @@ void syntax_editor_render()
 	ivec2 char_size = editor.font_main->char_size;
 
 	// Clamp camera and calculate display lines
-	editor.display_lines = DynArray<Display_Line>::create(&arena);
+	editor.display_lines = DynArray<Display_Line>::create(scratch_arena);
 	auto& display_lines = editor.display_lines;
 	int cursor_display_line = -1;
 	bool cursor_is_on_fold = Folds::get_line_area(cursor.line).inside_fold;
@@ -9336,7 +9241,7 @@ void syntax_editor_render()
 		editor.visible_line_count = max_line_count;
 
 		// Clamp camera to cursor if cursor moved or text changed
-		History_Timestamp timestamp = history_get_timestamp(&tab.history);
+		History_Timestamp timestamp = history_get_timestamp(tab.history);
 		if (!text_index_equal(tab.last_render_cursor_pos, cursor) || tab.last_render_timestamp.node_index != timestamp.node_index)
 		{
 			tab.last_render_cursor_pos = cursor;
@@ -9370,7 +9275,7 @@ void syntax_editor_render()
 			}
 
 			display_lines.push_back(display_line);
-			if (start.line_index >= tab.code->line_count - 1 && start.line_index > tab.cursor.line) {
+			if (start.line_index >= tab.code->line_count() - 1 && start.line_index > tab.cursor.line) {
 				break;
 			}
 			start.move(1);
@@ -9408,15 +9313,9 @@ void syntax_editor_render()
 			editor.source_to_display_line_mapping.insert(display_lines[i].line_index, i);
 		}
 	}
-	// Note: Arena only get's reset after display lines, because particles need the display-line mapping
-	auto checkpoint = arena.make_checkpoint();
-	SCOPE_EXIT(checkpoint.rewind());
 
 	// Draw line-infos (line-numbers and symbols) as own text area, so we don't mess up indices of main area
 	{
-		auto checkpoint = arena.make_checkpoint();
-		SCOPE_EXIT(checkpoint.rewind());
-
 		// Set line symbol booleans in display lines
 		{
 			auto helper_add_symbol = [&](int line_index, Line_Symbol_Flag flag) {
@@ -9505,7 +9404,7 @@ void syntax_editor_render()
 			return digits;
 		};
 
-		int max_line_number = math_maximum(code->line_count + syntax_editor.visible_line_count, math_absolute(cursor.line));
+		int max_line_number = math_maximum(code->line_count() + syntax_editor.visible_line_count, math_absolute(cursor.line));
 		int line_number_digits = get_digits(max_line_number);
 		int line_number_characters =
 			line_number_digits +
@@ -9519,16 +9418,16 @@ void syntax_editor_render()
 		int first_line_number = Folds::Line_Iter::create(tab.cursor.line).visible_distance_to(display_lines[0].line_index);
 
 		// Create text-area for line-infos
-		Rich_Text_Area line_info_area = Rich_Text_Area::create(&arena, ivec2(line_number_characters, display_lines.size));
+		Rich_Text_Area line_info_area = Rich_Text_Area::create(scratch_arena, ivec2(line_number_characters, display_lines.size));
 		for (int i = 0; i < display_lines.size; i++)
 		{
 			Display_Line& display_line = display_lines[i];
 
 			if (display_line.line_index < 0 && display_line.line_index < cursor.line) continue;
-			if (display_line.line_index >= code->line_count && display_line.line_index > cursor.line) continue;
+			if (display_line.line_index >= code->line_count() && display_line.line_index > cursor.line) continue;
 
 			// Maybe some bg-color?
-			bool line_index_valid = display_line.line_index >= 0 && display_line.line_index < code->line_count;
+			bool line_index_valid = display_line.line_index >= 0 && display_line.line_index < code->line_count();
 			line_info_area.mark(ivec2(0, i), line_number_characters, 
 				Mark_Type::BACKGROUND_COLOR, line_index_valid ? Palette_Color::GREY1 : Palette_Color::DARK_YELLOW
 			);
@@ -9554,7 +9453,7 @@ void syntax_editor_render()
 			{
 				char c = '0' + (display_number % 10);
 				display_number = display_number / 10;
-				line_info_area.set_text(ivec2(char_index, i), string_create_static_with_size(&c, 1));
+				line_info_area.set_text(ivec2(char_index, i), string_make(&c, 1));
 				line_info_area.mark(ivec2(char_index, i), 1, Mark_Type::TEXT_COLOR, num_color);
 				if (display_number == 0) {
 					char_index -= 1;
@@ -9562,7 +9461,7 @@ void syntax_editor_render()
 				}
 			}
 			if (is_negative) {
-				line_info_area.set_text(ivec2(char_index, i), string_create_static("-"));
+				line_info_area.set_text(ivec2(char_index, i), string_make("-"));
 				line_info_area.mark(ivec2(char_index, i), 1, Mark_Type::TEXT_COLOR, num_color);
 			}
 
@@ -9575,7 +9474,7 @@ void syntax_editor_render()
 
 			// Add breakpoint
 			if (is_breakpoint) {
-				line_info_area.set_text(ivec2(0, i), string_create_static("o"));
+				line_info_area.set_text(ivec2(0, i), string_make("o"));
 				line_info_area.mark(ivec2(0, i), 1, Mark_Type::TEXT_COLOR, Palette_Color::RED);
 			}
 
@@ -9593,7 +9492,7 @@ void syntax_editor_render()
 			// Add symbol
 			if (c != '\0') 
 			{
-				line_info_area.set_text(ivec2(1, i), string_create_static_with_size(&c, 1));
+				line_info_area.set_text(ivec2(1, i), string_make(&c, 1));
 				if (in_selected_frame) {
 					line_info_area.mark(ivec2(1, i), 1, Mark_Type::TEXT_COLOR, Palette_Color::GREEN);
 				}
@@ -9607,17 +9506,17 @@ void syntax_editor_render()
 
 	// Draw source-code
 	{
-		auto checkpoint = arena.make_checkpoint();
-		SCOPE_EXIT(checkpoint.rewind());
-
 		// Create text-area from source-code
-		Rich_Text_Area main_area = Rich_Text_Area::create(&arena, ivec2(ceilf((float)(main_box.max.x - main_box.min.x) / char_size.x), display_lines.size));
+		Rich_Text_Area main_area = Rich_Text_Area::create(
+			scratch_arena, 
+			ivec2(ceilf((float)(main_box.max.x - main_box.min.x) / char_size.x), display_lines.size)
+		);
 		{
 			// Push text line-by-line into area
 			for (int i = 0; i < display_lines.size; i++)
 			{
 				Display_Line& display_line = display_lines[i];
-				DynString text = line_index_get_text(display_line.line_index);
+				String text = line_index_get_text(display_line.line_index);
 
 				// Check what needs to be drawn (text and/or folds)
 				bool draw_fold = false;
@@ -9659,7 +9558,7 @@ void syntax_editor_render()
 					}
 
 					// Draw fold
-					main_area.set_text(fold_draw_pos, string_create_static("|...|"));
+					main_area.set_text(fold_draw_pos, string_make("|...|"));
 					main_area.mark(fold_draw_pos, 5, Mark_Type::TEXT_COLOR, Syntax_Color::TEXT);
 					main_area.mark(fold_draw_pos, 5, Mark_Type::BACKGROUND_COLOR, Syntax_Color::FOLD_BG);
 				}
@@ -9669,7 +9568,7 @@ void syntax_editor_render()
 		// Syntax-Highlighting 
 		{
 			// Query positional analysis infos
-			DynArray<int> hover_errors = DynArray<int>::create(&arena);
+			DynArray<int> hover_errors = DynArray<int>::create(scratch_arena);
 			Position_Info hover_info = code_query_find_position_infos(cursor, &hover_errors);
 			Symbol* highlight_symbol = nullptr;
 			bool highlight_only_definition = false;
@@ -9686,20 +9585,20 @@ void syntax_editor_render()
 			}
 
 			// Figure out which identifier/keyword the cursor is on
-			DynString cursor_token_text = string_create_static("");
+			String cursor_token_text = string_make("");
+			DynArray<Token> tokens = DynArray<Token>::create(scratch_arena);
+			DynArray<Editor_Info_Reference> line_infos = DynArray<Editor_Info_Reference>::create(scratch_arena);
 			{
 				int token_index = 0;
-				DynString line_text = line_index_get_text(cursor.line);
+				String line_text = line_index_get_text(cursor.line);
 
-				auto checkpoint = arena.make_checkpoint();
-				SCOPE_EXIT(checkpoint.rewind());
-				DynArray<Token> tokens = tokenize_partial_code(code, cursor, &arena, token_index, false, false);
+				tokenize_partial_code(code, tokens.reset(), cursor, token_index, false, false);
 				if (token_index < tokens.size)
 				{
 					Token& token = tokens[token_index];
 					if (token.start <= cursor.character && token.end >= cursor.character &&
 						(token_type_is_keyword(token.type) || token.type == Token_Type::IDENTIFIER)) {
-						cursor_token_text = string_create_substring_static(&line_text, token.start, token.end);
+						cursor_token_text = string_make_substring(line_text, token.start, token.end);
 					}
 				}
 			}
@@ -9711,15 +9610,12 @@ void syntax_editor_render()
 			for (int i = 0; i < display_lines.size; i += 1)
 			{
 				Display_Line& display_line = display_lines[i];
-				if (display_line.line_index < 0 || display_line.line_index >= code->line_count) continue;
+				if (display_line.line_index < 0 || display_line.line_index >= code->line_count()) continue;
 				if (display_line.fold_info.inside_fold) continue;
-				Source_Line* line = source_code_get_line(tab.code, display_line.line_index);
+				String line_text = line_index_get_text(display_line.line_index, &tab);
 
 				// Initial Syntax-Coloring based on tokenization
-				auto checkpoint = arena.make_checkpoint();
-				SCOPE_EXIT(checkpoint.rewind());
-				DynArray<Token> tokens = DynArray<Token>::create(&arena);
-				tokenizer_tokenize_single_line(line->text, &tokens, display_line.line_index, false);
+				tokenizer_tokenize_single_line(line_text, tokens.reset(), display_line.line_index, false);
 				for (int j = 0; j < tokens.size; j++)
 				{
 					auto& token = tokens[j];
@@ -9728,8 +9624,8 @@ void syntax_editor_render()
 
 					// Highlight tokens with same text as token under cursor
 					if (highlight_symbol != nullptr) continue;
-					DynString token_text = string_create_substring_static(&line->text, token.start, token.end);
-					if (string_equals(token_text, cursor_token_text)) {
+					String token_text = string_make_substring(line_text, token.start, token.end);
+					if (token_text == cursor_token_text) {
 						main_area.mark(ivec2(token.start, i), token.end - token.start, Mark_Type::BACKGROUND_COLOR, Syntax_Color::BG_HIGHLIGHT);
 					}
 				}
@@ -9737,15 +9633,15 @@ void syntax_editor_render()
 				// Highlight search results in editor
 				if (editor.mode == Editor_Mode::TEXT_SEARCH && editor.search_text.size != 0)
 				{
-					auto& search_text = editor.search_text;
-					DynString str = line->text;
-					int substring_start = string_contains_substring(str, 0, search_text);
+					String search_text = editor.search_text.to_string();
+					String str = line_text;
+					int substring_start = string_contains_substring(str, search_text);
 					while (substring_start != -1) {
 						main_area.mark(
 							ivec2(substring_start, i), search_text.size,
 							Mark_Type::BACKGROUND_COLOR, Syntax_Color::SEARCH_HIGHLIGHT_BG
 						);
-						substring_start = string_contains_substring(str, substring_start + search_text.size, search_text);
+						substring_start = string_contains_substring(str, search_text, substring_start + search_text.size);
 					}
 				}
 
@@ -9760,7 +9656,8 @@ void syntax_editor_render()
 				}
 
 				// Highlight analysis-items
-				auto& analysis_items = line->item_infos;
+			    source_code_line_get_items(tab.code, display_line.line_index, line_infos.reset());
+				auto& analysis_items = line_infos;
 				for (int j = 0; j < analysis_items.size; j++)
 				{
 					auto& analysis_item = analysis_items[j];
@@ -9841,7 +9738,7 @@ void syntax_editor_render()
 			Display_Line& display_line = display_lines[i];
 			if (display_line.fold_info.inside_fold) continue;
 
-			DynString text = line_index_get_text(display_line.line_index);
+			String text = line_index_get_text(display_line.line_index);
 			int leading_whitespaces = 0;
 			while (leading_whitespaces < text.size && text.characters[leading_whitespaces] == ' '){
 				leading_whitespaces += 1;
@@ -9879,7 +9776,7 @@ void syntax_editor_render()
 		// Draw Cursor
 		if (cursor_display_line != -1)
 		{
-			DynString cursor_line_text = line_index_get_text(cursor.line);
+			String cursor_line_text = line_index_get_text(cursor.line);
 			Display_Line& display_line = display_lines[cursor_display_line];
 
 			Text_Index pos = cursor;
@@ -9952,13 +9849,12 @@ void syntax_editor_render()
 			if (indentation <= 0) return;
 
 			auto& display_lines = editor.display_lines;
-			int nearby_bundle_index = 0;
 			while (display_start - 1 >= 0 && display_start < display_lines.size && display_start <= display_end) 
 			{
 				Display_Line* first = &editor.display_lines[display_start - 1];
 				Display_Line* next = &editor.display_lines[display_start];
 				if (first->line_index + 1 != next->line_index) break;
-				if (source_line_tokens_may_connect(code, first->line_index, &editor.arena, nearby_bundle_index)) {
+				if (source_line_tokens_may_connect(code, first->line_index)) {
 					display_start += 1;
 				}
 				else {
@@ -9984,7 +9880,7 @@ void syntax_editor_render()
 		auto helper_display_line_get_indentation = [&](int display_line_index) -> int
 		{
 			Display_Line& line = display_lines[display_line_index];
-			if (line.line_index < 0 || line.line_index >= code->line_count) return 0;
+			if (line.line_index < 0 || line.line_index >= code->line_count()) return 0;
 			if (line.fold_info.inside_fold) {
 				return fold_interval_get_indentation(line.fold_info.interval) / 4;
 			}
@@ -10070,7 +9966,7 @@ void syntax_editor_render()
 			}
 			SCOPE_EXIT(if (i == 0) { string_style_pop(text); string_style_pop(text); });
 
-			DynString sugg_text = string_create_static("");
+			String sugg_text = string_make("");
 			Syntax_Color text_color = Syntax_Color::TEXT;
 			Datatype* sugg_type = nullptr;
 			Symbol_Type symbol_type = (Symbol_Type)-1;
@@ -10079,13 +9975,13 @@ void syntax_editor_render()
 			{
 			case Suggestion_Type::ID: {
 				text_color = sugg.options.id_color;
-				sugg_text = string_view_to_string(sugg.text);
+				sugg_text = sugg.text;
 				break;
 			}
 			case Suggestion_Type::SYMBOL: {
 				auto symbol = sugg.options.symbol;
 				text_color = symbol_to_color(symbol, true);
-				sugg_text = *symbol->id;
+				sugg_text = symbol->id.to_string();
 				symbol_type = symbol->type;
 				const char* unused = nullptr;
 				symbol_get_infos(symbol, nullptr, &sugg_type, &unused);
@@ -10093,20 +9989,20 @@ void syntax_editor_render()
 			}
 			case Suggestion_Type::STRUCT_MEMBER: {
 				text_color = Syntax_Color::MEMBER; 
-				sugg_text = string_view_to_string(sugg.text);
+				sugg_text = sugg.text;
 				sugg_type = sugg.options.struct_member.member_type;
 				break;
 			}
 			case Suggestion_Type::ENUM_MEMBER: {
 				text_color = Syntax_Color::ENUM_MEMBER; 
-				sugg_text = string_view_to_string(sugg.text);
+				sugg_text = sugg.text;
 				sugg_type = upcast(sugg.options.enum_member.enumeration);
 				break;
 			}
 			case Suggestion_Type::FILE: {
 				auto file_info = directory_crawler_get_content(syntax_editor.directory_crawler)[sugg.options.file_index_in_crawler];
 				text_color = file_info.is_directory ? Syntax_Color::FILE_DIRECTORY : Syntax_Color::TEXT; 
-				sugg_text = string_view_to_string(sugg.text);
+				sugg_text = sugg.text;
 				break;
 			}
 			default: panic("");
@@ -10119,7 +10015,7 @@ void syntax_editor_render()
 				string_style_pop(text);
 			}
 			else {
-				text->append(string_create_substring_static(&sugg_text, 0, max_suggestion_length - 2));
+				text->append(string_make_substring(sugg_text, 0, max_suggestion_length - 2));
 				string_style_pop(text);
 				text->append("..");
 			}
@@ -10142,9 +10038,6 @@ void syntax_editor_render()
 		}
 	};
 	{
-		auto checkpoint = arena.make_checkpoint();
-		SCOPE_EXIT(checkpoint.rewind());
-
 		auto helper_start_section = [](DynString* text, int& last_section_start) {
 			if (text->size == 0) return;
 			if (text->size != last_section_start) {
@@ -10161,10 +10054,8 @@ void syntax_editor_render()
 			cursor_display_line != -1 &&
 			!cursor_is_on_fold;
 
-		DynString context_text   = dynstring_create(0);
-		SCOPE_EXIT(string_destroy(&context_text));
-		DynString call_info_text = dynstring_create(0);
-		SCOPE_EXIT(string_destroy(&call_info_text));
+		DynString context_text   = DynString::create(scratch_arena);
+		DynString call_info_text = DynString::create(scratch_arena);
 
 		auto type_system = syntax_editor.editor_compilation_data->type_system;
 		if (show_context)
@@ -10186,7 +10077,7 @@ void syntax_editor_render()
 			}
 
 			// Show hover errors
-			DynArray<int> hover_errors = DynArray<int>::create(&arena);
+			DynArray<int> hover_errors = DynArray<int>::create(scratch_arena);
 			Position_Info hover_info = code_query_find_position_infos(cursor, &hover_errors);
 			for (int i = 0; i < hover_errors.size; i++)
 			{
@@ -10296,14 +10187,14 @@ void syntax_editor_render()
 					}
 				}
 
-				DynString* name = nullptr;
+				Identifier* name = nullptr;
 				Syntax_Color color = Syntax_Color::TEXT;
 				bool is_struct_init = false;
 				switch (call_info->origin.type)
 				{
 				case Call_Origin_Type::FUNCTION:
 				{
-					name = call_info->origin.options.function->name;
+					name = &call_info->origin.options.function->name;
 					color = Syntax_Color::FUNCTION;
 					break;
 				}
@@ -10311,7 +10202,7 @@ void syntax_editor_render()
 				{
 					is_struct_init = true;
 					if (call_info->matching_success) {
-						name = call_info->origin.options.structure->name;
+						name = &call_info->origin.options.structure->name;
 						color = Syntax_Color::DATATYPE;
 						break;
 					}
@@ -10320,7 +10211,7 @@ void syntax_editor_render()
 
 				if (name != nullptr) {
 					string_style_push(text, Mark_Type::TEXT_COLOR, color);
-					text->append(name);
+					text->append(*name);
 					string_style_pop(text);
 				}
 				else {
@@ -10363,7 +10254,7 @@ void syntax_editor_render()
 					}
 
 					string_style_push(text, Mark_Type::TEXT_COLOR, name_color);
-					text->append(*param_info.name);
+					text->append(param_info.name);
 					string_style_pop(text);
 					if (param_info.datatype != nullptr) {
 						text->append(": ");
@@ -10384,23 +10275,20 @@ void syntax_editor_render()
 			const int BORDER_SIZE = 2;
 			const int PADDING = 2;
 
-			auto checkpoint = arena.make_checkpoint();
-			SCOPE_EXIT(checkpoint.rewind());
-
 			// Create text-areas from strings
-			string_remove_trailing_whitespace(&context_text);
-			Rich_Text_Area context_text_area = Rich_Text_Area::create(&arena, string_style_calculated_2D_size(context_text));
+			dynstring_remove_trailing_whitespace(&context_text);
+			Rich_Text_Area context_text_area = Rich_Text_Area::create(scratch_arena, string_style_calculated_2D_size(context_text.to_string()));
 			for (int i = 0; i < context_text_area.buffer.size; i++) {
 				context_text_area.buffer[i].background_color = syntax_color_to_palette_color(Syntax_Color::CONTEXT_BG);
 			}
-			context_text_area.fill_from_string(context_text, Syntax_Color::CONTEXT_TEXT, Syntax_Color::CONTEXT_BG);
+			context_text_area.fill_from_string(context_text.to_string(), Syntax_Color::CONTEXT_TEXT, Syntax_Color::CONTEXT_BG);
 
-			string_remove_trailing_whitespace(&call_info_text);
-			Rich_Text_Area call_info_text_area = Rich_Text_Area::create(&arena, string_style_calculated_2D_size(call_info_text));
+			dynstring_remove_trailing_whitespace(&call_info_text);
+			Rich_Text_Area call_info_text_area = Rich_Text_Area::create(scratch_arena, string_style_calculated_2D_size(call_info_text.to_string()));
 			for (int i = 0; i < call_info_text_area.buffer.size; i++) {
 				call_info_text_area.buffer[i].background_color = syntax_color_to_palette_color(Syntax_Color::CONTEXT_BG);
 			}
-			call_info_text_area.fill_from_string(call_info_text, Syntax_Color::CONTEXT_TEXT, Syntax_Color::CONTEXT_BG);
+			call_info_text_area.fill_from_string(call_info_text.to_string(), Syntax_Color::CONTEXT_TEXT, Syntax_Color::CONTEXT_BG);
 
 			// Figure out text position
 			ibox2 context_box;
@@ -10467,12 +10355,9 @@ void syntax_editor_render()
 	{
 		const int BORDER_SIZE = 1;
 
-		auto checkpoint = arena.make_checkpoint();
-		SCOPE_EXIT(checkpoint.rewind());
-
-		Rich_Text_Area rich_text = Rich_Text_Area::create(&arena, ivec2(editor.command_buffer.size + 1, 1));
-		rich_text.set_text(ivec2(0), editor.command_buffer);
-		rich_text.set_text(ivec2(editor.command_buffer.size, 0), string_create_static("_"));
+		Rich_Text_Area rich_text = Rich_Text_Area::create(scratch_arena, ivec2(editor.command_buffer.size + 1, 1));
+		rich_text.set_text(ivec2(0), editor.command_buffer.to_string());
+		rich_text.set_text(ivec2(editor.command_buffer.size, 0), string_make("_"));
 		rich_text.mark(ivec2(0), rich_text.size.x, Mark_Type::BACKGROUND_COLOR, Syntax_Color::COMPLETABLE_COMMAND_BG);
 		rich_text.mark(ivec2(0), rich_text.size.x, Mark_Type::TEXT_COLOR, Syntax_Color::TEXT);
 
@@ -10493,8 +10378,6 @@ void syntax_editor_render()
 	// Error-Navigation Mode overlay
 	if (editor.mode == Editor_Mode::ERROR_NAVIGATION)
 	{
-		auto checkpoint = arena.make_checkpoint();
-		SCOPE_EXIT(checkpoint.rewind());
 		const int BORDER_THICKNESS = 2;
 		Raster_Font* font = editor.font_main;
 		ivec2 char_size = font->char_size;
@@ -10503,8 +10386,7 @@ void syntax_editor_render()
 		int& cam_start = editor.navigate_error_cam_start;
 
 		// Create rich text
-		DynString rich_text = dynstring_create();
-		SCOPE_EXIT(string_destroy(&rich_text));
+		DynString rich_text = dynstring_create(scratch_arena);
 		int highlight_line_offset = 0;
 		auto& errors = editor.editor_compilation_data->code_errors;
 		{
@@ -10537,16 +10419,16 @@ void syntax_editor_render()
 		}
 
 		// Calculate text-area size
-		string_remove_trailing_whitespace(&rich_text);
-		ivec2 char_count = string_style_calculated_2D_size(rich_text); // Take height from 2D size
+		dynstring_remove_trailing_whitespace(&rich_text);
+		ivec2 char_count = string_style_calculated_2D_size(rich_text.to_string()); // Take height from 2D size
 		char_count.x = (screen_size.x / char_size.x) / 2;
 
 		// Create text area from string
-		Rich_Text_Area area = Rich_Text_Area::create(&arena, char_count);
+		Rich_Text_Area area = Rich_Text_Area::create(scratch_arena, char_count);
 		for (int i = 0; i < area.buffer.size; i++) {
 			area.buffer[i].background_color = syntax_color_to_palette_color(Syntax_Color::ERROR_NAVIGATION_BG);
 		}
-		area.fill_from_string(rich_text, Syntax_Color::TEXT, Syntax_Color::ERROR_NAVIGATION_BG);
+		area.fill_from_string(rich_text.to_string(), Syntax_Color::TEXT, Syntax_Color::ERROR_NAVIGATION_BG);
 
 		// Highlight current line
 		int highlight_line = index + (cam_start > 0 ? 1 : 0);
@@ -10573,24 +10455,20 @@ void syntax_editor_render()
 		Raster_Font* font = editor.font_main;
 		ivec2 char_size = font->char_size;
 
-		auto checkpoint = arena.make_checkpoint();
-		SCOPE_EXIT(checkpoint.rewind());
-
-		DynString rich_text = dynstring_create(0);
-		SCOPE_EXIT(string_destroy(&rich_text));
+		DynString rich_text = dynstring_create(scratch_arena);
 		rich_text.append(editor.mode == Editor_Mode::FUZZY_FIND_DEFINITION ? editor.fuzzy_search_text : editor.search_text);
 		if (editor.mode == Editor_Mode::FUZZY_FIND_DEFINITION && editor.suggestions.size > 0) {
 			rich_text.append("\n---\n");
 			helper_append_suggestions_to_rich_text(&rich_text);
 		}
-		string_remove_trailing_whitespace(&rich_text);
+		dynstring_remove_trailing_whitespace(&rich_text);
 
 		ivec2 char_count = ivec2(
 			(screen_size.x / char_size.x) / 2,
-			string_style_calculated_2D_size(rich_text).y
+			string_style_calculated_2D_size(rich_text.to_string()).y
 		);
-		Rich_Text_Area area = Rich_Text_Area::create(&arena, char_count);
-		area.fill_from_string(rich_text);
+		Rich_Text_Area area = Rich_Text_Area::create(scratch_arena, char_count);
+		area.fill_from_string(rich_text.to_string());
 		for (int i = 0; i < area.buffer.size; i++) {
 			area.buffer[i].background_color = syntax_color_to_palette_color(Syntax_Color::ERROR_NAVIGATION_BG);
 		}

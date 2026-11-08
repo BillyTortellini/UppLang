@@ -1,7 +1,8 @@
 #pragma once
 
 #include "../../utility/datatypes.hpp"
-#include "../../datastructures/dynamic_array.hpp"
+#include "../../datastructures/string.hpp"
+#include "../../datastructures/allocators.hpp"
 
 struct DynString;
 
@@ -15,7 +16,7 @@ struct Page_Info
 // Note:
 struct Memory_Source
 {
-	void* process_handle;
+	void* process_handle; // If null current process
 
 	Memory_Source(void* process_handle) : process_handle(process_handle) {};
 	Memory_Source() : process_handle(nullptr) {};
@@ -26,10 +27,12 @@ struct Memory_Source
 	bool read(void* destination, void* source, uint size);
 	bool write(void* destination, void* source, uint size);
 
-	void read_as_much_as_possible(void* virtual_address, Dynamic_Array<u8>* out_bytes, uint read_size);
+    uint Memory_Source::query_max_readable_size(void* address); // 0 if no bytes can be read or error occured
 
-	// Reads null-terminated string from other process, also converts wide_strings to normal strings...
-	bool read_null_terminated_string(void* virtual_address, DynString* out_string, uint max_char_count, bool is_wide_char, Dynamic_Array<u8>* byte_buffer);
+    // These functions fail if the null-terminator cannot be found in the first max_char_count bytes of the string.
+    bool Memory_Source::read_string_utf8_null_terminated(void* virtual_address, DynString* append_to, uint max_byte_size);
+    bool Memory_Source::read_string_utf16_null_terminated(void* virtual_address, DynString* append_to, uint max_byte_size);
+    bool Memory_Source::read_string_null_terminated_generic(void* virtual_address, DynString* append_to, uint max_byte_size, bool is_utf8);
 
     // Templated functions
     template<typename T>
@@ -38,17 +41,16 @@ struct Memory_Source
     }
 
     template<typename T>
-    bool read_array(void* virtual_address, Dynamic_Array<T>* buffer, uint count) 
+    bool read_array(void* virtual_address, DynArray<T>* append_to, uint count) 
     {
-        dynamic_array_reset(buffer);
-        dynamic_array_reserve(buffer, (int)count);
-        bool success = read((void*)buffer->data, virtual_address, count * sizeof(T));
+        append_to->reserve(append_to->size + count);
+        bool success = read((void*)&append_to->buffer.data[append_to->size], virtual_address, count * sizeof(T));
         if (!success) return false;
-        buffer->size = (int)count;
+        append_to->size += (uint)count;
         return true;
     }
 };
 
 // Wide-String conversions
-void wide_string_from_utf8(Dynamic_Array<wchar_t>* character_buffer, const char* string);
+wchar_t* wide_string_from_utf8(String string, Arena* arena);
 void wide_string_to_utf8(const wchar_t* wide_string, DynString* string);

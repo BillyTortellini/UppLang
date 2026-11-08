@@ -14,12 +14,22 @@
 
 
 // String
+const char& String::at(int index) {
+    assert(index >= 0 && index < size, "");
+    return characters[index];
+}
+
+const char& String::operator[](int index) {
+    assert(index >= 0 && index < size, "");
+    return characters[index];
+}
+
 String string_make(const char* c_string) 
 {
     String result;
     result.characters = c_string;
     result.size = strlen(c_string);
-    return;
+    return result;
 }
 
 String string_make(const char* characters, int size) 
@@ -27,7 +37,7 @@ String string_make(const char* characters, int size)
     String result;
     result.characters = characters;
     result.size = size;
-    return;
+    return result;
 }
 
 String string_make_substring(String other, int start, int end_exclusive)
@@ -42,6 +52,25 @@ String string_make_substring(String other, int start, int end_exclusive)
     return string_make(&other.characters[start], end_exclusive - start);
 }
 
+String string_allocate_copy(String other, Allocator_Base* allocator)
+{
+    if (other.size == 0) {
+        return string_make("", 0);
+    }
+
+    char* characters = allocator->allocate_array<char>(other.size).data;
+    memory_copy(&characters[0], (void*) &other.characters[0], other.size);
+    return string_make(characters, other.size);
+}
+
+void string_deallocate(String* string, Allocator_Base* allocator)
+{
+    if (string->size == 0) return;
+    allocator->deallocate_raw(&string->characters, string->size);
+    string->characters = nullptr;
+    string->size = -1;
+}
+
 bool string_equals(String a, String b)
 {
     if (a.size != b.size) { return false; }
@@ -49,16 +78,45 @@ bool string_equals(String a, String b)
     return memcmp(a.characters, b.characters, a.size) == 0;
 }
 
-bool string_in_order(String a, String b)
+bool String::operator==(String other) {
+    return string_equals(*this, other);
+}
+
+bool String::operator!=(String other) {
+    return !string_equals(*this, other);
+}
+
+bool string_equals_pointers(String* a, String* b)
+{
+    return string_equals(*a, *b);
+}
+
+u64 hash_string_pointer(String* string) {
+    return hash_memory(array_create_static((byte*)string->characters, string->size));
+}
+
+u64 hash_string(String string) {
+    return hash_string_pointer(&string);
+}
+
+u64 string_hash(String a) {
+    return hash_string(a);
+}
+
+u64 string_hash_pointer(String* a) {
+    return hash_string_pointer(a);
+}
+
+Order_Comparison_Result string_compare(String a, String b)
 {
     int res = strncmp(a.characters, b.characters, math_minimum(a.size, b.size));
     if (res == 0) {
-        return a.size > b.size;
+        return Order_Comparison_Result::EQUAL;
     }
-    return res >= 0;
+    return res < 0 ? Order_Comparison_Result::LESS : Order_Comparison_Result::GREATER;
 }
 
-bool string_compare_substring(String string, int start_index, String other) 
+bool string_test_substring(String string, int start_index, String other) 
 {
     if (string.size - start_index < other.size) {
         return false;
@@ -228,6 +286,32 @@ Array<String> string_split(String string, char c, Arena* arena)
     return parts.as_array();
 }
 
+String string_get_whitespace_trimmed(String string)
+{
+    int start = 0;
+    while (start < string.size) {
+        char c = string[start];
+        if (c == ' ' || c == '\n' || c == '\r' || c == '\t') {
+            start += 1;
+            continue;
+        }
+        break;
+    }
+
+    int end = string.size - 1;
+    while (end <= start && end >= 0) {
+        char c = string[end];
+        if (c == ' ' || c == '\n' || c == '\r' || c == '\t') {
+            end -= 1;
+            continue;
+        }
+        break;
+    }
+
+    if (end < start) return string_make("", 0);
+    return string_make_substring(string, start, end + 1); // End inclusive
+}
+
 
 
 // String_List
@@ -236,7 +320,7 @@ String_List String_List::create_empty(Allocator_Base* allocator)
     String_List result;
     result.size = 0;
     result.allocator = allocator;
-    result.options.small_string_buffer[0] = 0;
+    result.options.head = nullptr;
     return result;
 }
 
@@ -313,6 +397,10 @@ void String_List::set(String string)
     }
 }
 
+void String_List::deallocate() {
+    reset();
+}
+
 void String_List::destroy()
 {
     reset();
@@ -384,11 +472,10 @@ void dynstring_reserve(DynString* string, int new_capacity)
     new_capacity = cap;
 
     // Check if we can resize arena
-    if (string->arena->resize(string->characters, string->capacity, new_capacity)) {
+    if (string->capacity != 0 && string->arena->resize(string->characters, string->capacity, new_capacity)) {
         string->capacity = new_capacity;
         return;
     }
-
 
     char* new_buffer = (char*) string->arena->allocate_raw(new_capacity, 1);
     if (string->capacity != 0) {
@@ -417,6 +504,14 @@ void dynstring_append(DynString* string, String appendix)
     dynstring_reserve(string, string->size + appendix.size);
     memcpy((void*)&string->characters[string->size], (void*)appendix.characters, appendix.size);
     string->size += appendix.size;
+}
+
+void dynstring_append(DynString* string, const char* c_string) {
+    dynstring_append(string, string_make(c_string));
+}
+
+void dynstring_append(DynString* string, Identifier identifier) {
+    string->append(identifier);
 }
 
 void dynstring_append_character(DynString* string, char c) {
@@ -543,6 +638,11 @@ const char* DynString::to_cstring() {
     return characters;
 }
 
+char& DynString::operator[](int index) {
+    assert(index >= 0 && index < size, "");
+    return characters[index];
+}
+
 DynString* DynString::append(const char* text) {
     dynstring_append(this, string_make(text));
     return this;
@@ -565,6 +665,11 @@ DynString* DynString::append(String str) {
 
 DynString* DynString::append(String* str) {
     dynstring_append(this, *str);
+    return this;
+}
+
+DynString* DynString::append_in_quotation(String string) {
+    this->append('"')->append(string)->append('"');
     return this;
 }
 
@@ -595,5 +700,11 @@ DynString* DynString::append_formated(const char* format, ...)
 DynString* DynString::append(String_List string_list)
 {
     string_list.append_to_dynstring(this);
+    return this;
+}
+
+DynString* DynString::append(Identifier identifier)
+{
+    this->append(identifier.string);
     return this;
 }

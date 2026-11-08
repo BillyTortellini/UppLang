@@ -2,23 +2,23 @@
 
 #include "rendering_core.hpp"
 
-DynString shader_datatype_as_string(Shader_Datatype type)
+String shader_datatype_as_string(Shader_Datatype type)
 {
     switch (type)
     {
-    case Shader_Datatype::FLOAT: return string_create_static("float");
-    case Shader_Datatype::UINT32: return string_create_static("uint");
-    case Shader_Datatype::VEC2: return string_create_static("vec2");
-    case Shader_Datatype::VEC3: return string_create_static("vec3");
-    case Shader_Datatype::VEC4: return string_create_static("vec4");
-    case Shader_Datatype::MAT2: return string_create_static("mat2");
-    case Shader_Datatype::MAT3: return string_create_static("mat3");
-    case Shader_Datatype::MAT4: return string_create_static("mat4");
-    case Shader_Datatype::TEXTURE_2D_BINDING: return string_create_static("sampler2D");
+    case Shader_Datatype::FLOAT: return string_make("float");
+    case Shader_Datatype::UINT32: return string_make("uint");
+    case Shader_Datatype::VEC2: return string_make("vec2");
+    case Shader_Datatype::VEC3: return string_make("vec3");
+    case Shader_Datatype::VEC4: return string_make("vec4");
+    case Shader_Datatype::MAT2: return string_make("mat2");
+    case Shader_Datatype::MAT3: return string_make("mat3");
+    case Shader_Datatype::MAT4: return string_make("mat4");
+    case Shader_Datatype::TEXTURE_2D_BINDING: return string_make("sampler2D");
     default: panic("");
     }
 
-    return string_create_static(" E R R O R");
+    return string_make(" E R R O R");
 }
 
 // TEXTURE

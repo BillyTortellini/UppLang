@@ -545,6 +545,19 @@ void handle_ir_operation_arithmetic(Primitive_Operation operation, T* dst, T* sr
 }
 
 template<typename T>
+void handle_ir_operation_arithmetic_unsigned(Primitive_Operation operation, T* dst, T* src1, T* src2)
+{
+    switch (operation)
+    {
+    case Primitive_Operation::ADDITION:         *dst = (*src1 + *src2); break;
+    case Primitive_Operation::SUBTRACTION:      *dst = (*src1 - *src2); break;
+    case Primitive_Operation::MULTIPLICATION:   *dst = (*src1 * *src2); break;
+    case Primitive_Operation::NEGATE:           *dst = (*src1); break; // What do here?
+    default: panic("");
+    }
+}
+
+template<typename T>
 void handle_ir_operation_order_comparison(Primitive_Operation operation, bool* dst, T* src1, T* src2)
 {
     switch (operation)
@@ -688,11 +701,11 @@ bool bytecode_execute_ir_operation(
         case Bytecode_Type::INT16:   handle_ir_operation_arithmetic(operation, (i16*)dst, (i16*)src1, (i16*)src2); break;
         case Bytecode_Type::INT32:   handle_ir_operation_arithmetic(operation, (i32*)dst, (i32*)src1, (i32*)src2); break;
         case Bytecode_Type::INT64:   handle_ir_operation_arithmetic(operation, (i64*)dst, (i64*)src1, (i64*)src2); break;
-        case Bytecode_Type::UINT8:   handle_ir_operation_arithmetic(operation, (u8*)dst,  (u8*)src1,  (u8*)src2); break;
-        case Bytecode_Type::UINT16:  handle_ir_operation_arithmetic(operation, (u16*)dst, (u16*)src1, (u16*)src2); break;
-        case Bytecode_Type::UINT32:  handle_ir_operation_arithmetic(operation, (u32*)dst, (u32*)src1, (u32*)src2); break;
-        case Bytecode_Type::UINT64:  handle_ir_operation_arithmetic(operation, (u64*)dst, (u64*)src1, (u64*)src2); break;
-        case Bytecode_Type::FLOAT32: handle_ir_operation_arithmetic(operation, (f32*)dst, (f32*)src1, (f32*)src2); break;
+        case Bytecode_Type::UINT8:   handle_ir_operation_arithmetic_unsigned(operation, (u8*)dst,  (u8*)src1,  (u8*)src2); break;
+        case Bytecode_Type::UINT16:  handle_ir_operation_arithmetic_unsigned(operation, (u16*)dst, (u16*)src1, (u16*)src2); break;
+        case Bytecode_Type::UINT32:  handle_ir_operation_arithmetic_unsigned(operation, (u32*)dst, (u32*)src1, (u32*)src2); break;
+        case Bytecode_Type::UINT64:  handle_ir_operation_arithmetic_unsigned(operation, (u64*)dst, (u64*)src1, (u64*)src2); break;
+        case Bytecode_Type::FLOAT32: handle_ir_operation_arithmetic_unsigned(operation, (f32*)dst, (f32*)src1, (f32*)src2); break;
         case Bytecode_Type::FLOAT64: handle_ir_operation_arithmetic(operation, (f64*)dst, (f64*)src1, (f64*)src2); break;
         default: panic("");
         }

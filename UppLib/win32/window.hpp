@@ -1,6 +1,7 @@
 #pragma once
 
 #include "input.hpp"
+#include "../datastructures/string.hpp"
 
 struct Window;
 
@@ -27,7 +28,7 @@ struct Window_State
     bool in_focus;
 };
 
-Window* window_create(const char* window_title, int multisample_count);
+Window* window_create(String window_title, int multisample_count);
 void window_close(Window* window); // Causes the window to exit the handle message loop
 void window_destroy(Window* window); // Deletes the window object
 
@@ -54,7 +55,7 @@ void window_set_minimized(Window* window, bool minimized);
 void window_set_position(Window* window, int x, int y);
 void window_set_size(Window* window, int width, int height);
 
-void window_save_position(Window* window, const char* filename);
-void window_load_position(Window* window, const char* filename);
+void window_save_position(Window* window, String filename);
+void window_load_position(Window* window, String filename);
 
 

@@ -7,11 +7,10 @@ Renderer_2D* renderer_2D_create(Text_Renderer* text_renderer)
 {
     Renderer_2D* result = new Renderer_2D();
     result->text_renderer = text_renderer;
-    result->string_buffer = dynstring_create(256);
 
     auto& predef = rendering_core.predefined;
     result->mesh = rendering_core_query_mesh(
-        "renderer 2d mesh buffer",
+        string_make("renderer 2d mesh buffer"),
         vertex_description_create({ predef.index, predef.position2D, predef.color3 }), 
         true
     );
@@ -28,7 +27,6 @@ Renderer_2D* renderer_2D_create(Text_Renderer* text_renderer)
 
 void renderer_2D_destroy(Renderer_2D* renderer)
 {
-    string_destroy(&renderer->string_buffer);
     delete renderer;
 }
 
@@ -41,7 +39,7 @@ void renderer_2D_draw(Renderer_2D* renderer, Render_Pass* render_pass) {
     if (renderer->batch_size == 0) {
         return;
     }
-    auto shader_2d = rendering_core_query_shader("core/geometry_2d.glsl");
+    auto shader_2d = rendering_core_query_shader(string_make("core/geometry_2d.glsl"));
     render_pass_draw_count(
         render_pass, shader_2d, renderer->mesh, Mesh_Topology::TRIANGLES, {}, renderer->batch_start, renderer->batch_size);
 

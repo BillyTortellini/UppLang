@@ -1,28 +1,14 @@
 #pragma once
 
-#include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/string.hpp"
-#include "../../datastructures/hashtable.hpp"
-#include "../../datastructures/hashset.hpp"
-#include "compiler_misc.hpp"
+#include "../../datastructures/Allocators.hpp"
+#include "compiler_misc.hpp" // Exit_Code
 
-struct C_Generator;
-struct C_Compiler;
 struct IR_Code_Block;
 struct Datatype;
-struct DynString;
 struct Upp_Function;
 struct Compilation_Data;
 
-
-// C_COMPILER
-void c_compiler_initialize();
-void c_compiler_compile(Compilation_Data* compilation_data);
-Exit_Code c_compiler_execute();
-
-
-
-// C_GENERATOR
 enum class C_Translation_Type
 {
     FUNCTION,
@@ -68,14 +54,10 @@ struct C_Program_Translation
 {
     DynString source_code;
     int line_offset; // Our line-indices start at 0, and the function-implementation starts at an offset
-    Dynamic_Array<C_Line_Info> line_infos;
-    Hashtable<C_Translation, DynString> name_mapping;
+    DynArray<C_Line_Info> line_infos;
+    DynTable<C_Translation, String> name_mapping;
 };
 
-
-
-C_Generator* c_generator_create(Compilation_Data* compilation_data);
-void c_generator_destroy(C_Generator* generator);
-
-void c_generator_generate(C_Generator* generator);
-C_Program_Translation* c_generator_get_translation(C_Generator* generator);
+C_Program_Translation* c_backend_generate_program(Compilation_Data* compilation_data);
+void c_backend_compile_program(Compilation_Data* compilation_data);
+Exit_Code c_backend_execute_program(Compilation_Data* compilation_data);

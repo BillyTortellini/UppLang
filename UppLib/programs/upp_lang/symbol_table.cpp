@@ -7,11 +7,11 @@
 #include "ast.hpp"
 
 u64 default_value_query_hash(Default_Value_Query* query) {
-	return hash_combine(hash_pointer(query->name), hash_pointer(query->datatype));
+	return hash_combine(identifier_hash(query->name), hash_pointer(query->datatype));
 }
 
 bool default_value_query_equals(Default_Value_Query* a, Default_Value_Query* b) {
-	return types_are_equal(a->datatype, b->datatype) && a->name == b->name;
+	return types_are_equal(a->datatype, b->datatype) && a->name.equals(b->name);
 }
 
 
@@ -20,7 +20,7 @@ bool default_value_query_equals(Default_Value_Query* a, Default_Value_Query* b) 
 Symbol_Table* symbol_table_create(Compilation_Data* compilation_data)
 {
     Symbol_Table* result = new Symbol_Table;
-    result->symbols = hashtable_create_pointer_empty<DynString*, Dynamic_Array<Symbol*>>(1);
+    result->symbols = hashtable_create_empty<Identifier, Dynamic_Array<Symbol*>>(1, identifier_hash_pointer, identifier_equals_pointer);
 
 	result->parent_table = nullptr;
 	result->parent_access_level = Symbol_Access_Level::GLOBAL;
@@ -102,10 +102,10 @@ void symbol_destroy(Symbol* symbol) {
 }
 
 Symbol* symbol_table_define_symbol(
-	Symbol_Table* symbol_table, DynString* id, Symbol_Type type, AST::Symbol_Node* definition_node, Symbol_Access_Level access_level,
+	Symbol_Table* symbol_table, Identifier id, Symbol_Type type, AST::Symbol_Node* definition_node, Symbol_Access_Level access_level,
 	Semantic_Context* semantic_context, bool error_if_not_unique)
 {
-    assert(id != 0, "HEY");
+    assert(id.string != nullptr, "HEY");
 
     // Create new symbol
     Symbol* new_sym = new Symbol;
@@ -224,7 +224,7 @@ DynArray<Reachable_Table> symbol_table_query_all_reachable_tables(Symbol_Table* 
 	return reachable_tables;
 }
 
-DynArray<Symbol*> symbol_table_query_id(Symbol_Table* symbol_table, DynString* id, Symbol_Query_Info query_info, Arena* arena)
+DynArray<Symbol*> symbol_table_query_id(Symbol_Table* symbol_table, Identifier id, Symbol_Query_Info query_info, Arena* arena)
 {
 	// Find all tables we are searching through
 	DynArray<Reachable_Table> query_tables = symbol_table_query_all_reachable_tables(symbol_table, query_info, arena);
@@ -518,7 +518,7 @@ void symbol_type_append_to_string(Symbol_Type type, DynString* string)
 
 void symbol_append_to_string(Symbol* symbol, DynString* string)
 {
-	dynstring_append_formated(string, "%s ", symbol->id->characters);
+	string->append(symbol->id.string);
 	symbol_type_append_to_string(symbol->type, string);
 }
 

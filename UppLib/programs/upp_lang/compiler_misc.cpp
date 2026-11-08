@@ -1,5 +1,6 @@
 #include "compiler_misc.hpp"
 
+#include "../../datastructures/allocators.hpp"
 #include "type_system.hpp"
 #include "../../win32/process.hpp"
 #include "../../win32/thread.hpp"
@@ -179,167 +180,14 @@ void exit_code_append_to_string(DynString* string, Exit_Code code)
 
 
 // Extern sources
-Extern_Sources extern_sources_create()
+Extern_Sources extern_sources_create(Arena* arena)
 {
 	Extern_Sources result;
-	result.extern_functions = dynamic_array_create<Upp_Function*>();
+	result.extern_functions = DynArray<Upp_Function*>::create(arena);
 	for (int i = 0; i < (int)Extern_Compiler_Setting::MAX_ENUM_VALUE; i++) {
-		result.compiler_settings[i] = dynamic_array_create<DynString*>();
+		result.compiler_settings[i] = DynArray<Identifier>::create(arena);
 	}
 	return result;
-}
-
-void extern_sources_destroy(Extern_Sources* sources)
-{
-	dynamic_array_destroy(&sources->extern_functions);
-	for (int i = 0; i < (int)Extern_Compiler_Setting::MAX_ENUM_VALUE; i++) {
-		dynamic_array_destroy(&sources->compiler_settings[i]);
-	}
-}
-
-
-
-// Identifier Pool
-Identifier_Pool identifier_pool_create()
-{
-	Identifier_Pool result;
-	result.identifier_lookup_table = hashtable_create_empty<DynString, DynString*>(128, hash_string, string_equals);
-
-	// Add predefined IDs
-	{
-		auto& ids = result.predefined_ids;
-		auto add_id = [&](const char* id) -> DynString* {
-			return identifier_pool_add(&result, string_create_static(id));
-		};
-
-		ids.size = add_id("size");
-		ids.data = add_id("data");
-		ids.type = add_id("type");
-		ids.tag = add_id("tag");
-		ids.anon_struct = add_id("Anonymous");
-		ids.anon_enum = add_id("Anon_Enum");
-		ids.main = add_id("main");
-		ids.type_of = add_id("type_of");
-		ids.type_info = add_id("type_info");
-		ids.empty_string = add_id("");
-		ids.root_module = add_id("_ROOT_");
-		ids.invalid_symbol_name = add_id("__INVALID_SYMBOL_NAME");
-		ids.id_struct = add_id("Struct");
-		ids.byte = add_id("byte");
-		ids.value = add_id("value");
-		ids.is_available = add_id("is_available");
-		ids.uninitialized_token = add_id("_");
-		ids.return_type_name = add_id("!return_type_name");
-		ids.operators = add_id("operators");
-		ids.dot_calls = add_id("dot_calls");
-		ids.c_string = add_id("c_string");
-		ids.string = add_id("string");
-		ids.allocator = add_id("Allocator");
-		ids.bytes = add_id("bytes");
-		ids.transitive = add_id("transitive");
-		ids.all = add_id("all");
-		ids.symbols = add_id("symbols");
-		ids.lambda_function = add_id("lambda_function");
-		ids.bake_function = add_id("bake_function");
-
-		ids.hashtag_instanciate = add_id("#instanciate");
-		ids.hashtag_bake = add_id("#bake");
-		ids.hashtag_get_overload = add_id("#get_overload");
-		ids.hashtag_get_overload_poly = add_id("#get_overload_poly");
-
-		ids.custom_operator_function_names[(int)Custom_Operator_Type::ARRAY_ACCESS]      = add_id("add_array_access");
-		ids.custom_operator_function_names[(int)Custom_Operator_Type::AUTO_CAST]         = add_id("add_auto_cast");
-		ids.custom_operator_function_names[(int)Custom_Operator_Type::ITERATOR]          = add_id("add_iterator");
-		ids.custom_operator_function_names[(int)Custom_Operator_Type::DEFAULT_VALUE]     = add_id("add_default_value");
-
-		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_ADDITION]      = add_id("add_binop_addition");
-		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_SUBTRACTION]   = add_id("add_binop_subtraction");
-		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_MULTIPLY]      = add_id("add_binop_multiply");
-		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_DIVIDE]        = add_id("add_binop_divide");
-		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_MODULO]        = add_id("add_binop_modulo");
-		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_EQUAL]         = add_id("add_binop_equal");
-		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_NOT_EQUAL]     = add_id("add_binop_not_equal");
-		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_LESS]          = add_id("add_binop_less");
-		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_LESS_EQUAL]    = add_id("add_binop_less_equal");
-		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_GREATER]       = add_id("add_binop_greater");
-		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_GREATER_EQUAL] = add_id("add_binop_greater_equal");
-
-		ids.custom_operator_function_names[(int)Custom_Operator_Type::UNOP_NOT]          = add_id("add_unop_not");
-		ids.custom_operator_function_names[(int)Custom_Operator_Type::UNOP_NEGATE]       = add_id("add_unop_negate");
-		ids.custom_operator_function_names[(int)Custom_Operator_Type::INVALID]           = add_id("!custom_op_invalid!");
-
-		ids.defer_restore = add_id("defer_restore");
-		ids.cast = add_id("cast");
-		ids.defer = add_id("defer");
-		ids.from = add_id("from");
-		ids.to = add_id("to");
-
-		ids.function = add_id("function");
-		ids.create_fn = add_id("create_fn");
-		ids.next_fn = add_id("next_fn");
-		ids.has_next_fn = add_id("has_next_fn");
-		ids.value_fn = add_id("value_fn");
-		ids.name = add_id("name");
-		ids.as_member_access = add_id("as_member_access");
-		ids.commutative = add_id("commutative");
-		ids.binop = add_id("binop");
-		ids.unop = add_id("unop");
-		ids.option = add_id("option");
-		ids.global = add_id("global");
-		ids.lib = add_id("lib");
-		ids.lib_dir = add_id("lib_dir");
-		ids.source = add_id("source");
-		ids.header = add_id("header");
-		ids.header_dir = add_id("header_dir");
-		ids.definition = add_id("definition");
-	}
-
-	return result;
-}
-
-void identifier_pool_destroy(Identifier_Pool* pool)
-{
-	auto iter = hashtable_iterator_create(&pool->identifier_lookup_table);
-	while (hashtable_iterator_has_next(&iter)) {
-		DynString* str = *iter.value;
-		string_destroy(str);
-		delete str;
-		hashtable_iterator_next(&iter);
-	}
-	hashtable_destroy(&pool->identifier_lookup_table);
-}
-
-DynString* identifier_pool_add(Identifier_Pool* pool, DynString identifier)
-{
-	DynString** found = hashtable_find_element(&pool->identifier_lookup_table, identifier);
-	if (found != 0) {
-		return *found;
-	}
-	else {
-		DynString* copy = new DynString;
-		*copy = dynstring_create(identifier.size);
-		string_append_string(copy, &identifier);
-		hashtable_insert_element(&pool->identifier_lookup_table, *copy, copy);
-		return copy;
-	}
-}
-
-void identifier_pool_print(Identifier_Pool* pool)
-{
-	DynString msg = dynstring_create(256);
-	SCOPE_EXIT(string_destroy(&msg));
-	dynstring_append_formated(&msg, "Identifiers: ");
-
-	auto iter = hashtable_iterator_create(&pool->identifier_lookup_table);
-	int i = 0;
-	while (hashtable_iterator_has_next(&iter)) {
-		DynString* str = *iter.value;
-		dynstring_append_formated(&msg, "\n\t%d: %s", i, str->characters);
-		hashtable_iterator_next(&iter);
-		i++;
-	}
-	dynstring_append_formated(&msg, "\n");
-	logg("%s", msg.characters);
 }
 
 

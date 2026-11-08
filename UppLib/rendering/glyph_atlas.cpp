@@ -4,6 +4,7 @@
 #include FT_FREETYPE_H
 #include "../utility/binary_parser.hpp"
 #include "../datastructures/string.hpp"
+#include "../datastructures/allocators.hpp"
 
 void glyph_information_append_to_string(Glyph_Information* information, DynString* string) 
 {
@@ -46,13 +47,15 @@ Glyph_Information glyph_information_binary_parser_read(BinaryParser* parser)
 }
 
 Optional<Font_Information> glyph_atlas_create_from_font_file(
-    const char* font_filepath,
+    String font_filepath,
     int max_character_pixel_size,
     int atlas_size,
     int padding,
     int character_margin,
     bool render_antialiased)
 {
+    SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+
     Font_Information result;
     result.character_to_glyph_map = array_create<int>(256);
     result.cursor_advance = 0;
@@ -68,9 +71,9 @@ Optional<Font_Information> glyph_atlas_create_from_font_file(
     SCOPE_EXIT(FT_Done_FreeType(library));
 
     FT_Face face;
-    ft_error = FT_New_Face(library, font_filepath, 0, &face);
+    ft_error = FT_New_Face(library, dynstring_create_copy(font_filepath, scratch_arena).to_cstring(), 0, &face);
     if (ft_error != 0) {
-        logg("Could not create face for \"%font_filepath\", error: %s\n", font_filepath, FT_Error_String(ft_error));
+        logg("Could not create face for \"%.%font_filepath\", error: %s\n", font_filepath.size, font_filepath, FT_Error_String(ft_error));
         return optional_make_failure<Font_Information>();
     }
     SCOPE_EXIT(FT_Done_Face(face));
@@ -163,7 +166,7 @@ Optional<Font_Information> glyph_atlas_create_from_font_file(
             atlas_max_line_height = 0;
         }
         if (atlas_cursor_y + glyph_bitmap.height + padding > atlas_bitmap.height) {
-            logg("Texture atlas is too small", font_filepath, FT_Error_String(ft_error));
+            logg("Texture atlas is too small");
             return optional_make_failure<Font_Information>();
         }
         information.atlas_fragcoords_left = (atlas_cursor_x - character_margin) / (float)atlas_bitmap.width;
@@ -195,7 +198,7 @@ Optional<Font_Information> glyph_atlas_create_from_font_file(
     return optional_make_success(result);
 }
 
-void glyph_atlas_save_as_file(Font_Information* atlas, const char* filepath)
+void glyph_atlas_save_as_file(Font_Information* atlas, String filepath)
 {
     BinaryParser parser = binary_parser_create_empty(1024 * 1024 * 4);
     SCOPE_EXIT(binary_parser_destroy(&parser));
@@ -216,7 +219,7 @@ void glyph_atlas_save_as_file(Font_Information* atlas, const char* filepath)
     binary_parser_write_to_file(&parser, filepath);
 }
 
-Optional<Font_Information> glyph_atlas_create_from_atlas_file(const char* atlas_filepath)
+Optional<Font_Information> glyph_atlas_create_from_atlas_file(String atlas_filepath)
 {
     Optional<BinaryParser> optional_parser = binary_parser_create_from_file(atlas_filepath);
     if (!optional_parser.available) {
@@ -249,14 +252,14 @@ Optional<Font_Information> glyph_atlas_create_from_atlas_file(const char* atlas_
 
 void glyph_atlas_print_glyph_information(Font_Information* atlas)
 {
-    DynString message = dynstring_create(4096);
-    SCOPE_EXIT(string_destroy(&message));
-    string_append(&message, "\nGlyphAtlas Informations:\n");
-    dynstring_append_formated(&message, "\tAscender:         %d\n", atlas->ascender);
-    dynstring_append_formated(&message, "\tDescender:        %d\n", atlas->descender);
-    dynstring_append_formated(&message, "Glphys (#%d):\n", atlas->glyph_informations.size);
+    SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+    DynString message = dynstring_create(scratch_arena);
+    message.append("\nGlyphAtlas Informations:\n");
+    message.append_formated("\tAscender:         %d\n", atlas->ascender);
+    message.append_formated("\tDescender:        %d\n", atlas->descender);
+    message.append_formated("Glphys (#%d):\n", atlas->glyph_informations.size);
     for (int i = 0; i < atlas->glyph_informations.size; i++) {
-        string_append(&message, "\t");
+        message.append("\t"),
         glyph_information_append_to_string(&atlas->glyph_informations.data[i], &message);
     }
     logg("\n%s\n", message.characters);

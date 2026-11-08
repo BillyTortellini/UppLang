@@ -2,6 +2,7 @@
 
 #include "../utility/utils.hpp"
 #include "../datastructures/array.hpp"
+#include "../utility/identifier_pool.hpp"
 
 struct Arena;
 
@@ -10,24 +11,35 @@ struct DynString;
 struct String_List;
 struct Allocator_Base;
 
-
-
 // String
 // Strings are immutable views of strings, which may not be null-terminated
 struct String
 {
     const char* characters;
     int size;
+
+    const char& at(int index);
+    const char& operator[](int index);
+    bool operator==(String other);
+    bool operator!=(String other);
 };
 
 String string_make(const char* c_string);
-String string_make(char* characters, int size);
+String string_make(const char* characters, int size);
 String string_make_substring(String other, int start, int end_exclusive);
 
-bool string_equals(String a, String b);
-bool string_in_order(String a, String b);
+String string_allocate_copy(String other, Allocator_Base* allocator);
+void string_deallocate(String* string, Allocator_Base* allocator);
 
-bool string_compare_substring(String string, int start_index, String other);
+bool string_equals(String a, String b);
+bool string_equals_pointers(String* a, String* b);
+u64 string_hash(String a);
+u64 string_hash_pointer(String* a);
+u64 hash_string(String string);
+u64 hash_string_pointer(String* string);
+Order_Comparison_Result string_compare(String a, String b);
+
+bool string_test_substring(String string, int start_index, String other);
 int string_contains_substring(String string, String substring, int start_index = 0); // -1 if not available
 bool string_starts_with(String str, String start);
 bool string_ends_with(String str, String end);
@@ -44,6 +56,7 @@ Optional<i64> string_parse_i64(String string);
 Optional<i64> string_parse_i64_hex(String string);
 
 Array<String> string_split(String string, char c, Arena* arena); 
+String string_get_whitespace_trimmed(String string); // Returns substring where whitespaces '\n', ' ' '\t' and '\r' are removed from start and end
 
 
 
@@ -68,6 +81,7 @@ struct String_List
 
     static String_List create_empty(Allocator_Base* allocator);
     static String_List create(Allocator_Base* allocator, String string);
+    void deallocate();
     void destroy();
 
     void reset(); // Sets string to empty string (Frees all allocated blocks)
@@ -75,6 +89,18 @@ struct String_List
     void append_to_dynstring(DynString* output);
 };
 
+
+
+// For unique identifier (See Identifier_Pool
+struct Identifier
+{
+	String* string;
+
+	bool equals(Identifier other);
+	bool operator==(Identifier other);
+	bool operator!=(Identifier other);
+    String to_string();
+};
 
 
 
@@ -95,13 +121,16 @@ struct DynString
     DynString* append(char c);
     DynString* append(String string);
     DynString* append(String* string);
+    DynString* append_in_quotation(String string);
     DynString* append_formated(const char* format, ...);
     DynString* append(String_List string_list);
+    DynString* append(Identifier identifier);
 
     DynString* reset();
     void reserve(int new_capacity);
     String to_string();
     const char* to_cstring(); // Adds nullterminator if none available
+    char& operator[](int index);
 };
 
 DynString dynstring_create(Arena* arena);
@@ -114,6 +143,8 @@ void dynstring_truncate(DynString* string, int size);
 void dynstring_set(DynString* string, String set_to);
 
 void dynstring_append(DynString* string, String appendix);
+void dynstring_append(DynString* string, const char* c_string);
+void dynstring_append(DynString* string, Identifier identifier);
 void dynstring_append_formated(DynString* string, const char* format, ...);
 void dynstring_append_character(DynString* string, char c);
 void dynstring_prepend(DynString* string, String prependix);

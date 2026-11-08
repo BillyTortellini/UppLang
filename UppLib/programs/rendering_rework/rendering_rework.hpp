@@ -1,3 +1,3 @@
 #pragma once
 
-void rendering_rework_entry();
+// void rendering_rework_entry();

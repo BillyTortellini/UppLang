@@ -2,6 +2,7 @@
 
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/hashtable.hpp"
+#include "../../utility/identifier_pool.hpp"
 #include <initializer_list>
 #include "ast.hpp"
 #include "constant_pool.hpp"
@@ -28,19 +29,19 @@ struct Type_System;
 // Helpers
 struct Enum_Member
 {
-    DynString* name;
+    Identifier name;
     int value;
 };
 
 struct Struct_Member
 {
     Datatype* datatype;
-    DynString* name;
+    Identifier name;
     int offset; // Offset from base struct
     Datatype_Struct* structure; // In which struct-content this member is defined, may be null for slices or other things
     AST::Node* definition_node; // May be null, used for goto-definition in editor
 };
-Struct_Member struct_member_make(Datatype* type, DynString* id, Datatype_Struct* structure, int offset, AST::Node* definition_node);
+Struct_Member struct_member_make(Datatype* type, Identifier id, Datatype_Struct* structure, int offset, AST::Node* definition_node);
 
 
 
@@ -197,7 +198,7 @@ struct Datatype_Struct
     DynArray<Datatype_Struct*> subtypes;
     Struct_Member tag_member; // Only valid if subtypes aren't empty
 
-    DynString* name; // Subtype-name or for base another name
+    Identifier name; // Subtype-name or for base another name
     AST::Node* definition_node; // Null for pre-defined structs, used for Goto-Definition in Editor
     Call_Signature* initializer_signature_cached;
 
@@ -208,7 +209,7 @@ struct Datatype_Enum
 {
     Datatype base;
     DynArray<Enum_Member> members;
-    DynString* name;
+    Identifier name;
     AST::Node* definition_node;
 
     bool values_are_sequential;
@@ -416,10 +417,10 @@ Datatype_Function_Pointer* type_system_make_function_pointer(Type_System* type_s
 Datatype* type_system_make_type_with_modifiers(Type_System* type_system, Datatype* base_type, int pointer_level);
 
 // Note: empty types need to be finished before they are used!
-Datatype_Enum* type_system_make_enum_empty(Type_System* type_system, DynString* name, AST::Node* definition_node = 0);
+Datatype_Enum* type_system_make_enum_empty(Type_System* type_system, Identifier name, AST::Node* definition_node = 0);
 Datatype_Struct* type_system_make_struct_empty(
-    Type_System* type_system, DynString* name, bool is_union = false, Datatype_Struct* parent = nullptr, AST::Node* definition_node = nullptr);
-void struct_add_member(Datatype_Struct* structure, DynString* id, Datatype* member_type, AST::Node* definition_node = nullptr);
+    Type_System* type_system, Identifier name, bool is_union = false, Datatype_Struct* parent = nullptr, AST::Node* definition_node = nullptr);
+void struct_add_member(Datatype_Struct* structure, Identifier id, Datatype* member_type, AST::Node* definition_node = nullptr);
 void type_system_finish_struct(Type_System* type_system, Datatype_Struct* structure);
 void type_system_finish_enum(Type_System* type_system, Datatype_Enum* enum_type);
 
@@ -437,7 +438,7 @@ Datatype* datatype_get_undecorated(
 );
 bool datatype_is_pointer(Datatype* datatype, bool accept_rawptr, bool accept_function_pointer, bool accept_c_string);
 Type_Modifier_Info datatype_get_modifier_info(Datatype* datatype);
-Upp_String upp_string_from_id(DynString* id);
+Upp_String upp_string_from_id(Identifier id);
 Upp_String upp_string_empty();
 
 Primitive_Class primitive_type_get_class(Primitive_Type primitive_type);

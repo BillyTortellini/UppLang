@@ -19,7 +19,7 @@ void datatype_append_value_to_string(
     auto append_indentation = [&](int extra) {
         if (!single_line) {
             for (int i = 0; i < format.indentation_spaces * (indentation + extra); i++) {
-                string_append_character(string, ' ');
+                dynstring_append_character(string, ' ');
             }
         }
     };
@@ -28,7 +28,7 @@ void datatype_append_value_to_string(
     if (!type->memory_info.available) {
         dynstring_append_formated(string, "TYPE_SIZE_NOT_FINISHED(");
         datatype_append_to_string(type, string, type_system, format.datatype_format);
-        string_append(string, ")");
+        dynstring_append(string, string_make(")"));
         return;
     }
     auto memory = type->memory_info.value;
@@ -48,7 +48,7 @@ void datatype_append_value_to_string(
         {
             void* data = nullptr;
             if (!local_memory.read_single_value(value_ptr, &data)) {
-                string_append(string, "CANNOT_ACCESS_POINTER_ADDRESS");
+                string->append("CANNOT_ACCESS_POINTER_ADDRESS");
                 break;
             }
             if (data == 0) {
@@ -76,24 +76,24 @@ void datatype_append_value_to_string(
 			    return;
 			}
 
-			string_append(string, "Any.{");
+			string->append("Any.{");
 			if (single_line) {
-			    string_append(string, " ");
+			    string->append(" ");
 			}
 			else {
-			    string_append(string, "\n");
+			    string->append("\n");
 			    append_indentation(1);
 			}
 
 			datatype_append_value_to_string(type, string, (byte*)any_value.data, format, indentation + 1, pointer_memory, pointer_memory, type_system);
 
 			if (single_line) {
-			    string_append(string, " }");
+			    string->append(" }");
 			}
 			else {
-			    string_append(string, "\n");
+			    string->append("\n");
 			    append_indentation(0);
-			    string_append(string, "}");
+			    string->append("}");
 			}
 			return;
 		}
@@ -109,15 +109,10 @@ void datatype_append_value_to_string(
 			    return;
 			}
 
-			DynString tmp = dynstring_create();
-			SCOPE_EXIT(string_destroy(&tmp));
-			Dynamic_Array<u8> buffer = dynamic_array_create<u8>(0);
-			SCOPE_EXIT(dynamic_array_destroy(&buffer));
-
-			pointer_memory.read_null_terminated_string((void*)pointer, &tmp, 64, false, &buffer);
-			string_append_character(string, '\"');
-			string_append_string(string, &tmp);
-			string_append_character(string, '\"');
+			SCRATCH_ARENA_MAKE_SCOPED(string->arena);
+			DynString tmp = dynstring_create(scratch_arena);
+			pointer_memory.read_string_utf8_null_terminated((void*)pointer, &tmp, 64);
+			string->append('"')->append(tmp)->append('"');
 			return;
 		}
         case Builtin_Type::STRING: 
@@ -132,24 +127,17 @@ void datatype_append_value_to_string(
 			    return;
 			}
 
-			Dynamic_Array<u8> buffer = dynamic_array_create<u8>((int)upp_string.size);
-			SCOPE_EXIT(dynamic_array_destroy(&buffer));
-
-			pointer_memory.read_array((void*)upp_string.data, &buffer, upp_string.size);
-			DynString str;
-			str.capacity = buffer.size;
-			str.characters = (char*) buffer.data;
-			str.size = buffer.size;
-			string_append_character(string, '\"');
-			string_append_string(string, &str);
-			string_append_character(string, '\"');
+			SCRATCH_ARENA_MAKE_SCOPED(string->arena);
+			Array<u8> char_buffer = scratch_arena->allocate_array<u8>(upp_string.size);
+			pointer_memory.read((void*)upp_string.data, (void*)char_buffer.data, upp_string.size);
+			string->append_in_quotation(string_make((char*) char_buffer.data, upp_string.size));
 			return;
         }
         case Builtin_Type::TYPE_HANDLE: 
         {
             Upp_Type_Handle handle;
             if (!local_memory.read_single_value(value_ptr, &handle)) {
-                string_append(string, "PRIMITIVE_ACCESS_ERROR");
+                string->append("PRIMITIVE_ACCESS_ERROR");
                 break;
             }
             if (handle.index < (u32)type_system->types.size) {
@@ -165,7 +153,7 @@ void datatype_append_value_to_string(
 		{
 			u32 codepoint = 0;
             if (!local_memory.read_single_value(value_ptr, &codepoint)) {
-                string_append(string, "MEMORY_NOT_READABLE");
+                string->append("MEMORY_NOT_READABLE");
                 break;
             }
 			if (codepoint > 32 && codepoint <= 128) {
@@ -196,17 +184,17 @@ void datatype_append_value_to_string(
         // TODO: At some point we could probably print function information here
         // E.g. add Debugger* to format struct, so we can query infos
         if (format.show_datatype) {
-            string_append(string, "Function: ");
+            string->append("Function: ");
         }
         dynstring_append_formated(string, "%p", ptr);
         break;
     }
     case Datatype_Type::UNKNOWN_TYPE: {
-        string_append(string, "UNKNOWN_TYPE");
+        string->append("UNKNOWN_TYPE");
         break;
     }
     case Datatype_Type::VOID_TYPE: {
-        string_append(string, "VOID_TYPE");
+        string->append("VOID_TYPE");
         break;
     }
     case Datatype_Type::PATTERN_VARIABLE: {
@@ -263,7 +251,7 @@ void datatype_append_value_to_string(
             return;
         }
 
-        string_append_character(string, '[');
+        dynstring_append_character(string, '[');
         if (element_count > format.max_array_display_size) {
             dynstring_append_formated(string, "#%d | ", element_count);
         }
@@ -271,11 +259,11 @@ void datatype_append_value_to_string(
         for (int i = 0; i < display_count; i += 1) {
             if (single_line) {
                 if (i != 0) {
-                    string_append(string, ", ");
+                    string->append(", ");
                 }
             }
             else {
-                string_append(string, "\n");
+                string->append("\n");
                 append_indentation(1);
             }
             byte* data = array_data + i * element_type->memory_info.value.size;
@@ -285,22 +273,22 @@ void datatype_append_value_to_string(
         // Append ... if we did not display all elements
         if (element_count > format.max_array_display_size) {
             if (single_line) {
-                string_append(string, ", ...");
+                string->append(", ...");
             }
             else {
-                string_append(string, "\n");
+                string->append("\n");
                 append_indentation(1);
-                string_append(string, "...");
+                string->append("...");
             }
         }
         
         if (single_line) {
-            string_append(string, "]");
+            string->append("]");
         }
         else {
-            string_append(string, "\n");
+            string->append("\n");
             append_indentation(0);
-            string_append(string, "]");
+            string->append("]");
         }
         break;
     }
@@ -320,17 +308,17 @@ void datatype_append_value_to_string(
 
         dynstring_append_formated(string, "%p { ", data);
         if (!single_line) {
-            string_append(string, "\n");
+            string->append("\n");
             append_indentation(indentation + 1);
         }
         datatype_append_value_to_string(pointer->element_type, string, data, format, indentation + 1, local_memory, pointer_memory, type_system);
         if (!single_line) {
-            string_append(string, "\n");
+            string->append("\n");
             append_indentation(0);
-            string_append(string, "}");
+            string->append("}");
         }
         else {
-            string_append(string, " }");
+            string->append(" }");
         }
         break;
     }
@@ -340,9 +328,9 @@ void datatype_append_value_to_string(
 
         if (format.show_datatype) {
 			datatype_append_to_string(type, string, type_system, format.datatype_format);
-            string_append(string, ".");
+            string->append(".");
         }
-        string_append(string, "{ ");
+        string->append("{ ");
 
 		while (structure->parent != nullptr) {
 			structure = structure->parent;
@@ -353,19 +341,19 @@ void datatype_append_value_to_string(
             {
                 if (single_line) {
                     if (i != 0) {
-                        string_append(string, ", ");
+                        string->append(", ");
                     }
                 }
                 else {
-                    string_append(string, "\n");
+                    string->append("\n");
                     append_indentation(1);
                 }
 
                 Struct_Member* mem = &structure->members[i];
                 byte* mem_ptr = value_ptr + mem->offset;
                 if (format.show_member_names) {
-                    string_append_string(string, mem->name);
-                    string_append(string, " = ");
+                    string->append(mem->name.string);
+                    string->append(" = ");
                 }
                 datatype_append_value_to_string(mem->datatype, string, mem_ptr, format, indentation + 1, local_memory, pointer_memory, type_system);
             }
@@ -376,10 +364,10 @@ void datatype_append_value_to_string(
             }
 
             if (single_line) {
-                string_append(string, " ");
+                string->append(" ");
             }
             else {
-                string_append(string, "\n");
+                string->append("\n");
                 append_indentation(1);
             }
 
@@ -394,16 +382,16 @@ void datatype_append_value_to_string(
                 break;
             }
             structure = structure->subtypes[subtype_index];
-            dynstring_append_formated(string, ".%s: ", structure->name->characters);
+			string->append(structure->name.string)->append(": ");
         }
 
         if (single_line) {
-            string_append(string, " }");
+            string->append(" }");
         }
         else {
-            string_append(string, "\n");
+            string->append("\n");
             append_indentation(0);
-            string_append(string, "}");
+            string->append("}");
         }
         break;
     }
@@ -412,14 +400,10 @@ void datatype_append_value_to_string(
         auto enum_type = downcast<Datatype_Enum>(type);
         auto& members = enum_type->members;
         if (format.show_datatype) {
-            if (enum_type->name != 0) {
-                dynstring_append_formated(string, "%s", enum_type->name->characters);
-            }
-            else {
-                dynstring_append_formated(string, "Enum");
-            }
+			assert(enum_type->name.string != nullptr, "");
+            string->append(enum_type->name.string);
         }
-        string_append(string, ".");
+        string->append(".");
 
         int value = 0;
         if (!local_memory.read_single_value(value_ptr, &value)) {
@@ -432,7 +416,7 @@ void datatype_append_value_to_string(
             dynstring_append_formated(string, "INVALID_VALUE(#%d)", value);
         }
         else {
-            dynstring_append_formated(string, member.value.name->characters);
+            string->append(member.value.name.string);
         }
         break;
     }
@@ -444,7 +428,7 @@ void datatype_append_value_to_string(
 		char value_buffer[8];
 		void* data = &value_buffer[0];
         if (!local_memory.read(data, value_ptr, size)) {
-            string_append(string, "PRIMITIVE_ACCESS_ERROR");
+            string->append("PRIMITIVE_ACCESS_ERROR");
             break;
         }
 
@@ -540,7 +524,7 @@ void datatype_append_to_string(Datatype* datatype, DynString* string, Type_Syste
         if (!polymorphic->is_reference) {
             string->append("$");
         }
-		string->append(*polymorphic->variable->symbol_node->name);
+		string->append(polymorphic->variable->symbol_node->name.string);
         break;
     }
     case Datatype_Type::ARRAY: {
@@ -604,9 +588,8 @@ void datatype_append_to_string(Datatype* datatype, DynString* string, Type_Syste
 		string_style_push(string, Mark_Type::TEXT_COLOR, Syntax_Color::DATATYPE);
 		SCOPE_EXIT(string_style_pop(string));
         auto enum_type = downcast<Datatype_Enum>(datatype);
-        if (enum_type->name != 0) {
-            string->append(enum_type->name->characters);
-        }
+		assert(enum_type->name.string != nullptr, "");
+        string->append(enum_type->name.string);
         break;
     }
 	case Datatype_Type::STRUCT:
@@ -616,7 +599,7 @@ void datatype_append_to_string(Datatype* datatype, DynString* string, Type_Syste
 		if (struct_type->parent == nullptr)
 		{
 			string_style_push(string, Mark_Type::TEXT_COLOR, Syntax_Color::DATATYPE);
-			string->append(struct_type->name);
+			string->append(struct_type->name.string);
 			string_style_pop(string);
 		}
 		else
@@ -630,7 +613,7 @@ void datatype_append_to_string(Datatype* datatype, DynString* string, Type_Syste
 			}
 			for (int i = parents.size - 1; i >= 0; i -= 1) {
 				string_style_push(string, Mark_Type::TEXT_COLOR, Syntax_Color::DATATYPE);
-				string->append(parents[i]->name);
+				string->append(parents[i]->name.string);
 				string_style_pop(string);
 				if (i != 0) {
 					string->append(".>");
@@ -994,7 +977,7 @@ Datatype_Slice* type_system_make_slice(Type_System* type_system, Datatype* eleme
 {
 	Arena* arena = &type_system->compilation_data->arena;
 	auto& types = type_system->predefined_types;
-	auto& ids = type_system->compilation_data->identifier_pool.predefined_ids;
+	auto& ids = type_system->compilation_data->predefined_ids;
 
 	Type_Deduplication dedup;
 	dedup.type = Type_Deduplication_Type::SLICE;
@@ -1097,12 +1080,12 @@ Datatype* type_system_make_type_with_modifiers(Type_System* type_system, Datatyp
 	return result_type;
 }
 
-Datatype_Struct* type_system_make_struct_empty(Type_System* type_system, DynString* name, bool is_union, Datatype_Struct* parent, AST::Node* definition_node)
+Datatype_Struct* type_system_make_struct_empty(Type_System* type_system, Identifier name, bool is_union, Datatype_Struct* parent, AST::Node* definition_node)
 {
 	Arena* arena = &type_system->compilation_data->arena;
 
-	assert(name != 0, "");
-	auto& ids = type_system->compilation_data->identifier_pool.predefined_ids;
+	assert(name.string != 0, "");
+	auto& ids = type_system->compilation_data->predefined_ids;
 
 	Datatype_Struct* result = arena->allocate<Datatype_Struct>();
 	Upp_Struct* upp_struct = nullptr;
@@ -1147,7 +1130,7 @@ Datatype_Struct* type_system_make_struct_empty(Type_System* type_system, DynStri
 	return result;
 }
 
-Struct_Member struct_member_make(Datatype* type, DynString* id, Datatype_Struct* structure, int offset, AST::Node* definition_node)
+Struct_Member struct_member_make(Datatype* type, Identifier id, Datatype_Struct* structure, int offset, AST::Node* definition_node)
 {
 	Struct_Member member;
 	member.datatype = type;
@@ -1158,7 +1141,7 @@ Struct_Member struct_member_make(Datatype* type, DynString* id, Datatype_Struct*
 	return member;
 }
 
-void struct_add_member(Datatype_Struct* structure, DynString* id, Datatype* member_type, AST::Node* definition_node)
+void struct_add_member(Datatype_Struct* structure, Identifier id, Datatype* member_type, AST::Node* definition_node)
 {
 	assert(!structure->base.memory_info.available, "Cannot add member to already finished struct");
 	structure->members.push_back(struct_member_make(member_type, id, structure, 0, definition_node));
@@ -1245,7 +1228,7 @@ int struct_alignment_finish_recursive(Datatype_Struct* structure)
 // Note: Struct subtypes all share one memory info, so we only use the base memory and distribute that later
 void struct_size_finish_recursive(Type_System* type_system, Datatype_Struct* structure, Datatype_Memory_Info& memory)
 {
-	auto ids = type_system->compilation_data->identifier_pool.predefined_ids;
+	auto ids = type_system->compilation_data->predefined_ids;
 
 	// Calculate memory info/layout (Member offsets, contains pointers/padding/reference)
 	bool is_union = structure->upp_struct->is_union;
@@ -1300,10 +1283,10 @@ void struct_size_finish_recursive(Type_System* type_system, Datatype_Struct* str
 		// Create empty tag enum
 		Datatype_Enum* tag_type = nullptr;
 		{
-			DynString name = dynstring_copy(*structure->name);
-			dynstring_append_formated(&name, "_tag");
-			DynString* tag_enum_name = identifier_pool_add(&type_system->compilation_data->identifier_pool, name);
-			string_destroy(&name);
+			SCRATCH_ARENA_MAKE_SCOPED(type_system->compilation_data->identifier_pool.arena);
+			DynString name = dynstring_create_copy(*structure->name.string, scratch_arena);
+			name.append("_tag");
+			Identifier tag_enum_name = identifier_pool_add(&type_system->compilation_data->identifier_pool, name.to_string());
 			tag_type = type_system_make_enum_empty(type_system, tag_enum_name);
 		}
 
@@ -1410,10 +1393,10 @@ void type_system_finish_struct(Type_System* type_system, Datatype_Struct* struct
 	}
 }
 
-Datatype_Enum* type_system_make_enum_empty(Type_System* type_system, DynString* name, AST::Node* definition_node)
+Datatype_Enum* type_system_make_enum_empty(Type_System* type_system, Identifier name, AST::Node* definition_node)
 {
 	Arena* arena = &type_system->compilation_data->arena;
-	assert(name != 0, "I've decided that all enums must have names, even if you have to generate them");
+	assert(name.string != 0, "I've decided that all enums must have names, even if you have to generate them");
 
 	Datatype_Enum* result = arena->allocate<Datatype_Enum>();
 	result->base = datatype_make_simple_base(Datatype_Type::ENUM, DEFAULT_ENUM_SIZE, DEFAULT_ENUM_ALIGNMENT);
@@ -1442,7 +1425,7 @@ void type_system_finish_enum(Type_System* type_system, Datatype_Enum* enum_type)
 
 	if (members.size == 0) {
 		Enum_Member dummy;
-		dummy.name = type_system->compilation_data->identifier_pool.predefined_ids.empty_string;
+		dummy.name = type_system->compilation_data->predefined_ids.empty_string;
 		dummy.value = 0;
 		members.push_back(dummy);
 	}
@@ -1468,12 +1451,7 @@ void type_system_finish_enum(Type_System* type_system, Datatype_Enum* enum_type)
 	internal_info->tag = base.type;
 
 	// Make mirroring internal info
-	if (enum_type->name == 0) {
-		internal_info->options.enumeration.name = upp_string_empty();
-	}
-	else {
-		internal_info->options.enumeration.name = upp_string_from_id(enum_type->name);
-	}
+	internal_info->options.enumeration.name = upp_string_from_id(enum_type->name);
 	int member_count = members.size;
 	Array<Internal_Type_Enum_Member> array_members = arena->allocate_array<Internal_Type_Enum_Member>(member_count);
 	internal_info->options.enumeration.members.size = array_members.size;
@@ -1499,7 +1477,7 @@ void type_system_add_predefined_types(Type_System* type_system)
 	Compilation_Data* compilation_data = type_system->compilation_data;
 	Arena* arena = &compilation_data->arena;
 	Identifier_Pool* identifier_pool = &compilation_data->identifier_pool;
-	auto& ids = identifier_pool->predefined_ids;
+	auto& ids = compilation_data->predefined_ids;
 	Predefined_Types* types = &type_system->predefined_types;
 
 	// Basic Types
@@ -1542,18 +1520,18 @@ void type_system_add_predefined_types(Type_System* type_system)
 		types->empty_pattern_variable = upcast(type_system_make_pattern_variable_type(type_system, nullptr));
 	}
 
-	auto make_id = [&](const char* name) -> DynString* { return identifier_pool_add(identifier_pool, string_create_static(name)); };
+	auto make_id = [&](const char* name) -> Identifier { return identifier_pool_add(identifier_pool, string_make(name)); };
 	auto add_member_cstr = [&](Datatype_Struct* structure, const char* member_name, Datatype* member_type) {
-		DynString* id = identifier_pool_add(identifier_pool, string_create_static(member_name));
+		Identifier id = identifier_pool_add(identifier_pool, string_make(member_name));
 		struct_add_member(structure, id, member_type);
 	};
 	auto add_struct_subtype = [&](Datatype_Struct* structure, const char* member_name) -> Datatype_Struct* {
-		DynString* id = identifier_pool_add(identifier_pool, string_create_static(member_name));
+		Identifier id = identifier_pool_add(identifier_pool, string_make(member_name));
 		return type_system_make_struct_empty(type_system, id, false, structure, nullptr);
 	};
 	auto make_single_member_struct = [&](const char* struct_name, const char* member_name, Datatype* type) -> Datatype_Struct*
 	{
-		DynString* name_id = identifier_pool_add(identifier_pool, string_create_static(struct_name));
+		Identifier name_id = identifier_pool_add(identifier_pool, string_make(struct_name));
 		auto result = type_system_make_struct_empty(type_system, name_id, false);
 		add_member_cstr(result, member_name, type);
 		type_system_finish_struct(type_system, result);
@@ -1591,7 +1569,7 @@ void type_system_add_predefined_types(Type_System* type_system)
 
 		auto add_enum_member = [&](Datatype_Enum* enum_type, const char* name, int value) {
 			Enum_Member item;
-			item.name = identifier_pool_add(identifier_pool, string_create_static(name));
+			item.name = identifier_pool_add(identifier_pool, string_make(name));
 			item.value = value;
 			enum_type->members.push_back(item);
 		};
@@ -1606,7 +1584,7 @@ void type_system_add_predefined_types(Type_System* type_system)
 			// Primitive
 			{
 				Datatype_Enum* primitive_type_enum = type_system_make_enum_empty(
-					type_system, identifier_pool_add(identifier_pool, string_create_static("Primitive_Type"))
+					type_system, identifier_pool_add(identifier_pool, string_make("Primitive_Type"))
 				);
 				types->primitive_type_enum = upcast(primitive_type_enum);
 
@@ -1631,7 +1609,7 @@ void type_system_add_predefined_types(Type_System* type_system)
 			// Built-In
 			{
 				Datatype_Enum* builtin_enum = type_system_make_enum_empty(
-					type_system, identifier_pool_add(identifier_pool, string_create_static("Builtin_Type"))
+					type_system, identifier_pool_add(identifier_pool, string_make("Builtin_Type"))
 				);
 				types->builtin_type_enum = builtin_enum->upcast();
 
@@ -1680,7 +1658,7 @@ void type_system_add_predefined_types(Type_System* type_system)
 			// ENUM
 			{
 				{
-					DynString* id = make_id("Enum_Member");
+					Identifier id = make_id("Enum_Member");
 					Datatype_Struct* enum_member_type = type_system_make_struct_empty(type_system, id);
 					add_member_cstr(enum_member_type, "name", upcast(types->string));
 					add_member_cstr(enum_member_type, "value", upcast(types->int_type));
@@ -1707,8 +1685,8 @@ void type_system_add_predefined_types(Type_System* type_system)
 
 void type_system_print(Type_System* system)
 {
-	DynString msg = dynstring_create(256);
-	SCOPE_EXIT(string_destroy(&msg));
+	SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+	DynString msg = dynstring_create(scratch_arena);
 	dynstring_append_formated(&msg, "Type_System: ");
 	for (int i = 0; i < system->types.size; i++)
 	{
@@ -1930,11 +1908,11 @@ Type_Modifier_Info datatype_get_modifier_info(Datatype* datatype)
 	return info;
 }
 
-Upp_String upp_string_from_id(DynString* id)
+Upp_String upp_string_from_id(Identifier id)
 {
 	Upp_String result;
-	result.data = id->characters;
-	result.size = id->size;
+	result.data = (void*)id.string->characters;
+	result.size = id.string->size;
 	return result;
 }
 
@@ -1959,4 +1937,3 @@ Datatype* Datatype_Function_Pointer::upcast() { return &base; }
 Datatype* Datatype_Builtin::upcast() { return &base; }
 Datatype* Datatype_Pattern_Variable::upcast() { return &base; }
 Datatype* Datatype::upcast() { return this; }
-

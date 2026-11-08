@@ -72,21 +72,20 @@ struct Line_Indent_Info
 	bool is_empty; // Line is also counted as empty if it only starts with a backslash
 };
 
-Line_Indent_Info source_line_get_indent_info(Source_Line* line) 
+Line_Indent_Info source_line_get_indent_info(String line_text) 
 {
 	Line_Indent_Info result;
 	result.indentation = 0;
 	result.is_empty = true;
 
-	DynString& text = line->text;
 	int index = 0;
-	while (index < text.size) 
+	while (index < line_text.size) 
 	{
-		if (text[index] == ' ') {
+		if (line_text[index] == ' ') {
 			index += 1;
 			continue;
 		}
-		else if (string_test_char(text, index, '/') && string_test_char(text, index + 1, '/')) {
+		else if (string_test_char(line_text, index, '/') && string_test_char(line_text, index + 1, '/')) {
 			break;
 		}
 		else {
@@ -102,17 +101,17 @@ DynArray<Token> tokenize_source_code_and_build_hierarchy(Source_Code* code, Aren
 {
 	DynArray<Token> tokens = DynArray<Token>::create(arena);
 	tokens.push_back(token_make(Token_Type::BLOCK_START, 0, 0, 0));
+	DynString line_text = DynString::create(arena);
 
-	int nearby_bundle_index = 0;
 	int indentation = 0;
 	int prev_indentation = 0;
 	int min_continuation_indentation = -1;
 	Text_Index last_text_pos = text_index_make(0, 0);
 	Token_Type last_line_end_token_type = Token_Type::INVALID;
-	for (int line_index = 0; line_index < code->line_count; line_index += 1)
+	for (int line_index = 0; line_index < code->line_count(); line_index += 1)
 	{
-		Source_Line* line = source_code_get_line(code, line_index, nearby_bundle_index);
-		Line_Indent_Info indent_info = source_line_get_indent_info(line);
+		source_code_line_append_to_string(code, line_index, line_text.reset());
+		Line_Indent_Info indent_info = source_line_get_indent_info(line_text.to_string());
 		if (indent_info.is_empty) {
 			last_line_end_token_type = Token_Type::INVALID;
 			min_continuation_indentation = -1;
@@ -150,23 +149,23 @@ DynArray<Token> tokenize_source_code_and_build_hierarchy(Source_Code* code, Aren
 		// Tokenize line
 		int token_count_before = tokens.size;
 		{
-			tokenizer_tokenize_single_line(line->text, &tokens, line_index, true);
+			tokenizer_tokenize_single_line(line_text.to_string(), &tokens, line_index, true);
 
 			// Add identifiers and string-literals to identifier-pool
 			for (int i = token_count_before; i < tokens.size; i++)
 			{
 				Token& token = tokens[i];
 				if (token.type == Token_Type::IDENTIFIER) {
-					token.options.string_value = identifier_pool_add(id_pool, string_create_substring_static(&line->text, token.start, token.end));
+					token.options.string_value = identifier_pool_add(id_pool, string_make_substring(line_text.to_string(), token.start, token.end));
 				}
 				else if (token.type == Token_Type::LITERAL_STRING)
 				{
 					auto checkpoint = arena->make_checkpoint();
 					SCOPE_EXIT(checkpoint.rewind());
-					DynString string_buffer = dynstring_create(arena, 256);
-					auto substring = string_create_substring_static(&line->text, token.start, token.end);
+					DynString string_buffer = dynstring_create(arena);
+					String substring = string_make_substring(line_text.to_string(), token.start, token.end);
 					tokenizer_parse_string_literal(substring, &string_buffer);
-					token.options.string_value = identifier_pool_add(id_pool, string_buffer);
+					token.options.string_value = identifier_pool_add(id_pool, string_buffer.to_string());
 				}
 			}
 		}
@@ -947,7 +946,7 @@ namespace Parser
 
 
 	// Prototypes
-	Optional<DynString*> parse_block_label_or_use_related_node_id(AST::Node* related_node);
+	Optional<Identifier> parse_block_label_or_use_related_node_id(AST::Node* related_node);
 	Code_Block* parse_code_block(Node* parent, AST::Node* related_node);
 	Path_Lookup* parse_path_lookup(Node* parent);
 	Expression* parse_expression(Node* parent);
@@ -1453,14 +1452,14 @@ namespace Parser
 				{
 					if (test_token(Token_Type::IDENTIFIER))
 					{
-						DynString* import_option_id = get_token()->options.string_value;
-						if (import_option_id == ids.transitive) {
+						Identifier import_option_id = get_token()->options.string_value;
+						if (import_option_id.equals(ids.transitive)) {
 							import_node.is_transitive = true;
 						}
-						else if (import_option_id == ids.symbols) {
+						else if (import_option_id.equals(ids.symbols)) {
 							import_node.import_symbols_set = true;
 						}
-						else if (import_option_id == ids.all) {
+						else if (import_option_id.equals(ids.all)) {
 							import_node.import_all_set = true;
 						}
 						else {
@@ -1511,31 +1510,31 @@ namespace Parser
 
 			if (test_token(Token_Type::IDENTIFIER))
 			{
-				DynString* id = get_token()->options.string_value;
-				if (id == ids.global) {
+				Identifier id = get_token()->options.string_value;
+				if (id.equals(ids.global)) {
 					extern_node.type = Extern_Type::GLOBAL;
 				}
-				else if (id == ids.lib) {
+				else if (id.equals(ids.lib)) {
 					extern_node.type = Extern_Type::COMPILER_SETTING;
 					extern_node.options.setting.type = Extern_Compiler_Setting::LIBRARY;
 				}
-				else if (id == ids.lib_dir) {
+				else if (id.equals(ids.lib_dir)) {
 					extern_node.type = Extern_Type::COMPILER_SETTING;
 					extern_node.options.setting.type = Extern_Compiler_Setting::LIBRARY_DIRECTORY;
 				}
-				else if (id == ids.source) {
+				else if (id.equals(ids.source)) {
 					extern_node.type = Extern_Type::COMPILER_SETTING;
 					extern_node.options.setting.type = Extern_Compiler_Setting::SOURCE_FILE;
 				}
-				else if (id == ids.header) {
+				else if (id.equals(ids.header)) {
 					extern_node.type = Extern_Type::COMPILER_SETTING;
 					extern_node.options.setting.type = Extern_Compiler_Setting::HEADER_FILE;
 				}
-				else if (id == ids.header_dir) {
+				else if (id.equals(ids.header_dir)) {
 					extern_node.type = Extern_Type::COMPILER_SETTING;
 					extern_node.options.setting.type = Extern_Compiler_Setting::INCLUDE_DIRECTORY;
 				}
-				else if (id == ids.definition) {
+				else if (id.equals(ids.definition)) {
 					extern_node.type = Extern_Type::COMPILER_SETTING;
 					extern_node.options.setting.type = Extern_Compiler_Setting::DEFINITION;
 				}
@@ -1597,12 +1596,12 @@ namespace Parser
 
 			if (test_token(Token_Type::IDENTIFIER)) 
 			{
-				DynString* id = get_token()->options.string_value;
+				Identifier id = get_token()->options.string_value;
 				custom_op.type = Custom_Operator_Type::INVALID;
 
 				for (int i = 0; i < (int)Custom_Operator_Type::INVALID; i++)
 				{
-					if (id == ids.custom_operator_function_names[i]) {
+					if (id.equals(ids.custom_operator_function_names[i])) {
 						custom_op.type = (Custom_Operator_Type)i;
 						break;
 					}
@@ -1838,7 +1837,7 @@ namespace Parser
 
 				auto implicit_else_block = allocate_base<AST::Code_Block>(&last_if_stat->base, Node_Type::CODE_BLOCK);
 				implicit_else_block->statements = parser.permanent_arena->allocate_array<Statement*>(1);
-				implicit_else_block->block_id = optional_make_failure<DynString*>();
+				implicit_else_block->block_id = optional_make_failure<Identifier>();
 
 				auto new_if_stat = allocate_base<AST::Statement>(&last_if_stat->base, Node_Type::STATEMENT);
 				advance_token();
@@ -2017,7 +2016,7 @@ namespace Parser
 			// Generate new code block, set parent/child correctly, set ranges correctly
 			Code_Block* code_block = allocate_base<Code_Block>(upcast(result), Node_Type::CODE_BLOCK);
 			code_block->statements = parser.permanent_arena->allocate_array<Statement*>(1);
-			code_block->block_id = optional_make_failure<DynString*>();
+			code_block->block_id = optional_make_failure<Identifier>();
 
 			code_block->statements[0] = statement;
 			statement->base.parent = upcast(code_block);
@@ -2090,7 +2089,7 @@ namespace Parser
 		case Token_Type::CONTINUE: {
 			advance_token();
 			result->type = Statement_Type::CONTINUE_STATEMENT;
-			result->options.continue_name = optional_make_failure<DynString*>();
+			result->options.continue_name = optional_make_failure<Identifier>();
 			if (test_token(Token_Type::IDENTIFIER)) {
 				result->options.continue_name = optional_make_success(get_token(0)->options.string_value);
 				advance_token();
@@ -2100,7 +2099,7 @@ namespace Parser
 		case Token_Type::BREAK: {
 			advance_token();
 			result->type = Statement_Type::BREAK_STATEMENT;
-			result->options.break_name = optional_make_failure<DynString*>();
+			result->options.break_name = optional_make_failure<Identifier>();
 			if (test_token(Token_Type::IDENTIFIER)) {
 				result->options.break_name = optional_make_success(get_token(0)->options.string_value);
 				advance_token();
@@ -2146,9 +2145,9 @@ namespace Parser
 	}
 
 	// Used by code-block and switch statement
-	Optional<DynString*> parse_block_label_or_use_related_node_id(AST::Node* related_node)
+	Optional<Identifier> parse_block_label_or_use_related_node_id(AST::Node* related_node)
 	{
-		Optional<DynString*> result = optional_make_failure<DynString*>();
+		Optional<Identifier> result = optional_make_failure<Identifier>();
 		if (test_token(Token_Type::SCOPE, Token_Type::IDENTIFIER)) {
 			result = optional_make_success(get_token(1)->options.string_value);
 		}
@@ -2157,11 +2156,11 @@ namespace Parser
 			if (related_node->type == AST::Node_Type::EXPRESSION) {
 				auto expr = downcast<AST::Expression>(related_node);
 				if (expr->type == AST::Expression_Type::PATH_LOOKUP && expr->options.path_lookup->parts.size > 0) {
-					result = optional_make_success<DynString*>(expr->options.path_lookup->parts[expr->options.path_lookup->parts.size - 1]->name);
+					result = optional_make_success<Identifier>(expr->options.path_lookup->parts[expr->options.path_lookup->parts.size - 1]->name);
 				}
 			}
 			else if (related_node->type == AST::Node_Type::SYMBOL_NODE) {
-				result = optional_make_success<DynString*>(downcast<AST::Symbol_Node>(related_node)->name);
+				result = optional_make_success<Identifier>(downcast<AST::Symbol_Node>(related_node)->name);
 			}
 		}
 		return result;
@@ -2486,15 +2485,15 @@ namespace Parser
 				result->options.literal_read.type = Literal_Type::CODE_POINT;
 				result->options.literal_read.options.codepoint = 0;
 
-				DynString* string = get_token()->options.string_value;
-				if (string->size <= 0) {
+				Identifier string = get_token()->options.string_value;
+				if (string.string->size <= 0) {
 					log_error_range_offset("Character literal requires a non-empty string after dot", 1);
 				}
-				else if (string->size > 1) {
+				else if (string.string->size > 1) {
 					log_error_range_offset("Character literal string must be exactly one character long", 1);
 				}
 				else {
-					result->options.literal_read.options.codepoint = string->at(0);
+					result->options.literal_read.options.codepoint = string.string->at(0);
 				}
 
 				advance_token();
@@ -2657,7 +2656,7 @@ namespace Parser
 			call.expr = call_expr;
 
 			AST::Argument* argument = allocate_base<Argument>(nullptr, AST::Node_Type::ARGUMENT);
-			argument->name = optional_make_failure<DynString*>();
+			argument->name = optional_make_failure<Identifier>();
 			argument->value = child;
 			argument->base.range = child->base.range;
 			argument->base.bounding_range = child->base.bounding_range;
@@ -2855,7 +2854,7 @@ namespace Parser
 		parser.temporary_arena = temporary_arena;
 		parser.unit = unit;
 		parser.error_token = token_make(Token_Type::INVALID, 0, 0, 0);
-		parser.predefined_ids = &identifier_pool->predefined_ids;
+		parser.predefined_ids = &compilation_data->predefined_ids;
 		parser.pos = 0;
 
 		// Tokenize code
@@ -2868,7 +2867,7 @@ namespace Parser
 		AST::Root_Node* root = allocate_base<Root_Node>(nullptr, Node_Type::ROOT);
 		root->definitions = parse_list_items_as_array<Definition>(upcast(root), wrapper_parse_definition);
 		root->compilation_unit = unit;
-		root->base.range = text_range_make(text_index_make(0, 0), text_index_make_line_end(unit->code, unit->code->line_count - 1));
+		root->base.range = text_range_make(text_index_make(0, 0), text_index_make_line_end(unit->code, unit->code->line_count() - 1));
 		root->base.bounding_range = root->base.range;
 		unit->root = root;
 
@@ -2880,17 +2879,19 @@ namespace Parser
 			error.infos = DynArray<Error_Information>::create(&compilation_data->arena);
 			error.ranges = DynArray<Text_Range>::create(&compilation_data->arena);
 			error.ranges.push_back(parse_error.range);
-			error.msg = parse_error.msg;
+			error.msg = string_make(parse_error.msg);
 			error.unit = unit;
 			compilation_data->code_errors.push_back(error);
 		}
 	}
 
 	// AST queries based on Token-Indices
-	DynArray<Text_Range> ast_base_get_section_token_range(Source_Code* code, AST::Node* base, Node_Section section, Arena* arena)
+    void ast_base_get_section_token_range(Source_Code* code, DynArray<Text_Range>* append_to, AST::Node* base, Node_Section section)
 	{
 		auto range = base->range;
-		DynArray<Text_Range> ranges = DynArray<Text_Range>::create(arena);
+
+		SCRATCH_ARENA_MAKE_SCOPED(append_to->arena);
+		DynArray<Token> tokens = DynArray<Token>::create(scratch_arena);
 
 		switch (section)
 		{
@@ -2898,10 +2899,10 @@ namespace Parser
 		case Node_Section::WHOLE:
 		{
 			if (base->type == AST::Node_Type::EXPRESSION && downcast<AST::Expression>(base)->type == AST::Expression_Type::FUNCTION_CALL) {
-				ranges.push_back(base->bounding_range);
+				append_to->push_back(base->bounding_range);
 				break;
 			}
-			ranges.push_back( range);
+			append_to->push_back( range);
 			break;
 		}
 		case Node_Section::WHOLE_NO_CHILDREN:
@@ -2920,7 +2921,7 @@ namespace Parser
 					sub_range.end = child_range.start;
 					// Extra check, as bounding range may differ from normal range (E.g. child starts before parent range)
 					if (text_index_in_order(sub_range.start, sub_range.end) == 1) {
-						ranges.push_back(sub_range);
+						append_to->push_back(sub_range);
 					}
 				}
 				sub_range.start = child_range.end;
@@ -2933,22 +2934,22 @@ namespace Parser
 				sub_range.end = range.end;
 				// Extra check, as bounding range may differ from normal range
 				if (text_index_in_order(sub_range.start, sub_range.end)) {
-					ranges.push_back(sub_range);
+					append_to->push_back(sub_range);
 				}
 			}
-			if (ranges.size == 0) {
-				ranges.push_back(range);
+			if (append_to->size == 0) {
+				append_to->push_back(range);
 			}
 			break;
 		}
 		case Node_Section::IDENTIFIER:
 		{
 			int token_index = 0;
-			DynArray<Token> tokens = tokenize_partial_code(code, base->range.start, arena, token_index, true, false);
+			tokenize_partial_code(code, &tokens, base->range.start, token_index, true, false);
 			for (int i = token_index; i < tokens.size; i++) {
 				Token& token = tokens[i];
 				if (token.type == Token_Type::IDENTIFIER) {
-					ranges.push_back(text_range_make(text_index_make(token.line, token.start), text_index_make(token.line, token.end)));
+					append_to->push_back(text_range_make(text_index_make(token.line, token.start), text_index_make(token.line, token.end)));
 					break;
 				}
 			}
@@ -2957,7 +2958,7 @@ namespace Parser
 		case Node_Section::ENCLOSURE:
 		{
 			int token_index = 0;
-			DynArray<Token> tokens = tokenize_partial_code(code, base->range.start, arena, token_index, true, false);
+			tokenize_partial_code(code, &tokens, base->range.start, token_index, true, false);
 
 			// Move forward until we find start parenthesis
 			int start_index = -1;
@@ -2974,16 +2975,16 @@ namespace Parser
 			}
 
 			// Find start/end parenthesis
-			ivec2 start_end = tokens_get_parenthesis_range(tokens, start_index, tokens[start_index].type, arena);
+			ivec2 start_end = tokens_get_parenthesis_range(tokens, start_index, tokens[start_index].type);
 
 			// Convert to text-ranges
 			if (start_end.x != -1) {
 				Token& t = tokens[start_end.x];
-				ranges.push_back(text_range_make(text_index_make(t.line, t.start), text_index_make(t.line, t.end)));
+				append_to->push_back(text_range_make(text_index_make(t.line, t.start), text_index_make(t.line, t.end)));
 			}
 			if (start_end.y != -1) {
 				Token& t = tokens[start_end.y];
-				ranges.push_back(text_range_make(text_index_make(t.line, t.start), text_index_make(t.line, t.end)));
+				append_to->push_back(text_range_make(text_index_make(t.line, t.start), text_index_make(t.line, t.end)));
 			}
 
 			break;
@@ -2991,11 +2992,11 @@ namespace Parser
 		case Node_Section::KEYWORD:
 		{
 			int token_index = 0;
-			DynArray<Token> tokens = tokenize_partial_code(code, base->range.start, arena, token_index, true, false);
+			tokenize_partial_code(code, &tokens, base->range.start, token_index, true, false);
 			for (int i = token_index; i < tokens.size; i++) {
 				Token& token = tokens[i];
 				if (token_type_is_keyword(token.type)) {
-					ranges.push_back(text_range_make(text_index_make(token.line, token.start), text_index_make(token.line, token.end)));
+					append_to->push_back(text_range_make(text_index_make(token.line, token.start), text_index_make(token.line, token.end)));
 					break;
 				}
 			}
@@ -3004,26 +3005,26 @@ namespace Parser
 		case Node_Section::FIRST_TOKEN: 
 		{
 			int token_index = 0;
-			DynArray<Token> tokens = tokenize_partial_code(code, base->range.start, arena, token_index, true, false);
+			tokenize_partial_code(code, &tokens, base->range.start, token_index, true, false);
 			if (token_index < tokens.size) {
 				Token& token = tokens[token_index];
-				ranges.push_back(text_range_make(text_index_make(token.line, token.start), text_index_make(token.line, token.end)));
+				append_to->push_back(text_range_make(text_index_make(token.line, token.start), text_index_make(token.line, token.end)));
 			}
 			break;
 		}
 		case Node_Section::END_TOKEN: {
 			int token_index = 0;
-			DynArray<Token> tokens = tokenize_partial_code(code, base->range.end, arena, token_index, true, false);
+			tokenize_partial_code(code, &tokens, base->range.end, token_index, true, false);
 			if (token_index < tokens.size) {
 				Token& token = tokens[token_index];
 				if (!(token.line == base->range.end.line && token.start == base->range.end.character)) {
-					ranges.push_back(text_range_make(text_index_make(token.line, token.start), text_index_make(token.line, token.end)));
+					append_to->push_back(text_range_make(text_index_make(token.line, token.start), text_index_make(token.line, token.end)));
 					break;
 				}
 			}
 			if (token_index -1 > 0 && token_index - 1 < tokens.size) {
 				Token& token = tokens[token_index - 1];
-				ranges.push_back(text_range_make(text_index_make(token.line, token.start), text_index_make(token.line, token.end)));
+				append_to->push_back(text_range_make(text_index_make(token.line, token.start), text_index_make(token.line, token.end)));
 			}
 			break;
 		}
@@ -3031,13 +3032,11 @@ namespace Parser
 		}
 
 		// For handling empty ranges
-		if (ranges.size == 0) {
+		if (append_to->size == 0) {
 			Text_Range range;
 			range.start = base->range.start;
 			range.end = base->range.start;
-			ranges.push_back(range);
+			append_to->push_back(range);
 		}
-
-		return ranges;
 	}
 }

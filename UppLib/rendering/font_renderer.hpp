@@ -36,7 +36,7 @@ struct Raster_Font
 	Array<u8> char_to_glyph_index;
 
 	// Position is bottom-left of line
-	void push_line(ivec2 pos, DynString text, vec3 color);
+	void push_line(ivec2 pos, String text, vec3 color);
 	void add_draw_call(Render_Pass* pass);
 };
 
@@ -58,7 +58,7 @@ struct Font_Renderer
 
 	// Note: Because of hinting and all that line-height is just a suggestion, and we probably get a value close to it
 	//  Also some glyphs may not be used, so we cannot determine this beforehand...
-	Raster_Font* add_raster_font(const char* filename, int line_height); // Crashes if filename does not exist or not enough space
+	Raster_Font* add_raster_font(String filename, int line_height); // Crashes if filename does not exist or not enough space
 	void finish_atlas(); // Creates texture on GPU
 	void reset();
 	void add_draw_call(Render_Pass* pass);
