@@ -105,6 +105,7 @@ void word_pool_add_word(Word_Pool* pool, String word)
 		word.reference_count += 1;
 		return;
 	}
+	// printf("Adding word: \"%.*s\"\n", word.size, word.characters);
 
 	// Find suitable free-list
 	Word_Free_List* free_list = nullptr;
@@ -134,13 +135,14 @@ void word_pool_add_word(Word_Pool* pool, String word)
 
 	// Add to table and dynamic_array
 	pool->words.push_back(allocated_word);
-	query_result.insert_key_value(string_make(allocated_word.characters, pool->words.size - 1), pool->words.size - 1);
+	query_result.insert_key_value(string_make(allocated_word.characters, word.size), pool->words.size - 1);
 }
 
 void word_pool_remove_word(Word_Pool* pool, String word)
 {
 	if (word.size <= WORD_POOL_MIN_WORD_SIZE || word.size > WORD_POOL_MAX_WORD_SIZE) return;
 
+	// printf("Removing word: \"%.*s\"\n", word.size, word.characters);
 	auto query_result = pool->deduplication_table.query(word, false);
 	assert(query_result.value_is_in_table, "");
 
@@ -1197,7 +1199,7 @@ namespace Motions
 		while (true)
 		{
 			int next_index = pos.character + dir;
-			if (next_index < 0 || next_index > text.size) return;
+			if (next_index < 0 || next_index >= text.size) return;
 
 			if (group.contains(text.at(next_index))) {
 				pos.character = next_index;
@@ -1414,6 +1416,7 @@ namespace Parsing
         while (char_is_digit(c) && index < buffer.size) {
             result = result * 10 + char_digit_value(c);
             index += 1;
+			if (index >= buffer.size) break;
             c = buffer[index];
         }
 
@@ -2572,7 +2575,7 @@ namespace Auto_Format
 		{
 			// Remove trailing spaces
 			int end = original_text.size;
-			while (end >= 0 && original_text.at(end - 1) == ' ') {
+			while (end > 0 && original_text.at(end - 1) == ' ') {
 				end -= 1;
 			}
 			end = math_maximum(end, 0);
@@ -2733,47 +2736,52 @@ namespace Auto_Format
 		}
 
 		// 4. Diff formated-text and actual text
-		int text_index = 0;
+		int original_index = 0;
 		int formated_index = 0;
+		int change_index   = 0;
 		bool cursor_on_line = tab.cursor.line == line_index;
-		while (text_index < original_text.size || formated_index < formated_string.size)
+		while (original_index < original_text.size || formated_index < formated_string.size)
 		{
 			if (formated_index >= formated_string.size) {
-				history_delete_text(tab.history, text_index_make(line_index, text_index), original_text.size);
+				history_delete_text(tab.history, text_index_make(line_index, change_index), change_index + (original_text.size - original_index));
 				break;
 			}
-			if (text_index >= original_text.size) 
+			if (original_index >= original_text.size) 
 			{
 				history_insert_text(
-					tab.history, text_index_make(line_index, original_text.size),
+					tab.history, text_index_make(line_index, change_index),
 					string_make_substring(formated_string.to_string(), formated_index, formated_string.size)
 				);
 				break;
 			}
 
-			char text_char = original_text[text_index];
+			char original_char = original_text[original_index];
 			char formated_char = formated_string[formated_index];
 
-			if (text_char == formated_char) {
-				text_index += 1;
+			if (original_char == formated_char) {
+				original_index += 1;
 				formated_index += 1;
+				change_index += 1;
 				continue;
 			}
 
-			if (text_char == ' ') 
+			if (original_char == ' ') 
 			{
-				history_delete_char(tab.history, text_index_make(line_index, text_index));
-				if (cursor_on_line && editor.mode == Editor_Mode::INSERT && cursor > text_index) {
+				history_delete_char(tab.history, text_index_make(line_index, change_index));
+				original_index += 1;
+				if (cursor_on_line && editor.mode == Editor_Mode::INSERT && cursor > change_index) {
 					cursor -= 1;
 				}
-				if (cursor_on_line && editor.mode != Editor_Mode::INSERT && cursor >= text_index) {
+				if (cursor_on_line && editor.mode != Editor_Mode::INSERT && cursor >= change_index) {
 					cursor -= 1;
 				}
 			}
 			else if (formated_char == ' ') 
 			{
-				history_insert_char(tab.history, text_index_make(line_index, text_index), ' ');
-				if (cursor_on_line && cursor > text_index) {
+				history_insert_char(tab.history, text_index_make(line_index, change_index), ' ');
+				formated_index += 1;
+				change_index += 1;
+				if (cursor_on_line && cursor >= change_index) {
 					cursor += 1;
 				}
 			}
@@ -3383,7 +3391,7 @@ void syntax_editor_save_text_file()
 		auto path = tab->filepath;
 		auto success = file_io_write_text_file(path, tmp_string.to_string());
 		if (!success) {
-			logg("Saving file failed for path \"%s\"\n", path.characters);
+			logg("Saving file failed for path \"%.*s\"\n", path.size, path.characters);
 		}
 		else {
 			// logg("Saved file \"%s\"!\n", path.characters);
@@ -3436,6 +3444,7 @@ unsigned long compiler_thread_entry_fn(void* userdata)
 void syntax_editor_synchronize_with_compiler(bool generate_code)
 {
 	auto& editor = syntax_editor;
+	// return;
 
 	// Check if code has changed
 	int compile_tab_index = editor.main_tab_index == -1 ? editor.open_tab_index : editor.main_tab_index;
@@ -3714,7 +3723,7 @@ bool syntax_editor_toggle_line_breakpoint(int tab_index, int line_index)
 	return false;
 }
 
-void syntax_editor_save_state(String file_path)
+void syntax_editor_save_session(String file_path)
 {
 	auto& editor = syntax_editor;
 
@@ -3729,7 +3738,7 @@ void syntax_editor_save_state(String file_path)
 	for (int i = 0; i < editor.tabs.size; i++)
 	{
 		auto& tab = *editor.tabs[i];
-		dynstring_append_formated(&output, "tab=%s\n", tab.filepath.characters);
+		output.append("tab=")->append(tab.filepath)->append('\n');
 		dynstring_append_formated(&output, "cursor_line=%d\n", tab.cursor.line);
 		dynstring_append_formated(&output, "cursor_char=%d\n", tab.cursor.character);
 		dynstring_append_formated(&output, "cam_start=%d\n", tab.cam_start);
@@ -3754,7 +3763,7 @@ void syntax_editor_save_state(String file_path)
 	file_io_write_text_file(file_path, output.to_string());
 }
 
-void syntax_editor_load_state(String file_path)
+void syntax_editor_load_session(String file_path)
 {
 	auto& editor = syntax_editor;
 	editor.mode = Editor_Mode::NORMAL;
@@ -3788,9 +3797,11 @@ void syntax_editor_load_state(String file_path)
 	bool first_tab = true;
 	int open_tab_index = -5;
 	int main_tab_index = -5;
+	// printf("Loading session: ");
 	for (int i = 0; i < lines.size; i++)
 	{
 		String line = lines[i];
+		if (string_get_whitespace_trimmed(line).size == 0) continue;
 		auto seperator = string_find_character_index(line, '=', 0);
 		if (!seperator.available) {
 			logg("Syntax_editor_load_state: line #%d without seperator '=', skipping", i);
@@ -3799,6 +3810,7 @@ void syntax_editor_load_state(String file_path)
 		String setting = string_make_substring(line, 0, seperator.value);
 		String value = string_make_substring(line, seperator.value + 1, line.size);
 		if (setting.size == 0 || value.size == 0) continue;
+		// printf("  %.*s = %.*s\n", setting.size, setting.characters, value.size, value.characters);
 
 		int* int_value_to_set = nullptr;
 		if (setting == string_make("open_tab")) {
@@ -3900,7 +3912,7 @@ void syntax_editor_load_state(String file_path)
 			}
 
 			if (toggle_option_index == -1) {
-				logg("Unrecognized session option: %s\n", setting.characters);
+				logg("Unrecognized session option: %.*s\n", setting.size, setting.characters);
 			}
 			else 
 			{
@@ -6618,7 +6630,6 @@ void normal_command_execute(Normal_Mode_Command & command)
 			dynstring_reset(&editor.yank_string);
 			text_range_append_to_string(range, &editor.yank_string);
 		}
-		// printf("Yanked: was_line = %s ----\n%s\n----\n", (editor.yank_was_line ? "true" : "false"), editor.yank_string.characters);
 
 		// Delete if necessary
 		if (command.type == Normal_Command_Type::DELETE_MOTION) {
@@ -7645,7 +7656,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 		{
 			if (msg.key_code == Key_Code::L && msg.ctrl_down && msg.key_down) {
 				dynstring_reset(&editor.command_buffer);
-				logg("Command canceled: \"%s\"!\n", editor.command_buffer.characters);
+				logg("Command canceled: \"%.*s\"!\n", editor.command_buffer.size, editor.command_buffer.characters);
 				return;
 			}
 			// Filter out messages (Key Up messages + random shift or alt or ctrl clicks)
@@ -7700,7 +7711,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 			dynstring_reset(&cmd_buffer);
 		}
 		else if (result.type == Parse_Result_Type::FAILURE) {
-			logg("Command parsing failed: \"%s\"!\n", editor.command_buffer.characters);
+			logg("Command parsing failed: \"%.*s\"!\n", editor.command_buffer.size, editor.command_buffer.characters);
 			dynstring_reset(&cmd_buffer);
 		}
 
@@ -9656,6 +9667,7 @@ void syntax_editor_render()
 				}
 
 				// Highlight analysis-items
+				// sanity_check_analysis_items(tab.code);
 			    source_code_line_get_items(tab.code, display_line.line_index, line_infos.reset());
 				auto& analysis_items = line_infos;
 				for (int j = 0; j < analysis_items.size; j++)
@@ -9974,6 +9986,11 @@ void syntax_editor_render()
 			switch (sugg.type)
 			{
 			case Suggestion_Type::ID: {
+				text_color = sugg.options.id_color;
+				sugg_text = sugg.text;
+				break;
+			}
+			case Suggestion_Type::WORD_POOL_WORD: {
 				text_color = sugg.options.id_color;
 				sugg_text = sugg.text;
 				break;

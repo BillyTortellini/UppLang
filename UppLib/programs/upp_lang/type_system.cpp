@@ -129,7 +129,7 @@ void datatype_append_value_to_string(
 
 			SCRATCH_ARENA_MAKE_SCOPED(string->arena);
 			Array<u8> char_buffer = scratch_arena->allocate_array<u8>(upp_string.size);
-			pointer_memory.read((void*)upp_string.data, (void*)char_buffer.data, upp_string.size);
+			pointer_memory.read((void*)char_buffer.data, (void*)upp_string.data, upp_string.size);
 			string->append_in_quotation(string_make((char*) char_buffer.data, upp_string.size));
 			return;
         }

@@ -219,7 +219,6 @@ void filepath_relative_to_absolute_path(DynString* filepath)
     if (length == 0 || length >= 1024) {
         return;
     }
-    dynstring_reset(filepath);
-    filepath->reset()->append(buffer);
+    filepath->reset()->append(string_make(buffer, length));
     dynstring_replace_character(filepath, '\\', '/');
 }

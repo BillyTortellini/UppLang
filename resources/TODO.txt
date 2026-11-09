@@ -1,28 +1,12 @@
 
-String.equals should probably be replaced with == and !=
-string.characters maybe just string.data (For people who know, also check for null-termination now)
-dynstring_append should probably be rewritten into string.reset()->append() calls;
-
-Every size should be an i64, so we don't have to worry about sizes.
-Maybe all things (strings, dyn_array, arena should have sizes as normal ints, so we dont have to worry about shit)
-
-
 Check where syntax_editor.arena is used
 Sorting should not be done in the way i'm currently doing it. There should be a less funciton, and if that's wrong, then swap
 string list set should be set_text() or set_string
 Probably seperate solution into UppLib and other projects (e.g. UppLib + UppLang)
     So I can make breaking changes without having to fix all old stuff (e.g. importer)
+Compilation data replace dynamic_array and hashtable
+Visual Studio debugger views for strings, otherwise there's errors without null-terminator
 
-
-
-Missing Files:
- - Type_System
- - Semantic Analyser
- - IR-Code
- - Bytecode-Generator/Interpreter
- - C-Backend
- - Syntax_Editor
- - Upp_Lang
 
 Memory allocation tactics:
  - RAII (Object constructor/destructor)

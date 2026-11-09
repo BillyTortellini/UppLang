@@ -1089,10 +1089,11 @@ Shader* rendering_core_query_shader(String filename)
     DynString tmp_string = DynString::create(scratch_arena);
 
     Shader* shader = shader_create_empty();
-
-    // Setup hot-reloading
     String fullpath = tmp_string.reset()->append("resources/shaders/")->append(filename)->to_string();
     shader->filename = string_allocate_copy(filename, core.arena.upcast());
+    core.shaders.insert(filename, shader);
+
+    // Setup hot-reloading
     shader->watched_file = file_listener_add_file(
         core.file_listener, 
         fullpath, 

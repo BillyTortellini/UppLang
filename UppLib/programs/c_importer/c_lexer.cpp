@@ -859,7 +859,7 @@
 // 
 //             int identifier_string_length = identifier_end_index - index + 1;
 //             dynstring_reserve(&identifier_string, identifier_string_length);
-//             memory_copy(identifier_string.characters, code->characters + index, identifier_string_length + 1);
+//             memory_copy_no_overlap(identifier_string.characters, code->characters + index, identifier_string_length + 1);
 //             identifier_string.size = identifier_string_length;
 //             identifier_string.characters[identifier_string.size] = 0;
 // 

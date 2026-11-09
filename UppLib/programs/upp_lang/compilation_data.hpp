@@ -315,5 +315,6 @@ Call_Parameter* call_signature_add_return_type(Call_Signature* signature, Dataty
 Call_Signature* call_signature_register(Call_Signature* signature, Compilation_Data* compilation_data); 
 void call_signature_append_to_string(Call_Signature* signature, DynString* string, Type_System* type_system, Datatype_Format format);
 
+void sanity_check_analysis_items(Source_Code* code);
 
 

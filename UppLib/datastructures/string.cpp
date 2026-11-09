@@ -59,7 +59,7 @@ String string_allocate_copy(String other, Allocator_Base* allocator)
     }
 
     char* characters = allocator->allocate_array<char>(other.size).data;
-    memory_copy(&characters[0], (void*) &other.characters[0], other.size);
+    memory_copy_no_overlap(&characters[0], (void*) &other.characters[0], other.size);
     return string_make(characters, other.size);
 }
 
@@ -349,15 +349,20 @@ void String_List::reset()
 
 void String_List::set(String string)
 {
-    size = string.size;
-
     // Small-string optimization
     if (string.size <= STRING_LIST_SMALL_STRING_SIZE) 
     {
         reset(); // Remove all allocated nodes
-        memory_copy(&options.small_string_buffer[0], (void*)string.characters, string.size);
+        size = string.size;
+        memory_copy_no_overlap(&options.small_string_buffer[0], (void*)string.characters, string.size);
         return;
     }
+
+    if (size <= STRING_LIST_SMALL_STRING_SIZE) {
+        this->options.head = nullptr; // Going from smallstring to list requires this
+    }
+
+    size = string.size;
 
     String_List_Node* last_node = nullptr;
     String_List_Node* current_node = options.head;
@@ -376,7 +381,7 @@ void String_List::set(String string)
             }
         }
 
-        memory_copy(
+        memory_copy_no_overlap(
             &current_node->buffer[0],
             (void*)&string.characters[current_char],
             math_minimum(STRING_LIST_NODE_BUFFER_SIZE, string.size - current_char)
@@ -413,7 +418,7 @@ void String_List::append_to_dynstring(DynString* output)
     output->reserve(output->size + size);
 
     if (size <= STRING_LIST_SMALL_STRING_SIZE) {
-        memory_copy(&output->characters[output->size], &options.small_string_buffer[0], size);
+        memory_copy_no_overlap(&output->characters[output->size], &options.small_string_buffer[0], size);
         output->size += size;
         return;
     }
@@ -425,7 +430,7 @@ void String_List::append_to_dynstring(DynString* output)
         assert(node != nullptr, "");
 
         int copy_size = math_minimum(STRING_LIST_NODE_BUFFER_SIZE, size - current_char);
-        memory_copy(&output->characters[output->size + current_char], (void*)&node->buffer[0], copy_size);
+        memory_copy_no_overlap(&output->characters[output->size + current_char], (void*)&node->buffer[0], copy_size);
 
         current_char += STRING_LIST_NODE_BUFFER_SIZE;
         node = node->next;
@@ -479,7 +484,7 @@ void dynstring_reserve(DynString* string, int new_capacity)
 
     char* new_buffer = (char*) string->arena->allocate_raw(new_capacity, 1);
     if (string->capacity != 0) {
-        memory_copy(new_buffer, string->characters, string->size);
+        memory_copy_no_overlap(new_buffer, string->characters, string->size);
     }
     string->capacity = new_capacity;
     string->characters = new_buffer;
@@ -544,7 +549,7 @@ void dynstring_insert(DynString* string, String insertion, int position)
     dynstring_reserve(string, new_size+1);
 
     // Create a hole in the string where the insertion will be placed
-    memory_copy_overlapping(&string[position + insertion.size], &string[position], insertion.size);
+    memory_copy(&string->characters[position + insertion.size], &string->characters[position], string->size - position);
     // Fill the hole with the insertion
     memory_copy(&string->characters[position], (void*) insertion.characters, insertion.size);
     string->size = new_size;
@@ -566,7 +571,7 @@ void dynstring_remove_substring(DynString* string, int start_index, int end_inde
     }
     start_index = math_clamp(start_index, 0, string->size-1);
     end_index = math_clamp(end_index, 0, string->size);
-    memory_copy_overlapping(&string->characters[start_index], &string->characters[end_index], string->size - end_index);
+    memory_copy(&string->characters[start_index], &string->characters[end_index], string->size - end_index);
     string->size = string->size - (end_index - start_index);
 }
 

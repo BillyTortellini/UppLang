@@ -187,7 +187,7 @@ void upp_lang_main()
 
     syntax_editor_initialize(text_renderer, renderer_2D, window, window_get_input(window));
     SCOPE_EXIT(syntax_editor_destroy());
-    syntax_editor_load_state(string_make("upp_code/session.ses"));
+    syntax_editor_load_session(string_make("session.ses"));
 
     // Background
     Camera_3D* camera = camera_3D_create(math_degree_to_radians(90), 0.1f, 100.0f);
@@ -253,7 +253,7 @@ void upp_lang_main()
             if (input->close_request_issued || 
                 (input->key_pressed[(int)Key_Code::ESCAPE] && (input->key_down[(int)Key_Code::SHIFT] || input->key_down[(int) Key_Code::CTRL]))) 
             {
-                syntax_editor_save_state(string_make("upp_code/session.ses"));
+                syntax_editor_save_session(string_make("session.ses"));
                 window_save_position(window, string_make("window_pos.set"));
                 window_close(window);
                 break;

@@ -43,7 +43,7 @@ template<typename T>
 Dynamic_Array<T> dynamic_array_create_copy(T* data, int size) {
     Dynamic_Array<T> result = dynamic_array_create<T>(size);
     if (size != 0) {
-        memory_copy(result.data, data, size * sizeof(T));
+        memory_copy_no_overlap(result.data, data, size * sizeof(T));
     }
     result.size = size;
     return result;
@@ -64,7 +64,7 @@ void dynamic_array_reserve(Dynamic_Array<T>* array, int capacity) {
     if (array->capacity < capacity) {
         T* new_data = new T[capacity];
         if (array->capacity != 0) {
-            memory_copy(new_data, array->data, sizeof(T) * array->size);
+            memory_copy_no_overlap(new_data, array->data, sizeof(T) * array->size);
             delete[] array->data;
         }
         array->capacity = capacity;

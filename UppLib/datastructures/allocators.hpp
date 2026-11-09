@@ -14,15 +14,15 @@
 // Allocator_Base
 enum class Allocation_Type
 {
-	ALLOCATE,   // Uses new_size and alignment, ignores curr_data, returns allocated data
-	DEALLOCATE, // Uses curr_data and curr_size, ignores new_size, returns nullptr
-	RESIZE,     // Uses new_size, curr_size and curr_data, returns nullptr if resize didn't work
+	ALLOCATE,   // Uses new_size and alignment, returns allocated data
+	DEALLOCATE, // Uses curr_data and old_size, returns nullptr
+	RESIZE,     // Uses curr_data, new_size, old_size, returns nullptr if resize didn't work
 };
 
 struct Allocator_Base;
 
 typedef void* (*allocate_function)(
-	Allocator_Base* allocator, Allocation_Type allocation_type, uint new_size, uint alignment_or_curr_size, void* curr_data
+	Allocator_Base* allocator, Allocation_Type allocation_type, uint new_size, uint old_size, int alignment, void* curr_data
 );
 
 struct Allocator_Base
@@ -30,7 +30,7 @@ struct Allocator_Base
 	allocate_function allocate_fn;
 
 	// Helper function so we don't have to use the function pointer directly
-	void* allocate_raw(uint size, uint alignment);
+	void* allocate_raw(uint size, int alignment);
 	void deallocate_raw(void* memory, uint allocation_size);
 	bool resize(void* memory, uint old_size, uint new_size);
 
@@ -84,11 +84,11 @@ struct Arena_Checkpoint
 	void rewind();
 };
 
-struct Arena_Buffer
+struct Arena_Buffer_Header
 {
 	// Note: every arena buffer starts with this struct, which forms a linked list
 	//		to previously allocated buffers
-	void* data;
+	Arena_Buffer_Header* previous;
 	uint capacity;
 };
 
@@ -96,14 +96,15 @@ struct Arena
 {
 	Allocator_Base base;
 	Allocator_Base* parent_allocator;
-	Arena_Buffer buffer;
-	void* next;
+	void* data; // Because arena can grow this always starts with Arena_Buffer_Header
+	uint capacity;
+	uint in_use;
 
 	// If parent_allocator == 0, system allocator is used
 	static Arena create(uint capacity = 0, Allocator_Base* parent_allocator = nullptr); 
 	void destroy();
 
-	void* allocate_raw(uint size, u32 alignment);
+	void* allocate_raw(uint size, int alignment);
 	bool resize(void* memory, uint old_size, uint new_size);
 	void reset(bool keep_largest_buffer = false);
 
@@ -158,17 +159,17 @@ struct Free_List
 	Allocator_Base base;
 	Allocator_Base* parent_allocator;
 	uint element_size;
-	uint element_alignment;
+	int element_alignment;
 	void* next; // List of allocations
 
-	static Free_List create_with_info(Allocator_Base* parent_allocator, uint element_size, uint element_alignment);
+	static Free_List create_with_info(Allocator_Base* parent_allocator, uint element_size, int element_alignment);
 
 	template<typename T>
 	static Free_List create(Allocator_Base* parent_allocator) {
 		return Free_List::create_with_info(parent_allocator, sizeof(T), alignof(T));
 	}
 
-	void* allocate_raw(uint size, uint alignment);
+	void* allocate_raw(uint size, int alignment);
 	void deallocate_raw(void* data);
 
 	template<typename T> 
@@ -255,13 +256,13 @@ struct DynArray
 
 		reserve(size + values.size);
 		if (insert_index < size) {
-			memory_copy_overlapping(&buffer.data[insert_index + values.size], &buffer.data[insert_index], (size - insert_index) * sizeof(T));
+			memory_copy(&buffer.data[insert_index + values.size], &buffer.data[insert_index], (size - insert_index) * sizeof(T));
 		}
 		else {
 			insert_index = size;
 		}
 
-		memory_copy_overlapping(&buffer.data[insert_index], values.data, values.size * sizeof(T));
+		memory_copy(&buffer.data[insert_index], values.data, values.size * sizeof(T));
 		size += values.size;
 	}
 
@@ -277,7 +278,7 @@ struct DynArray
 		count = math_minimum(count, (int)size - start);
 		if (count <= 0) return;
 
-		memory_copy_overlapping(&buffer[start], &buffer[start + count], size - (start + count));
+		memory_copy(&buffer[start], &buffer[start + count], size - (start + count));
 		size -= count;
 	}
 

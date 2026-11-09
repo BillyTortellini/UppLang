@@ -2067,7 +2067,7 @@ namespace Parser
 					cases.push_back(parse_switch_case(upcast(result)));
 				}
 				switch_stat.cases = parser.permanent_arena->allocate_array<Match_Case*>(cases.size);
-				memory_copy(switch_stat.cases.data, cases.buffer.data, sizeof(Match_Case*) * cases.size);
+				memory_copy_no_overlap(switch_stat.cases.data, cases.buffer.data, sizeof(Match_Case*) * cases.size);
 				PARSE_SUCCESS(result);
 			}
 
@@ -2284,7 +2284,7 @@ namespace Parser
 		}
 
 		result->parameters = parser.permanent_arena->allocate_array<Parameter*>(normal_params.size);
-		memory_copy(result->parameters.data, normal_params.buffer.data, sizeof(Parameter*) * normal_params.size);
+		memory_copy_no_overlap(result->parameters.data, normal_params.buffer.data, sizeof(Parameter*) * normal_params.size);
 
 		PARSE_SUCCESS(result);
 	}

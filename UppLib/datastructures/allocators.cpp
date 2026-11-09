@@ -8,23 +8,23 @@
 
 
 // Allocator_Base
-void* Allocator_Base::allocate_raw(uint size, uint alignment) {
-	return this->allocate_fn(this, Allocation_Type::ALLOCATE, size, alignment, nullptr);
+void* Allocator_Base::allocate_raw(uint size, int alignment) {
+	return this->allocate_fn(this, Allocation_Type::ALLOCATE, size, 0, alignment, nullptr);
 }
 
 bool Allocator_Base::resize(void* memory, uint old_size, uint new_size) {
-	return this->allocate_fn(this, Allocation_Type::RESIZE, old_size, new_size, memory) != nullptr;
+	return this->allocate_fn(this, Allocation_Type::RESIZE, new_size, old_size, 0, memory) != nullptr;
 }
 
 void Allocator_Base::deallocate_raw(void* memory, uint allocation_size) {
-	this->allocate_fn(this, Allocation_Type::DEALLOCATE, allocation_size, allocation_size, memory);
+	this->allocate_fn(this, Allocation_Type::DEALLOCATE, allocation_size, allocation_size, 0, memory);
 }
 
 
 
 // System_Allocator
 static void* system_allocator_allocate_function(
-	Allocator_Base* base, Allocation_Type allocation_type, uint new_size, uint alignment_or_old_size, void* current_data)
+	Allocator_Base* base, Allocation_Type allocation_type, uint new_size, uint old_size, int alignment, void* current_data)
 {
 	switch (allocation_type)
 	{
@@ -43,7 +43,7 @@ static void* system_allocator_allocate_function(
 	}
 	case Allocation_Type::DEALLOCATE: 
 	{
-		if (alignment_or_old_size == 0) {
+		if (old_size == 0) {
 			return nullptr;
 		}
 		free(current_data);
@@ -72,7 +72,7 @@ System_Allocator global_system_allocator = System_Allocator::create();
 
 // Arena
 static void* arena_allocate_function(
-	Allocator_Base* base, Allocation_Type allocation_type, uint new_size, uint alignment_or_old_size, void* current_data)
+	Allocator_Base* base, Allocation_Type allocation_type, uint new_size, uint old_size, int alignment, void* current_data)
 {
 	Arena* arena = (Arena*)base;
 
@@ -80,11 +80,11 @@ static void* arena_allocate_function(
 	{
 	case Allocation_Type::ALLOCATE: 
 	{
-		return arena->allocate_raw(new_size, alignment_or_old_size);
+		return arena->allocate_raw(new_size, new_size);
 	}
 	case Allocation_Type::RESIZE: 
 	{
-		return arena->resize(current_data, alignment_or_old_size, new_size) ? current_data : nullptr;
+		return arena->resize(current_data, old_size, new_size) ? current_data : nullptr;
 	}
 	case Allocation_Type::DEALLOCATE: 
 	{
@@ -103,14 +103,14 @@ static void* arena_allocate_function(
 // returns true if a new buffer was allocated
 static bool arena_reserve_buffer_capacity(Arena* arena, uint new_capacity)
 {
-	if (new_capacity <= arena->buffer.capacity) return false;
+	if (new_capacity <= arena->capacity) return false;
 
 	// Try resizing the current allocation
-	if (arena->buffer.data != nullptr) 
+	if (arena->data != nullptr) 
 	{
-		if (arena->parent_allocator->resize(arena->buffer.data, arena->buffer.capacity, new_capacity)) 
+		if (arena->parent_allocator->resize(arena->data, arena->capacity, new_capacity)) 
 		{
-			arena->buffer.capacity = new_capacity;
+			arena->capacity = new_capacity;
 			return false;
 		}
 	}
@@ -119,17 +119,17 @@ static bool arena_reserve_buffer_capacity(Arena* arena, uint new_capacity)
 	new_capacity = math_maximum(128ull, integer_next_power_of_2(new_capacity));
 
 	// Allocate new buffer
-	Arena_Buffer new_buffer;
-	new_buffer.data = arena->parent_allocator->allocate_raw(new_capacity, alignof(Arena_Buffer));
-	new_buffer.capacity = new_capacity;
+	void* new_data = arena->parent_allocator->allocate_raw(new_capacity, alignof(Arena_Buffer_Header));
 
-	// Store linked list to old buffers
-	Arena_Buffer* header = (Arena_Buffer*)new_buffer.data;
-	*header = arena->buffer;
+	// Init header (Store linked list to old buffers)
+	Arena_Buffer_Header* header = (Arena_Buffer_Header*)new_data;
+	header->previous = (Arena_Buffer_Header*)arena->data;
+	header->capacity = new_capacity;
 
 	// Store new buffer in arena
-	arena->buffer = new_buffer;
-	arena->next = (void*) (((uint)new_buffer.data) + sizeof(Arena_Buffer));
+	arena->data     = new_data;
+	arena->capacity = new_capacity;
+	arena->in_use   = sizeof(Arena_Buffer_Header);
 
 	return true;
 }
@@ -139,9 +139,9 @@ Arena Arena::create(uint capacity, Allocator_Base* parent_allocator)
 	Arena result;
 	result.base.allocate_fn = arena_allocate_function;
 	result.parent_allocator = parent_allocator == nullptr ? &global_system_allocator.base : parent_allocator;
-	result.buffer.data = nullptr;
-	result.buffer.capacity = 0;
-	result.next = nullptr;
+	result.capacity = 0;
+	result.in_use = 0;
+	result.data = nullptr;
 	arena_reserve_buffer_capacity(&result, capacity);
 	return result;
 }
@@ -150,17 +150,18 @@ void Arena::destroy() {
 	reset(false);
 }
 
-void* Arena::allocate_raw(uint size, u32 alignment)
+void* Arena::allocate_raw(uint size, int alignment)
 {
 	assert(size > 0 && alignment > 0, "");
-	uint result_address = math_round_next_multiple((uint)next, (uint)alignment);
-	bool resized = arena_reserve_buffer_capacity(this, result_address - (uint)buffer.data + size + sizeof(Arena_Buffer));
-	if (resized) {
-		result_address = (uint)next;
-	}
-	next = (void*)(result_address + size);
-	assert(result_address + size <= (uint)buffer.data + buffer.capacity, "Otherwise we shoot out of our buffer!");
-	return (void*)result_address;
+	// Note: We do + alignment so that the buffer always also has enough room for potential padding
+	bool resized = arena_reserve_buffer_capacity(this, in_use + size + (uint)alignment);
+
+	uint next_address = (uint)data + (uint)in_use;
+	next_address = math_round_next_multiple(next_address, (uint)alignment); // Round for alignment
+	assert(next_address >= (uint)data, "");
+	in_use = (next_address - (uint)data) + size;
+	assert(next_address + size < ((uint)data) + capacity, "After reserve buffer should be big enough");
+	return (void*)next_address;
 }
 
 bool Arena::resize(void* memory, uint old_size, uint new_size)
@@ -168,12 +169,13 @@ bool Arena::resize(void* memory, uint old_size, uint new_size)
 	assert(memory != nullptr, "");
 	uint address = (uint)memory;
 	// Check if address was last allocation
-	if (address + old_size != (uint)next) return false;
-	assert(address > (uint)buffer.data || address == 0, "Resize not from this buffer!"); // With last check + header inside buffers this should be true
+	if (address + old_size != (uint)data + in_use) return false;
+	assert(address > (uint)data || address == 0, "Resize not from this buffer!"); // With last check + header inside buffers this should be true
 
 	// Check if we have enough space for resize
-	if (address + new_size <= (uint)buffer.data + buffer.capacity) {
-		next = (void*)(address + new_size);
+	if (address + new_size <= (uint)data + capacity) {
+		in_use = (address + new_size) - (uint)data;
+		assert(in_use <= capacity, "");
 		return true;
 	}
 
@@ -182,48 +184,49 @@ bool Arena::resize(void* memory, uint old_size, uint new_size)
 
 void Arena::reset(bool keep_largest_buffer)
 {
-	Arena_Buffer curr = buffer;
-	if (curr.data == 0) return;
+	if (data == nullptr) return;
+
+	Arena_Buffer_Header* next_to_free = (Arena_Buffer_Header*) data;
 
 	if (keep_largest_buffer) {
-		curr = *(Arena_Buffer*)curr.data; // Skip deallocation of current
-		((Arena_Buffer*)buffer.data)->data = nullptr;
-		((Arena_Buffer*)buffer.data)->capacity = 0;
-		next = curr.data;
+		Arena_Buffer_Header* keep_header = next_to_free;
+		next_to_free = next_to_free->previous;
+		keep_header->previous = nullptr;
 	}
-	else {
-		buffer.data = nullptr;
-		buffer.capacity = 0;
-		next = nullptr;
+	else 
+	{
+		data = nullptr;
+		capacity = 0;
+		in_use = 0;
 	}
 
 	// Deallocate buffers
-	while (curr.data != nullptr)
+	while (next_to_free != nullptr)
 	{
-		Arena_Buffer next_buffer = *(Arena_Buffer*)curr.data;
-		this->parent_allocator->deallocate_raw(curr.data, curr.capacity);
-		curr = next_buffer;
+		Arena_Buffer_Header* next = next_to_free->previous;
+		this->parent_allocator->deallocate_raw((void*)next_to_free, next_to_free->capacity);
+		next_to_free = next;
 	}
 }
 
 Arena_Checkpoint Arena::make_checkpoint()
 {
 	Arena_Checkpoint checkpoint;
-	checkpoint.data = next;
+	checkpoint.data = (void*)((uint)data + in_use);
 	checkpoint.arena = this;
 	return checkpoint;
 }
 
-// Note: This never deallocates memory
+// Note: This never deallocates memory (As multiple options are available with the chained allocations in use)
 void Arena::rewind_to_address(void* pointer)
 {
 	uint address = (uint)pointer;
-	uint buffer_start = ((uint)buffer.data + sizeof(Arena_Buffer));
-	if (address >= buffer_start && address <= buffer_start + buffer.capacity) {
-		next = pointer;
+	uint buffer_start = ((uint)data + sizeof(Arena_Buffer_Header));
+	if (address >= buffer_start && address <= buffer_start + in_use) {
+		in_use = address - (uint)data;
 	}
 	else {
-		next = (void*)buffer_start;
+		in_use = sizeof(Arena_Buffer_Header);
 	}
 }
 
@@ -267,14 +270,14 @@ Arena* scratch_arena_retrieve(Arena* arena_to_avoid) {
 
 // FREE LIST
 void* free_list_allocate_function(
-	Allocator_Base* base, Allocation_Type allocation_type, uint new_size, uint alignment_or_old_size, void* current_data)
+	Allocator_Base* base, Allocation_Type allocation_type, uint new_size, uint old_size, int alignment, void* current_data)
 {
 	Free_List* free_list = (Free_List*)base;
 	switch (allocation_type)
 	{
 	case Allocation_Type::ALLOCATE: 
 	{
-		return free_list->allocate_raw(new_size, alignment_or_old_size);
+		return free_list->allocate_raw(new_size, alignment);
 	}
 	case Allocation_Type::RESIZE: 
 	{
@@ -291,18 +294,18 @@ void* free_list_allocate_function(
 	return nullptr;
 }
 
-Free_List Free_List::create_with_info(Allocator_Base* parent_allocator, uint element_size, uint element_alignment)
+Free_List Free_List::create_with_info(Allocator_Base* parent_allocator, uint element_size, int element_alignment)
 {
 	Free_List result;
 	result.base.allocate_fn = free_list_allocate_function;
 	result.parent_allocator = parent_allocator;
 	result.element_size = math_maximum(sizeof(void*), element_size);
-	result.element_alignment = math_maximum(alignof(void*), element_alignment);
+	result.element_alignment = math_maximum((int)alignof(void*), element_alignment);
 	result.next = nullptr;
 	return result;
 }
 
-void* Free_List::allocate_raw(uint size, uint alignment)
+void* Free_List::allocate_raw(uint size, int alignment)
 {
 	assert(size <= this->element_size || alignment <= this->element_alignment, "");
 	if (next != nullptr) {

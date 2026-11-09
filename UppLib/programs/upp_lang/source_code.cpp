@@ -33,7 +33,9 @@ Source_Code* source_code_copy(Source_Code* copy_from)
     SCRATCH_ARENA_MAKE_SCOPED(&copy_from->arena);
     DynString tmp_string = DynString::create(scratch_arena);
 
+
     Source_Code* result = source_code_create();
+    result->lines.reset(); // Remove first line, because I assume we copy that
     result->lines.reserve(copy_from->lines.size);
 
     // Copy lines

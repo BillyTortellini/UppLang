@@ -49,7 +49,7 @@ Array<T> array_create_from_list(std::initializer_list<T> list) {
 template<typename T>
 Array<T> array_create_copy(T* data, int size) {
     Array<T> result = array_create<T>(size);
-    memory_copy(result.data, data, size * sizeof(T));
+    memory_copy_no_overlap(result.data, data, size * sizeof(T));
     return result;
 }
 

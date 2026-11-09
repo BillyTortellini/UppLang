@@ -27,6 +27,7 @@ Identifier_Pool identifier_pool_create(Arena* arena)
 
 Identifier identifier_pool_add(Identifier_Pool* pool, String string)
 {
+
 	Identifier query_id;
 	query_id.string = &string;
 	Identifier* result = pool->identifiers.find(query_id);
@@ -64,11 +65,11 @@ void identifier_pool_to_string(Identifier_Pool* pool, DynString* string)
 }
 
 bool identifier_equals(Identifier a, Identifier b) {
-	return a.string == b.string;
+	return string_equals(*a.string, *b.string);
 }
 
 bool identifier_equals_pointer(Identifier* a, Identifier* b) {
-	return a->string == b->string;
+	return string_equals(*a->string, *b->string);
 }
 
 u64 identifier_hash(Identifier a) {

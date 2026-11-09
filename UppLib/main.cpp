@@ -427,7 +427,7 @@ void test_new_allocators()
     }
 
     // Remove list items via pointer
-    int alloc_size = (int) ((char*)child_arena.next - (char*)child_arena.buffer.capacity);
+    uint arena_in_use_prev = child_arena.in_use;
     value_list.remove_node(remove_1);
     value_list.remove_node(remove_2);
     assert(value_list.element_count == 4, "");
@@ -452,8 +452,7 @@ void test_new_allocators()
     value_list.prepend(100);
     assert(value_list.element_count == 6, "");
 
-    int new_alloc_size = (int) ((char*)child_arena.next - (char*)child_arena.buffer.capacity);
-    assert(new_alloc_size == alloc_size, "With free-list the nodes should have been reused");
+    assert(child_arena.in_use == arena_in_use_prev, "With free-list the nodes should have been reused");
 }
 
 int main(int argc, char** argv)

@@ -43,7 +43,6 @@ main :: fn ()
     stat :&= node.>Statement
     assign :&= stat.>Assignment
     
-    
     node_test(node)
     node_test(stat)
     node_test(assign)

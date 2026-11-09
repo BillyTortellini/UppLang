@@ -99,7 +99,7 @@ namespace NEW_AST
 		for (int i = ((int)Node_Property::MAX_ENUM_VALUE) - 1; i >= 0; i -= 1)
 		{
 			Node_Property_Info& info = node_infos.property_infos[i];
-			memory_copy_overlapping(
+			memory_copy(
 				((char*)buffer) + new_capacity * info.offset, 
 				((char*)buffer) + capacity     * info.offset,
 				info.size * size

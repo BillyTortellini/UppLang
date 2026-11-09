@@ -216,18 +216,18 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(
         case Builtin_Type::STRING:
         {
             // Note: We don't store c-strings in constant-pool, only upp-strings
-            Upp_String string = *(Upp_String*)memory;
+            Upp_String* string = (Upp_String*)memory;
 
             // Check if memory is readable
-            if (!memory_is_readable((void*)string.data, string.size)) {
+            if (!memory_is_readable((void*)string->data, string->size)) {
                 result = constant_pool_result_make_error("Value contains string with unreadable memory");
                 return;
             }
 
             // Create c_string value pointing to identifier pool (Always null terminated)
-            auto id = identifier_pool_add(&compilation_data->identifier_pool, string_make((char*)string.data, string.size));
-            memory_set_bytes(&string, sizeof(Upp_String), 0);
-            *(Upp_String*)memory = upp_string_from_id(id);;
+            auto id = identifier_pool_add(&compilation_data->identifier_pool, string_make((char*)string->data, string->size));
+            memory_set_bytes(string, sizeof(Upp_String), 0);
+            *string = upp_string_from_id(id);
             return;
         }
         case Builtin_Type::C_STRING: {

@@ -178,6 +178,7 @@ Text_Range text_index_to_word_range(Text_Index pos, Source_Code* code)
 Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 {
 	Compilation_Data* result = new Compilation_Data;
+	memory_zero(result);
 	result->arena = Arena::create(2048);
 	result->tmp_arena = Arena::create(2048);
 	result->root_semantic_context_scratch_arena = Arena::create();
@@ -276,6 +277,12 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 
 	// Create datastructures
 	{
+		result->compile_type = Compile_Type::ANALYSIS_ONLY;
+		result->main_unit = nullptr;
+		result->main_function = nullptr;
+		result->c_program_was_compiled = false;
+		result->next_editor_info_index = 0;
+
 		result->code_errors = DynArray<Code_Error>::create(&result->arena);
 
 		// Initialize Data
@@ -833,6 +840,7 @@ Compilation_Unit* compilation_data_add_compilation_unit_unique(Compilation_Data*
 {
 	SCRATCH_ARENA_MAKE_SCOPED(&compilation_data->arena);
     DynString full_file_path = DynString::create(scratch_arena);
+	full_file_path.append(filepath);
     filepath_relative_to_absolute_path(&full_file_path);
 
 	// Check if filename alreay exists
@@ -1048,6 +1056,7 @@ int add_code_analysis_item(Text_Range range, Source_Code* code, int tree_depth, 
         if (i != range.end.line) {
             end_index = line_size;
         }
+		if (start_index >= end_index) continue;
 
         Editor_Info_Reference result;
         result.start_char = start_index;
@@ -1384,6 +1393,19 @@ void find_editor_infos_recursive(
 	active_passes.rollback_to_size(active_pass_count_before);
 }
 
+void sanity_check_analysis_items(Source_Code* code)
+{
+	for (int i = 0; i < code->lines.size; i++)
+	{
+		Source_Line* line = &code->lines[i];
+		auto node = line->item_infos.head;
+		while (node != nullptr) {
+			assert(node->value.editor_info_mapping_count != 0 && node->value.editor_info_mapping_start_index != -1, "");
+			node = node->next;
+		}
+	}
+}
+
 void compilation_data_update_source_code_information(Compilation_Data* compilation_data)
 {
 	compilation_data->next_editor_info_index = 0;
@@ -1460,24 +1482,30 @@ void compilation_data_update_source_code_information(Compilation_Data* compilati
 			for (int j = 0; j < unit->code->lines.size; j++) 
 			{
 				auto& analysis_items = unit->code->lines[j].item_infos;
-				auto head = analysis_items.head;
-				while (head != nullptr) 
+				auto node = analysis_items.head;
+				while (node != nullptr) 
 				{
-					auto& item = head->value;
+					auto& item = node->value;
 					item.editor_info_mapping_start_index = item_info_start_indices[item.item_index];
 					item.editor_info_mapping_count = item_info_count[item.item_index];
 
-					// Remove item if mapping count is null (Not sure if this is wanted behavior)
+					if (item.editor_info_mapping_start_index == -1 || item.editor_info_mapping_count == 0) {
+						assert(item.editor_info_mapping_start_index == -1 && item.editor_info_mapping_count == 0, "Should be true");
+					}
+
+					// Remove item if mapping count is null (E.g. some expression node where no analysis-passes existed)
 					if (item.editor_info_mapping_count == 0) {
-						auto node = head;
-						head = head->next;
-						analysis_items.remove_node(head);
+						auto next = node->next;
+						analysis_items.remove_node(node);
+						node = next;
 						continue;
 					}
 
-					head = head->next;
+					node = node->next;
 				}
 			}
+
+			// sanity_check_analysis_items(unit->code);
 		}
 	}
 }
@@ -1496,6 +1524,10 @@ Exit_Code compiler_execute(Compilation_Data* compilation_data)
     else {
         do_execution = do_execution && enable_bytecode_gen;
     }
+
+	if (compilation_data->main_function == nullptr || compilation_data->main_unit == nullptr) {
+		return exit_code_make(Exit_Code_Type::COMPILATION_FAILED, "Given compilation data was not compiled");
+	}
 
     // Execute
     if (!compilation_data_errors_occured(compilation_data) && do_execution)
@@ -1692,7 +1724,7 @@ void compiler_run_testcases(bool force_run)
             continue;
         }
 
-        logg("Testcase #%4d: %s\n", test_case_count, name.characters);
+        logg("Testcase #%4d: %.*s\n", test_case_count, name.size, name.characters);
         test_case_count += 1;
 
         Compilation_Data* compilation_data = compilation_data_create(fiber_pool);
@@ -1702,7 +1734,7 @@ void compiler_run_testcases(bool force_run)
         path.reset()->append("upp_code/testcases/")->append(name);
         Compilation_Unit* main_unit = compilation_data_add_compilation_unit_unique(compilation_data, path.to_string(), true, false);
         if (main_unit == nullptr) {
-            dynstring_append_formated(&result, "ERROR:   Test %s could not load test file\n", name.characters);
+            dynstring_append_formated(&result, "ERROR:   Test %.*s could not load test file\n", name.size, name.characters);
             errors_occured = true;
             continue;
         }
@@ -1711,7 +1743,7 @@ void compiler_run_testcases(bool force_run)
         Exit_Code exit_code = compiler_execute(compilation_data);
         if (exit_code.type != Exit_Code_Type::SUCCESS && case_should_succeed)
         {
-            dynstring_append_formated(&result, "ERROR:   Test %s exited with Code ", name.characters);
+            dynstring_append_formated(&result, "ERROR:   Test %.*s exited with Code ", name.size, name.characters);
             exit_code_append_to_string(&result, exit_code);
             dynstring_append_formated(&result, "\n");
             if (exit_code.type == Exit_Code_Type::COMPILATION_FAILED)
@@ -1722,16 +1754,16 @@ void compiler_run_testcases(bool force_run)
             errors_occured = true;
         }
         else if (exit_code.type == Exit_Code_Type::SUCCESS && !case_should_succeed) {
-            dynstring_append_formated(&result, "ERROR:   Test %s successfull, but should fail!\n", name.characters);
+            dynstring_append_formated(&result, "ERROR:   Test %.*s successfull, but should fail!\n", name.size, name.characters);
             errors_occured = true;
         }
         else {
-            dynstring_append_formated(&result, "SUCCESS: Test %s\n", name.characters);
+            dynstring_append_formated(&result, "SUCCESS: Test %.*s\n", name.size, name.characters);
         }
     }
 
     string_style_remove_codes(&result);
-    logg(result.characters);
+    logg(result.to_cstring());
     if (errors_occured) {
         logg("-------------------------------\nSummary: There were errors!\n-----------------------------\n");
     }

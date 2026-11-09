@@ -158,7 +158,7 @@ void ir_data_access_append_to_string(IR_Data_Access* access, DynString* string, 
         break;
     }
     case IR_Data_Access_Type::NON_DESTRUCTIVE_CAST: {
-        dynstring_append_formated(string, "Nondestructive-Cast(%s) ");
+        dynstring_append_formated(string, "Nondestructive-Cast: ");
         ir_data_access_append_to_string(access->option.non_destructive_cast.value_access, string, current_block, compilation_data);
         break;
     }
