@@ -45,7 +45,7 @@ Dummy dummy_make(int x, int y, bool alive)
 }
 
 u64 dummy_hash(Dummy* a) {
-    return hash_memory(array_create_static<byte>((byte*)a, sizeof(Dummy)));
+    return hash_memory(array_make<byte>((byte*)a, sizeof(Dummy)));
 }
 
 bool dummy_compare(Dummy* a, Dummy* b) {
@@ -169,7 +169,7 @@ void upp_lang_main()
     //test_things();
     //return;
 
-    Window* window = window_create(string_make("Test"), 0);
+    Window* window = window_create(string_make("Test"), 0, true);
     SCOPE_EXIT(window_destroy(window));
     Window_State* window_state = window_get_window_state(window);
     rendering_core_initialize(window_state->width, window_state->height, window_state->dpi);

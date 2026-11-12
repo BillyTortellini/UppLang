@@ -597,7 +597,7 @@ void window_initialize_system()
 }
 
 // Position, visible, fullscreen, decoration, opengl version, framebuffer stuff
-Window* window_create(String window_title, int multisample_count)
+Window* window_create(String window_title, int multisample_count, bool with_debug_context)
 {
     window_initialize_system();
     HINSTANCE hinstance = (HINSTANCE)GetModuleHandle(NULL);
@@ -687,6 +687,7 @@ Window* window_create(String window_title, int multisample_count)
             WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
             WGL_CONTEXT_MAJOR_VERSION_ARB, 4,
             WGL_CONTEXT_MINOR_VERSION_ARB, 3,
+            WGL_CONTEXT_FLAGS_ARB, (with_debug_context ? WGL_CONTEXT_DEBUG_BIT_ARB : 0),
             0 // 0 termintes the attributes list
         };
         HGLRC opengl_context = wglCreateContextAttribsARB(hdc, 0, context_attributes);
@@ -751,9 +752,11 @@ Window* window_create(String window_title, int multisample_count)
         window->state.vsync = true;
         wglSwapIntervalEXT(1);
 
-        // glEnable(GL_DEBUG_OUTPUT);
-        // glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
-        // glDebugMessageCallback(opengl_debug_callback, 0);
+        if (with_debug_context) {
+            glEnable(GL_DEBUG_OUTPUT);
+            glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+            glDebugMessageCallback(opengl_debug_callback, 0);
+        }
 
         // Set dpi
         {
@@ -1188,8 +1191,7 @@ void window_save_position(Window* window, String filename)
         GetWindowRect(hwnd, &pos.console_rect);
     }
 
-    auto data = array_create_static_as_bytes(&pos, 1);
-    file_io_write_binary_file(filename, data);
+    file_io_write_binary_file(filename, object_as_bytes(&pos));
 }
 
 IDXGIOutput* g_output = 0;
@@ -1222,7 +1224,7 @@ void window_initialize_dxgi_output()
                 output->GetDesc(&desc);
                 int len = lstrlenW(desc.DeviceName);
                 tmp_string.reset();
-                tmp_string.reserve(64);
+                tmp_string.reserve_capacity(64);
                 size_t converted_size;
                 wcstombs_s(&converted_size, tmp_string.characters, 32, desc.DeviceName, 64);
                 tmp_string.size = strlen(tmp_string.characters);

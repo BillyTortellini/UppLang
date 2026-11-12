@@ -157,8 +157,9 @@ OpenGL_State opengl_state_create()
     // Initialize bitmap unit tracking
     int texture_unit_count;
     glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &texture_unit_count);
-    texture_unit_count = math_minimum(2048, texture_unit_count);
-    result.texture_unit_bindings = array_create<Texture_Unit_Binding>(texture_unit_count);
+    // printf("Max combined texture image units: %d\n", texture_unit_count);
+    texture_unit_count = math_maximum(2048, texture_unit_count);
+    result.texture_unit_bindings = array_make(new Texture_Unit_Binding[texture_unit_count], texture_unit_count);
     for (int i = 0; i < texture_unit_count; i++) {
         auto& binding = result.texture_unit_bindings[i];
         binding.bound_texture_id = 0;
@@ -172,7 +173,7 @@ OpenGL_State opengl_state_create()
 }
 
 void opengl_state_destroy(OpenGL_State* state) {
-    array_destroy(&state->texture_unit_bindings);
+    delete[] state->texture_unit_bindings.data;
 }
 
 void opengl_state_set_clear_color(vec4 clear_color)

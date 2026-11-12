@@ -144,10 +144,10 @@ template<typename T>
 Array<T> attribute_buffer_allocate_slice(Attribute_Buffer* buffer, int element_count) 
 {
     assert(sizeof(T) == buffer->element_byte_size, "Otherwise we push invalid datatype!");
-    buffer->attribute_data.reserve(buffer->attribute_data.size + element_count * sizeof(T));
+    buffer->attribute_data.reserve_space(element_count * sizeof(T));
 
     Array<T> result;
-    result.data = (T*) &buffer->attribute_data.buffer.data[buffer->attribute_data.size];
+    result.data = (T*) buffer->attribute_data.last_ptr();
     result.size = element_count;
     buffer->attribute_data.size += sizeof(T) * element_count;
     attribute_buffer_report_change_to_mesh(buffer);

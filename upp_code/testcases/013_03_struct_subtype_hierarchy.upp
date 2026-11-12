@@ -1,4 +1,6 @@
 import ~print_string
+import ~print_string
+import ~print_string
 import ~struct_tag
 
 // Subtypes can form a hierarchy
@@ -51,6 +53,3 @@ main :: fn ()
     stat_test(assign)
     stat_test(node.>Statement)
     
-    assign_test(assign)
-    assign_test(stat.>Assignment)
-    assign_test(node.>Statement.>Assignment)

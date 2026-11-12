@@ -1026,10 +1026,10 @@ namespace Parser
 
 		auto arena_checkpoint = parser.temporary_arena->make_checkpoint();
 		DynArray<Symbol_Node*> parts = DynArray<Symbol_Node*>::create(parser.temporary_arena);
-		path->parts = array_create_empty<Symbol_Node*>();
+		path->parts = array_make_empty<Symbol_Node*>();
 		SCOPE_EXIT(
 			path->parts = parser.permanent_arena->allocate_array<Symbol_Node*>(parts.size); 
-			memory_copy(path->parts.data, parts.buffer.data, parts.size * sizeof(Symbol_Node*));
+			memory_copy(path->parts.data, parts.data, parts.size * sizeof(Symbol_Node*));
 			arena_checkpoint.rewind();
 		);
 
@@ -1095,9 +1095,9 @@ namespace Parser
 	Call_Node* parse_call_node(Node* parent, Argument* postfix_call_argument = nullptr)
 	{
 		auto call_node = allocate_base<Call_Node>(parent, Node_Type::CALL_NODE);
-		call_node->arguments = array_create_empty<Argument*>();
-		call_node->subtype_initializers = array_create_empty<Subtype_Initializer*>();
-		call_node->uninitialized_tokens = array_create_empty<Expression*>();
+		call_node->arguments            = array_make_empty<Argument*>();
+		call_node->subtype_initializers = array_make_empty<Subtype_Initializer*>();
+		call_node->uninitialized_tokens = array_make_empty<Expression*>();
 
 		if (!test_token(Token_Type::PARENTHESIS_OPEN) && !test_token(Token_Type::CURLY_BRACE_OPEN)) {
 			log_error_range_offset("Expected parenthesis for parameters", 0);
@@ -1338,8 +1338,8 @@ namespace Parser
 				// Add items to permanent arena
 				import_block->custom_operators = parser.permanent_arena->allocate_array<Definition_Custom_Operator*>(custom_operators.size);
 				import_block->imports          = parser.permanent_arena->allocate_array<Definition_Import*>(imports.size);
-				memory_copy(import_block->custom_operators.data, custom_operators.buffer.data, sizeof(Definition_Custom_Operator*) * custom_operators.size);
-				memory_copy(import_block->imports.data, imports.buffer.data, sizeof(Definition_Import*) * imports.size);
+				memory_copy(import_block->custom_operators.data, custom_operators.data, sizeof(Definition_Custom_Operator*) * custom_operators.size);
+				memory_copy(import_block->imports.data, imports.data, sizeof(Definition_Import*) * imports.size);
 
 				PARSE_SUCCESS(result);
 			}
@@ -1666,7 +1666,7 @@ namespace Parser
 				result->options.subtype_members = parse_list_items_as_array<Structure_Member_Node>(upcast(result), wrapper_parse_struct_member);
 			}
 			else {
-				result->options.subtype_members = array_create_empty<Structure_Member_Node*>();
+				result->options.subtype_members = array_make_empty<Structure_Member_Node*>();
 			}
 		}
 
@@ -2067,7 +2067,7 @@ namespace Parser
 					cases.push_back(parse_switch_case(upcast(result)));
 				}
 				switch_stat.cases = parser.permanent_arena->allocate_array<Match_Case*>(cases.size);
-				memory_copy_no_overlap(switch_stat.cases.data, cases.buffer.data, sizeof(Match_Case*) * cases.size);
+				memory_copy_no_overlap(switch_stat.cases.data, cases.data, sizeof(Match_Case*) * cases.size);
 				PARSE_SUCCESS(result);
 			}
 
@@ -2177,7 +2177,7 @@ namespace Parser
 			result->statements = parse_list_items_as_array<Statement>(upcast(result), wrapper_parse_statement);
 		}
 		else {
-			result->statements = array_create_empty<Statement*>();
+			result->statements = array_make_empty<Statement*>();
 			// 	log_error_range_offset("Expected code block", 0);
 		}
 
@@ -2284,7 +2284,7 @@ namespace Parser
 		}
 
 		result->parameters = parser.permanent_arena->allocate_array<Parameter*>(normal_params.size);
-		memory_copy_no_overlap(result->parameters.data, normal_params.buffer.data, sizeof(Parameter*) * normal_params.size);
+		memory_copy_no_overlap(result->parameters.data, normal_params.data, sizeof(Parameter*) * normal_params.size);
 
 		PARSE_SUCCESS(result);
 	}
@@ -2387,7 +2387,7 @@ namespace Parser
 			}
 
 			result->options.get_overload.arguments = parser.permanent_arena->allocate_array<Get_Overload_Argument*>(normal_params.size);
-			memory_copy(result->options.get_overload.arguments.data, normal_params.buffer.data, sizeof(Parameter*) * normal_params.size);
+			memory_copy(result->options.get_overload.arguments.data, normal_params.data, sizeof(Parameter*) * normal_params.size);
 
 			PARSE_SUCCESS(result);
 		}

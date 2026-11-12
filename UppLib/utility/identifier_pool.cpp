@@ -44,11 +44,12 @@ Identifier identifier_pool_add(Identifier_Pool* pool, String string)
 	return identifier;
 }
 
-Order_Comparison_Result identifier_sort_fn(Identifier** app, Identifier** bpp, void* userdata)
+bool identifier_in_order_fn(Identifier** app, Identifier** bpp, void* userdata)
 {
 	Identifier* a = *app;
 	Identifier* b = *bpp;
-	return string_compare(*a->string, *b->string);
+	auto result = string_compare(*a->string, *b->string);
+	return result == Comparison_Result::LESS || result == Comparison_Result::EQUAL;
 }
 
 void identifier_pool_to_string(Identifier_Pool* pool, DynString* string)
@@ -57,7 +58,7 @@ void identifier_pool_to_string(Identifier_Pool* pool, DynString* string)
 
 	string->append("Identifiers: ");
 	Array<Identifier*> values = pool->identifiers.copy_to_array(scratch_arena);
-	array_sort(values, identifier_sort_fn, nullptr);
+	array_sort(values, identifier_in_order_fn, nullptr);
 	for (int i = 0; i < values.size; i++) {
 		string->append("\n    ")->append(values[i]->string);
 	}

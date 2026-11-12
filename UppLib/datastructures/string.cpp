@@ -92,7 +92,7 @@ bool string_equals_pointers(String* a, String* b)
 }
 
 u64 hash_string_pointer(String* string) {
-    return hash_memory(array_create_static((byte*)string->characters, string->size));
+    return hash_memory(array_make((byte*)string->characters, string->size));
 }
 
 u64 hash_string(String string) {
@@ -107,13 +107,12 @@ u64 string_hash_pointer(String* a) {
     return hash_string_pointer(a);
 }
 
-Order_Comparison_Result string_compare(String a, String b)
+Comparison_Result string_compare(String a, String b)
 {
     int res = strncmp(a.characters, b.characters, math_minimum(a.size, b.size));
-    if (res == 0) {
-        return Order_Comparison_Result::EQUAL;
-    }
-    return res < 0 ? Order_Comparison_Result::LESS : Order_Comparison_Result::GREATER;
+    if (res < 0) return Comparison_Result::LESS;
+    if (res == 0) return Comparison_Result::EQUAL;
+    return Comparison_Result::GREATER;
 }
 
 bool string_test_substring(String string, int start_index, String other) 
@@ -286,6 +285,22 @@ Array<String> string_split(String string, char c, Arena* arena)
     return parts.as_array();
 }
 
+String_Split_Pair string_split_once(String string, char c)
+{
+    String_Split_Pair result;
+    result.a = string_make("", 0);
+    result.b = string_make("", 0);
+    result.worked = false;
+
+    auto split_index_opt = string_find_character_index(string, c, 0);
+    if (!split_index_opt.available) return result;
+
+    result.a = string_make_substring(string, 0, split_index_opt.value);
+    result.b = string_make_substring(string, split_index_opt.value + 1, string.size);
+    result.worked = true;
+    return result;
+}
+
 String string_get_whitespace_trimmed(String string)
 {
     int start = 0;
@@ -343,6 +358,7 @@ void String_List::reset()
             next = after;
         }
     }
+    this->options.head = nullptr;
 
     size = 0;
 }
@@ -361,7 +377,6 @@ void String_List::set(String string)
     if (size <= STRING_LIST_SMALL_STRING_SIZE) {
         this->options.head = nullptr; // Going from smallstring to list requires this
     }
-
     size = string.size;
 
     String_List_Node* last_node = nullptr;
@@ -414,8 +429,8 @@ void String_List::destroy()
 void String_List::append_to_dynstring(DynString* output)
 {
     if (size == 0) return;
-
-    output->reserve(output->size + size);
+    
+    output->reserve_capacity(output->size + size);
 
     if (size <= STRING_LIST_SMALL_STRING_SIZE) {
         memory_copy_no_overlap(&output->characters[output->size], &options.small_string_buffer[0], size);
@@ -630,7 +645,7 @@ DynString* DynString::reset() {
     return this;
 }
 
-void DynString::reserve(int new_capacity) {
+void DynString::reserve_capacity(int new_capacity) {
     dynstring_reserve(this, new_capacity);
 }
 

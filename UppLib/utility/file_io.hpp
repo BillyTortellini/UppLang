@@ -56,4 +56,7 @@ struct Filename_Parts
 
 Filepath_Parts filepath_get_parts(String path);
 Filename_Parts filename_get_parts(String filename);
+bool filepath_is_absolute_path(String filepath);
 void filepath_relative_to_absolute_path(DynString* filepath);
+void filepath_relative_to_full_path_with_start(DynString* filepath, String start_directory);
+

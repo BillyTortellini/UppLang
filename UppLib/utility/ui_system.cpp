@@ -366,7 +366,7 @@ Glyph_Atlas_ glyph_atlas_create()
 	Glyph_Atlas_ result;
 	result.char_box_size = ivec2(0);
 	result.glyph_informations = dynamic_array_create<Glyph_Information_>(128);
-	result.character_to_glyph_map = array_create<int>(256);
+	result.character_to_glyph_map = array_make(new int[256], 256);
 	result.max_descender_height = 0;
 	return result;
 }
@@ -374,7 +374,7 @@ Glyph_Atlas_ glyph_atlas_create()
 void glyph_atlas_destroy(Glyph_Atlas_* atlas)
 {
 	dynamic_array_destroy(&atlas->glyph_informations);
-	array_destroy(&atlas->character_to_glyph_map);
+	delete[] atlas->character_to_glyph_map.data;
 }
 
 void glyph_atlas_rasterize_font(Glyph_Atlas_* glyph_atlas, Bitmap_Atlas_Writer* atlas_writer, const char* font_filepath, u32 pixel_height)
@@ -1307,7 +1307,7 @@ void ui_system_initialize()
 		// Create Rendering objects
 		ui_system.texture = texture_create_from_bytes(
 			Texture_Type::RED_U8,
-			array_create_static((byte*)bitmap.data, bitmap.size.x * bitmap.size.y),
+			array_make((byte*)bitmap.data, bitmap.size.x * bitmap.size.y),
 			bitmap.size.x, bitmap.size.y,
 			false
 		);
@@ -2796,6 +2796,8 @@ UI_Input_Info ui_system_start_frame(Input* input)
 
 void ui_system_end_frame_and_render(Window* whole_window, Input* input, Render_Pass* render_pass_alpha_blended)
 {
+	SCRATCH_ARENA_MAKE_SCOPED(&ui_system.arena);
+
 	bool mouse_down = input->mouse_down[(int)Mouse_Key_Code::LEFT];
 	auto& info = rendering_core.render_information;
 	ivec2 screen_size = ivec2(info.backbuffer_width, info.backbuffer_height);
@@ -2808,8 +2810,7 @@ void ui_system_end_frame_and_render(Window* whole_window, Input* input, Render_P
 	// Compact widgets and container arrays, and reset data for next frame
 	{
 		// Remove containers that weren't used this frame
-		Array<int> moved_container_indices = array_create<int>(ui_system.containers.size);
-		SCOPE_EXIT(array_destroy(&moved_container_indices));
+		Array<int> moved_container_indices = scratch_arena->allocate_array<int>(ui_system.containers.size);
 		int next_container_index = 0;
 		for (int i = 0; i < ui_system.containers.size; i++)
 		{
@@ -2829,8 +2830,7 @@ void ui_system_end_frame_and_render(Window* whole_window, Input* input, Render_P
 		dynamic_array_rollback_to_size(&ui_system.containers, next_container_index);
 
 		// Remove widgets that weren't used this frame
-		Array<int> moved_widget_indices = array_create<int>(ui_system.widgets.size);
-		SCOPE_EXIT(array_destroy(&moved_widget_indices));
+		Array<int> moved_widget_indices = scratch_arena->allocate_array<int>(ui_system.widgets.size);
 		int next_widget_index = 0;
 		for (int i = 0; i < ui_system.widgets.size; i++)
 		{
@@ -2855,8 +2855,7 @@ void ui_system_end_frame_and_render(Window* whole_window, Input* input, Render_P
 		int next_window_index = 0;
 		int min_z_index = 1000000;
 		int max_z_index = 0;
-		Array<int> moved_window_indices = array_create<int>(ui_system.windows.size);
-		SCOPE_EXIT(array_destroy(&moved_window_indices));
+		Array<int> moved_window_indices = scratch_arena->allocate_array<int>(ui_system.windows.size);
 		dynamic_array_reset(&ui_system.window_z_sorting);
 		for (int i = 0; i < ui_system.windows.size; i++)
 		{
@@ -3701,6 +3700,6 @@ void ui_system_push_test_windows()
 		string_make("Another one")
 	};
 	static Dropdown_State dropdown_state;
-	ui_system_push_dropdown(dropdown_state, array_create_static(&values[0], 3));
+	ui_system_push_dropdown(dropdown_state, array_make(&values[0], 3));
 }
 

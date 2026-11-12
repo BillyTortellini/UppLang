@@ -928,7 +928,7 @@ void gui_append_to_string(DynString* append_to, int indentation_level, int node_
 
 struct GUI_Dependency {
     int dependency_count;
-    Dynamic_Array<int> dependents;
+    DynArray<int> dependents;
 };
 
 void gui_add_dependency(Dynamic_Array<GUI_Node>& nodes, Array<GUI_Dependency> dependencies, int node_index, int depends_on_index, bool parent_child_dependency)
@@ -953,7 +953,7 @@ void gui_add_dependency(Dynamic_Array<GUI_Node>& nodes, Array<GUI_Dependency> de
     }
     else {
         dependencies[node_index].dependency_count += 1;
-        dynamic_array_push_back(&dependencies[depends_on_index].dependents, node_index);
+        dependencies[depends_on_index].dependents.push_back(node_index);
     }
 }
 
@@ -1032,8 +1032,7 @@ void gui_update_and_render(Render_Pass* render_pass)
     // Remove unreferenced nodes (And update indices accurdingly)
     {
         // Generate new node positions
-        Array<int> new_node_indices = array_create<int>(nodes.size);
-        SCOPE_EXIT(array_destroy(&new_node_indices));
+        Array<int> new_node_indices = scratch_arena->allocate_array<int>(nodes.size);
         int next_free_index = 0;
         gui_remove_unreferenced_nodes_recursive(new_node_indices, 0, next_free_index, false, false);
 
@@ -1110,24 +1109,16 @@ void gui_update_and_render(Render_Pass* render_pass)
         auto& nodes = gui.nodes;
 
         // Generate draw batches
-        Array<int> execution_order = array_create<int>(nodes.size);
-        Dynamic_Array<int> batch_start_indices = dynamic_array_create<int>(nodes.size);
-        SCOPE_EXIT(array_destroy(&execution_order));
-        SCOPE_EXIT(dynamic_array_destroy(&batch_start_indices));
+        Array<int> execution_order = scratch_arena->allocate_array<int>(nodes.size);
+        DynArray<int> batch_start_indices = DynArray<int>::create(scratch_arena, nodes.size);
         {
             // Initialize dependency graph structure
-            Array<GUI_Dependency> dependencies = array_create<GUI_Dependency>(nodes.size);
+            Array<GUI_Dependency> dependencies = scratch_arena->allocate_array<GUI_Dependency>(nodes.size);
             for (int i = 0; i < dependencies.size; i++) {
                 auto& dependency = dependencies[i];
                 dependency.dependency_count = 0;
-                dependency.dependents = dynamic_array_create<int>(1);
+                dependency.dependents = DynArray<int>::create(scratch_arena);
             }
-            SCOPE_EXIT(
-                for (int i = 0; i < dependencies.size; i++) {
-                    dynamic_array_destroy(&dependencies[i].dependents);
-                }
-            array_destroy(&dependencies);
-            );
 
             // Generate dependencies
             for (int node_index = 0; node_index < nodes.size; node_index++)
@@ -1171,7 +1162,7 @@ void gui_update_and_render(Render_Pass* render_pass)
             int next_free_in_order = 0;
             int non_hidden_node_count = 0;
             // Generate first batch by looking for all things that are runnable
-            dynamic_array_push_back(&batch_start_indices, 0);
+            batch_start_indices.push_back(0);
             for (int i = 0; i < dependencies.size; i++) {
                 if (!nodes[i].hidden_by_parent) {
                     non_hidden_node_count += 1;
@@ -1182,7 +1173,7 @@ void gui_update_and_render(Render_Pass* render_pass)
                     next_free_in_order += 1;
                 }
             }
-            dynamic_array_push_back(&batch_start_indices, next_free_in_order);
+            batch_start_indices.push_back(next_free_in_order);
 
             // Run through dependency graph
             while (true)
@@ -1216,7 +1207,7 @@ void gui_update_and_render(Render_Pass* render_pass)
                     assert(next_free_in_order == non_hidden_node_count, "Deadlock must not happen!");
                     break;
                 }
-                dynamic_array_push_back(&batch_start_indices, next_free_in_order); // Push last index
+                batch_start_indices.push_back(next_free_in_order); // Push last index
             }
         }
 
@@ -1248,7 +1239,7 @@ void gui_update_and_render(Render_Pass* render_pass)
         //     skip_batches -= 1;
         //     logg("Skip batches: %\n", skip_batches);
         // }
-        skip_batches = math_clamp(skip_batches, 0, batch_start_indices.size - 1);
+        skip_batches = math_clamp(skip_batches, 0, (int)batch_start_indices.size - 1);
 
         // Draw batches in order
         for (int batch = 0; batch < batch_start_indices.size - 1 - skip_batches; batch++)
@@ -2168,7 +2159,7 @@ void gui_push_example_gui()
         gui_node_set_position_fixed(last, vec2(-235, -20), Anchor::CENTER_CENTER);
 
         vec2 offset(0);
-        last = gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50), gui_drawable_make_rect(vec4(0, 0, 1, 0.5f)));
+        last = gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50), gui_drawable_make_rect(vec4(0.0f, 0.f, 1.f, 0.5f)));
         gui_node_set_position_fixed(last, vec2(0) + offset, Anchor::CENTER_CENTER);
         last = gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50), gui_drawable_make_rect(green));
         gui_node_set_position_fixed(last, vec2(15) + offset, Anchor::CENTER_CENTER);
@@ -2176,7 +2167,7 @@ void gui_push_example_gui()
         gui_node_set_position_fixed(last, vec2(-15, 4) + offset, Anchor::CENTER_CENTER);
 
         offset = vec2(-95, 0);
-        last = gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50), gui_drawable_make_rect(vec4(0, 0, 1, 0.5f)));
+        last = gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50), gui_drawable_make_rect(vec4(0.f, 0.f, 1.f, 0.5f)));
         gui_node_set_position_fixed(last, vec2(0) + offset, Anchor::CENTER_CENTER);
         gui_node_set_z_index(last, 2);
         last = gui_add_node(canvas, gui_size_make_fixed(50), gui_size_make_fixed(50), gui_drawable_make_rect(green));

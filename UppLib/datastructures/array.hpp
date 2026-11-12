@@ -9,53 +9,36 @@ template<typename T>
 struct Array
 {
     T* data;
-    int size;
+    uint size;
 
-    T& operator[](int index){
-        assert(index >= 0 && index < size, "Array out of bounds access");
-        return data[index];
+    Array<T> get_slice(int start, int end) { // End not included
+        assert(start >= 0 && start <= end && end <= size, "");
+        Array<T> result;
+        result.data = &data[start];
+        result.size = end - start;
+        return result;
     }
 
     T& operator[](uint index){
         assert(index < size, "Array out of bounds access");
         return data[index];
     }
+
+    T& at(uint index) {
+        assert(index >= 0 && (uint)index < size, "Array out of bounds access");
+        return data[index];
+    }
+
+    Array<byte> to_bytes() {
+        Array<byte> result;
+        result.data = (byte*)this->data;
+        result.size = this->size * sizeof(T);
+        return result;
+    }
 };
 
 template<typename T>
-Array<T> array_create(int size) {
-    Array<T> result;
-    if (size > 0) {
-        result.data = new T[size];
-    }
-    else {
-        result.data = 0;
-    }
-    result.size = size;
-    return result;
-}
-
-template<typename T>
-Array<T> array_create_from_list(std::initializer_list<T> list) {
-    Array<T> result = array_create<T>((int)list.size());
-    int i = 0;
-    for (auto item : list) {
-        result[i] = item;
-        i++;
-    }
-    return result;
-}
-
-template<typename T>
-Array<T> array_create_copy(T* data, int size) {
-    Array<T> result = array_create<T>(size);
-    memory_copy_no_overlap(result.data, data, size * sizeof(T));
-    return result;
-}
-
-// Static arrays should not be called destroy upon
-template<typename T>
-Array<T> array_create_static(T* data, int size) {
+Array<T> array_make(T* data, uint size) {
     Array<T> result;
     result.data = data;
     result.size = size;
@@ -63,39 +46,16 @@ Array<T> array_create_static(T* data, int size) {
 }
 
 template<typename T>
-Array<byte> array_create_static_as_bytes(T* data, int size) {
-    return array_as_bytes(&array_create_static(data, size));
-}
-
-template<typename T>
-Array<byte> array_as_bytes(Array<T>* value) {
-    return array_create_static<byte>((byte*)value->data, value->size * sizeof(T));
-}
-
-template<typename T>
-void array_destroy(Array<T>* array) {
-    if (array->size > 0) {
-        delete[] array->data;
-    }
-}
-
-template<typename T>
-Array<T> array_make_slice(Array<T>* array, int start_index, int end_index)
-{
-    end_index = math_clamp(end_index, 0, math_maximum(0, array->size));
-    start_index = math_clamp(start_index, 0, end_index);
-    Array<T> result;
-    result.data = &array->data[start_index];
-    result.size = end_index - start_index;
-    return result;
+Array<T> array_make_empty() {
+    return array_make<T>(nullptr, (uint)0);
 }
 
 template<typename T>
 void array_bubble_sort(Array<T> array, bool (*in_order_fn)(T* a, T* b))
 {
-    for (int i = 0; i < array.size; i++)
+    for (uint i = 0; i < array.size; i++)
     {
-        for (int j = i + 1; j < array.size; j++) {
+        for (uint j = i + 1; j < array.size; j++) {
             if (!in_order_fn(&array[i], &array[j])) {
                 T swap = array[i];
                 array[i] = array[j];
@@ -105,31 +65,59 @@ void array_bubble_sort(Array<T> array, bool (*in_order_fn)(T* a, T* b))
     }
 }
 
+// Note: this comparator is not used directly, but we need it for std::sort (see array_sort)
 template<typename T>
 struct Array_Element_Comparator
 {
     void* userdata;
-    Order_Comparison_Result(*sort_fn)(T* a, T* b, void* userdata);
+    bool(*in_order_fn)(T* a, T* b, void* userdata);
 
     bool operator()(T& a, T& b) {
-        return sort_fn(&a, &b, userdata) == Order_Comparison_Result::LESS;
+        return in_order_fn(&a, &b, userdata);
     }
 };
 
 template<typename T>
-void array_sort(Array<T> array, Order_Comparison_Result(*sort_fn)(T* a, T* b, void* userdata), void* userdata)
+void array_sort(Array<T> array, bool(*in_order_fn)(T* a, T* b, void* userdata), void* userdata)
 {
     Array_Element_Comparator<T> comparator;
     comparator.userdata = userdata;
-    comparator.sort_fn = sort_fn;
+    comparator.in_order_fn = in_order_fn;
     std::sort(&array.data[0], &array.data[array.size], comparator);
 }
 
 template<typename T>
-Array<T> array_create_empty() 
+void array_stable_sort(Array<T> array, bool(*in_order_fn)(T* a, T* b, void* userdata), void* userdata)
 {
-	Array<T> result;
-	result.data = nullptr;
-	result.size = 0;
-	return result;
+    Array_Element_Comparator<T> comparator;
+    comparator.userdata = userdata;
+    comparator.in_order_fn = in_order_fn;
+    std::stable_sort(&array.data[0], &array.data[array.size], comparator);
 }
+
+template<typename T>
+Array<byte> object_as_bytes(T* data) {
+    return array_make((byte*)data, (uint) sizeof(T));
+}
+
+
+// Note: These functions should not be used anymore, use Arenas instead.
+//      I just keep them around for old code
+template<typename T>
+Array<T> array_new(uint size) {
+    return array_make<T>(new T[size], (uint)size);
+}
+
+template<typename T>
+Array<T> array_new_copy(T* data, uint size) {
+    Array<T> array = array_make<T>(new T[size], size);
+    memory_copy(array.data, data, sizeof(T) * size);
+    return array;
+}
+
+template<typename T>
+void array_delete(Array<T>* array) {
+    delete[] array->data;
+    array->data = nullptr;
+}
+

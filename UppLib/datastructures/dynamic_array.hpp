@@ -192,13 +192,9 @@ Array<T> dynamic_array_as_array(Dynamic_Array<T>* array) {
     return new_array;
 }
 
-// Prototype
-template<typename T>
-Array<T> array_create_static(T* data, int size);
-
 template<typename T>
 Array<byte> dynamic_array_as_bytes(Dynamic_Array<T>* value) {
-    return array_create_static<byte>((byte*)value->data, value->size * sizeof(T));
+    return array_make<byte>((byte*)value->data, value->size * sizeof(T));
 }
 
 template <typename T>

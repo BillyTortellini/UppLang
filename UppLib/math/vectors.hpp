@@ -17,6 +17,7 @@ struct vec2
     vec2(){}
     explicit vec2(float s) : x(s), y(s) {}
     explicit vec2(float x, float y) : x(x), y(y) {}
+    explicit vec2(double x, double y) : x(x), y(y) {}
     explicit vec2(int s) : vec2((float)s, (float)s){};
     explicit vec2(int x, int y) : vec2((float)x, (float)y){}
 

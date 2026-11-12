@@ -223,7 +223,7 @@ Raster_Font* Font_Renderer::add_raster_font(String filename, int line_height)
 void Font_Renderer::finish_atlas() 
 {
     texture = texture_create_empty(Texture_Type::RED_U8, buffer.size.x, buffer.size.y);
-    texture_update_texture_data(texture, array_create_static(buffer.data, buffer.size.x * buffer.size.y), false);
+    texture_update_texture_data(texture, array_make(buffer.data, buffer.size.x * buffer.size.y), false);
 
     auto& predef = rendering_core.predefined;
     font_mesh = rendering_core_query_mesh(

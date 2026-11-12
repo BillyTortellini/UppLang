@@ -330,8 +330,8 @@ void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type)
     {
         // Update UBOs
         Camera_3D_UBO_Data data = camera_3d_ubo_data_make(camera);
-        gpu_buffer_update(&core.ubo_camera_data, array_create_static_as_bytes(&data, 1));
-        gpu_buffer_update(&core.ubo_render_information, array_create_static_as_bytes(&core.render_information, 1));
+        gpu_buffer_update(&core.ubo_camera_data, object_as_bytes(&data));
+        gpu_buffer_update(&core.ubo_render_information, object_as_bytes(&core.render_information));
 
         // Clear default framebuffer
         opengl_state_bind_framebuffer(0);
@@ -712,8 +712,8 @@ void attribute_buffer_report_change_to_mesh(Attribute_Buffer* buffer)
 void attribute_buffer_push_raw_data(Attribute_Buffer* buffer, void* data, int size)
 {
     assert(size % buffer->element_byte_size == 0, "Otherwise we push invalid datatype!");
-    buffer->attribute_data.reserve(buffer->attribute_data.size + size);
-    memory_copy(&buffer->attribute_data.buffer.data[buffer->attribute_data.size], data, size);
+    buffer->attribute_data.reserve_space(size);
+    memory_copy(&buffer->attribute_data.data[buffer->attribute_data.size], data, size);
     buffer->attribute_data.size += size;
     attribute_buffer_report_change_to_mesh(buffer);
     buffer->mesh->dirty = true;
@@ -829,12 +829,11 @@ bool shader_compile(Shader* shader)
             auto& uniform_info = shader->uniforms[i];
             uniform_info.name.destroy();
         }
-        shader->uniforms.reset();
-        shader->uniforms.reserve(uniform_count);
+        shader->uniforms.reset()->reserve_capacity(uniform_count);
 
         int longest_uniform_name_length;
         glGetProgramiv(shader->program_id, GL_ACTIVE_UNIFORM_MAX_LENGTH, &longest_uniform_name_length);
-        tmp_string.reserve(longest_uniform_name_length + 1);
+        tmp_string.reserve_capacity(longest_uniform_name_length + 1);
 
         // Loop over all uniforms
         for (int i = 0; i < uniform_count; i++)

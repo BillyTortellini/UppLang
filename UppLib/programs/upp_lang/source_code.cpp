@@ -33,10 +33,8 @@ Source_Code* source_code_copy(Source_Code* copy_from)
     SCRATCH_ARENA_MAKE_SCOPED(&copy_from->arena);
     DynString tmp_string = DynString::create(scratch_arena);
 
-
     Source_Code* result = source_code_create();
-    result->lines.reset(); // Remove first line, because I assume we copy that
-    result->lines.reserve(copy_from->lines.size);
+    result->lines.reset()->reserve_capacity(copy_from->lines.size); // Remove first line, because I assume we copy that
 
     // Copy lines
     for (int i = 0; i < copy_from->lines.size; i++)
@@ -99,7 +97,7 @@ void source_code_line_get_items(Source_Code* code, int line_index, DynArray<Edit
     if (line_index < 0 || line_index >= code->lines.size) return;
 
     auto info_list = &code->lines[line_index].item_infos;
-    append_to->reserve(append_to->size + info_list->element_count);
+    append_to->reserve_space(info_list->element_count);
     auto node = info_list->head;
     while (node != nullptr) {
         append_to->push_back(node->value);
@@ -160,8 +158,11 @@ void source_code_fill_from_string(Source_Code* code, String text)
     // Parse all lines
     int index = 0;
     int comment_indent = -1;
+    int line_index = 0;
     while (index < text.size)
     {
+        SCOPE_EXIT(line_index += 1);
+
         // Find line end
         int line_start_index = index;
         while (index < text.size && text.characters[index] != '\n') {
@@ -183,15 +184,17 @@ void source_code_fill_from_string(Source_Code* code, String text)
         tmp_string.append(string_make_substring(line_substring, sub_index, line_substring.size));
         source_text_remove_invalid_whitespaces(&tmp_string);
 
-        source_code_insert_line(code, code->lines.size);
-        Source_Line* line = &code->lines[code->lines.size - 1];
+        if (line_index >= code->lines.size) {
+            source_code_insert_line(code, code->lines.size);
+        }
+        Source_Line* line = &code->lines[line_index];
         line->text.set(tmp_string.to_string());
     }
 
     // Because we always start with an empty line after reset, we want to remove it if other lines were added
-    if (code->lines.size > 0) {
-        source_code_remove_line(code, 0);
-    }
+    // if (code->lines.size > 0) {
+    //     source_code_remove_line(code, 0);
+    // }
 }
 
 void source_code_append_to_string(Source_Code* code, DynString* text) 
@@ -200,6 +203,17 @@ void source_code_append_to_string(Source_Code* code, DynString* text)
     {
         Source_Line* line = &code->lines[i];
         text->append(line->text)->append("\n");
+    }
+}
+
+void sanity_check(Source_Code* code)
+{
+    for (int i = 0; i < code->lines.size; i++)
+    {
+        String_List list = code->lines[i].text;
+        if (list.size >= STRING_LIST_SMALL_STRING_SIZE && list.options.head == nullptr) {
+            panic("should not happen");
+        }
     }
 }
 
@@ -213,7 +227,9 @@ Source_Code* source_code_load_from_file(String filepath)
 	}
 
 	Source_Code* source_code = source_code_create();
+    sanity_check(source_code);
 	source_code_fill_from_string(source_code, file_content.to_string());
+    sanity_check(source_code);
 	return source_code;
 }
 

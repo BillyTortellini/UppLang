@@ -59,23 +59,23 @@ u64 hash_memory(Array<byte> memory) {
 }
 
 u64 hash_i32(i32* i) {
-    return hash_memory(array_create_static<byte>((byte*)i, 4));
+    return hash_memory(array_make<byte>((byte*)i, 4));
 }
 
 u64 hash_u32(u32* i) {
-    return hash_memory(array_create_static<byte>((byte*)i, 4));
+    return hash_memory(array_make<byte>((byte*)i, 4));
 }
 
 u64 hash_i64(i64* i) {
-    return hash_memory(array_create_static<byte>((byte*)i, 8));
+    return hash_memory(array_make<byte>((byte*)i, 8));
 }
 
 u64 hash_u64(u64* i) {
-    return hash_memory(array_create_static<byte>((byte*)i, 8));
+    return hash_memory(array_make<byte>((byte*)i, 8));
 }
 
 u64 hash_u64_non_pointer(u64 i) {
-    return hash_memory(array_create_static<byte>((byte*)i, 8));
+    return hash_memory(array_make<byte>((byte*)i, 8));
 }
 
 u64 hash_pointer(void* ptr) {
@@ -85,7 +85,7 @@ u64 hash_pointer(void* ptr) {
 
 u64 hash_combine(u64 a, u64 b) {
     u64 array[2] = { a, b };
-    return hash_memory(array_create_static_as_bytes(array, 2));
+    return hash_memory(array_make(&array[0], 2).to_bytes());
 }
 
 u64 hash_bool(u64 a, bool value) {

@@ -22,7 +22,7 @@ Text_Renderer* text_renderer_create_from_font_atlas_file(String font_filepath)
     );
     text_renderer->atlas_sdf_texture = texture_create_from_bytes(
         Texture_Type::RED_F32,
-        array_as_bytes(&text_renderer->glyph_atlas.atlas_distance_field),
+        text_renderer->glyph_atlas.atlas_distance_field.to_bytes(),
         text_renderer->glyph_atlas.atlas_bitmap.width,
         text_renderer->glyph_atlas.atlas_bitmap.height, 
         true

@@ -101,7 +101,7 @@ Rich_Text_Area Rich_Text_Area::create(Arena* arena, ivec2 size)
     Rich_Text_Area result;
     result.arena = arena;
     result.size = size;
-    result.buffer = array_create<Rich_Char>(size.x * size.y);
+    result.buffer = arena->allocate_array<Rich_Char>(size.x * size.y);
     memory_set_bytes(result.buffer.data, result.buffer.size * sizeof(Rich_Char), 0);
     return result;
 }

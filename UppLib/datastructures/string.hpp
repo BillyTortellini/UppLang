@@ -24,6 +24,13 @@ struct String
     bool operator!=(String other);
 };
 
+struct String_Split_Pair
+{
+    String a;
+    String b;
+    bool worked;
+};
+
 String string_make(const char* c_string);
 String string_make(const char* characters, int size);
 String string_make_substring(String other, int start, int end_exclusive);
@@ -37,7 +44,7 @@ u64 string_hash(String a);
 u64 string_hash_pointer(String* a);
 u64 hash_string(String string);
 u64 hash_string_pointer(String* string);
-Order_Comparison_Result string_compare(String a, String b);
+Comparison_Result string_compare(String a, String b);
 
 bool string_test_substring(String string, int start_index, String other);
 int string_contains_substring(String string, String substring, int start_index = 0); // -1 if not available
@@ -56,6 +63,7 @@ Optional<i64> string_parse_i64(String string);
 Optional<i64> string_parse_i64_hex(String string);
 
 Array<String> string_split(String string, char c, Arena* arena); 
+String_Split_Pair string_split_once(String string, char c);
 String string_get_whitespace_trimmed(String string); // Returns substring where whitespaces '\n', ' ' '\t' and '\r' are removed from start and end
 
 
@@ -127,7 +135,7 @@ struct DynString
     DynString* append(Identifier identifier);
 
     DynString* reset();
-    void reserve(int new_capacity);
+    void reserve_capacity(int new_capacity);
     String to_string();
     const char* to_cstring(); // Adds nullterminator if none available
     char& operator[](int index);

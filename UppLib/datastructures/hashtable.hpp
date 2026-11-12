@@ -95,10 +95,10 @@ Hashtable<K, V> hashtable_create_empty(int capacity, u64(*hash_function)(K*), bo
     result.equals_function = equals_function;
 
     if (capacity == 0) {
-        result.entries = array_create_static<Hashtable_Entry<K, V>>(nullptr, 0);
+        result.entries = array_make_empty<Hashtable_Entry<K, V>>();
     }
     else {
-        result.entries = array_create<Hashtable_Entry<K, V>>(capacity);
+        result.entries = array_new<Hashtable_Entry<K, V>>(capacity);
         for (int i = 0; i < result.entries.size; i++) {
             auto& entry = result.entries[i];
             entry.next = nullptr;
@@ -170,7 +170,7 @@ void hashtable_destroy(Hashtable<K, V>* table)
             }
         }
     }
-    array_destroy(&table->entries);
+    array_delete(&table->entries);
 }
 
 template <typename K, typename V>

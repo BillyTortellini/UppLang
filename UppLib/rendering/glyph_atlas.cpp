@@ -57,7 +57,7 @@ Optional<Font_Information> glyph_atlas_create_from_font_file(
     SCRATCH_ARENA_MAKE_SCOPED(nullptr);
 
     Font_Information result;
-    result.character_to_glyph_map = array_create<int>(256);
+    result.character_to_glyph_map = array_make(new int[256], 256);
     result.cursor_advance = 0;
     result.glyph_informations = dynamic_array_create<Glyph_Information>(128);
 
@@ -208,13 +208,13 @@ void glyph_atlas_save_as_file(Font_Information* atlas, String filepath)
     binary_parser_write_int(&parser, atlas->descender);
     binary_parser_write_int(&parser, atlas->cursor_advance);
     texture_bitmap_binary_parser_write(&atlas->atlas_bitmap, &parser);
-    binary_parser_write_bytes(&parser, array_as_bytes(&atlas->atlas_distance_field));
+    binary_parser_write_bytes(&parser, atlas->atlas_distance_field.to_bytes());
     binary_parser_write_int(&parser, atlas->glyph_informations.size);
     for (int i = 0; i < atlas->glyph_informations.size; i++) {
         glyph_information_binary_parser_write(&atlas->glyph_informations[i], &parser);
     }
     binary_parser_write_int(&parser, atlas->character_to_glyph_map.size);
-    binary_parser_write_bytes(&parser, array_as_bytes(&atlas->character_to_glyph_map));
+    binary_parser_write_bytes(&parser, atlas->character_to_glyph_map.to_bytes());
 
     binary_parser_write_to_file(&parser, filepath);
 }
@@ -235,8 +235,8 @@ Optional<Font_Information> glyph_atlas_create_from_atlas_file(String atlas_filep
     result.descender = binary_parser_read_int(parser);
     result.cursor_advance = binary_parser_read_int(parser);
     result.atlas_bitmap = texture_bitmap_binary_parser_read(parser);
-    result.atlas_distance_field = array_create<float>(width*height);
-    binary_parser_read_bytes(parser, array_as_bytes(&result.atlas_distance_field));
+    result.atlas_distance_field = array_make(new float[width * height], width * height);
+    binary_parser_read_bytes(parser, result.atlas_distance_field.to_bytes());
     int glyph_information_count = binary_parser_read_int(parser);
     result.glyph_informations = dynamic_array_create<Glyph_Information>(glyph_information_count);
     for (int i = 0; i < glyph_information_count; i++) {
@@ -244,8 +244,8 @@ Optional<Font_Information> glyph_atlas_create_from_atlas_file(String atlas_filep
         dynamic_array_push_back(&result.glyph_informations, info);
     }
     int character_to_glyph_map_size = binary_parser_read_int(parser);
-    result.character_to_glyph_map = array_create<int>(character_to_glyph_map_size);
-    binary_parser_read_bytes(parser, array_as_bytes(&result.character_to_glyph_map));
+    result.character_to_glyph_map   = array_make(new int[character_to_glyph_map_size], character_to_glyph_map_size);
+    binary_parser_read_bytes(parser, result.character_to_glyph_map.to_bytes());
 
     return optional_make_success(result);
 }
@@ -268,7 +268,7 @@ void glyph_atlas_print_glyph_information(Font_Information* atlas)
 void glyph_atlas_destroy(Font_Information* atlas)
 {
     dynamic_array_destroy(&atlas->glyph_informations);
-    array_destroy(&atlas->character_to_glyph_map);
+    delete[] atlas->character_to_glyph_map.data;
     texture_bitmap_destroy(&atlas->atlas_bitmap);
-    array_destroy(&atlas->atlas_distance_field);
+    delete[] atlas->atlas_distance_field.data;
 }

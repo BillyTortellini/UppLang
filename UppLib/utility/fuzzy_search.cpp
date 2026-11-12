@@ -59,7 +59,7 @@ bool fuzzy_item_compare(Fuzzy_Item& a, Fuzzy_Item& b)
     }
 
     // Otherwise we don't know, so just sort lexically
-    return string_compare(a.item_name, b.item_name) == Order_Comparison_Result::LESS;
+    return string_compare(a.item_name, b.item_name) == Comparison_Result::LESS;
 }
 
 void fuzzy_search_insert_item_ordered(Fuzzy_Item& item)

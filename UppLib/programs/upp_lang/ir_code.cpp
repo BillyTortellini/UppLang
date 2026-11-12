@@ -707,22 +707,22 @@ IR_Data_Access* ir_data_access_create_constant(Upp_Constant constant)
 
 IR_Data_Access* ir_data_access_create_constant_i32(i32 value) {
     auto& types = ir_generator->compilation_data->type_system->predefined_types;
-    return ir_data_access_create_constant(upcast(types.i32_type), array_create_static((byte*)&value, sizeof(i32)));
+    return ir_data_access_create_constant(upcast(types.i32_type), array_make((byte*)&value, sizeof(i32)));
 }
 
 IR_Data_Access* ir_data_access_create_constant_type_handle(Upp_Type_Handle type_handle) {
     auto& types = ir_generator->compilation_data->type_system->predefined_types;
-    return ir_data_access_create_constant(upcast(types.type_handle), array_create_static((byte*)&type_handle, sizeof(Upp_Type_Handle)));
+    return ir_data_access_create_constant(upcast(types.type_handle), array_make((byte*)&type_handle, sizeof(Upp_Type_Handle)));
 }
 
 IR_Data_Access* ir_data_access_create_constant_upp_size(upp_size value) {
     auto& types = ir_generator->compilation_data->type_system->predefined_types;
-    return ir_data_access_create_constant(upcast(types.size_type), array_create_static_as_bytes(&value, 1));
+    return ir_data_access_create_constant(upcast(types.size_type), object_as_bytes(&value));
 }
 
 IR_Data_Access* ir_data_access_create_constant_bool(bool value) {
     auto& types = ir_generator->compilation_data->type_system->predefined_types;
-    return ir_data_access_create_constant(upcast(types.bool_type), array_create_static_as_bytes(&value, 1));
+    return ir_data_access_create_constant(upcast(types.bool_type), object_as_bytes(&value));
 }
 
 
@@ -1021,7 +1021,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
     case Expression_Result_Type::CONSTANT:
         return move_access_to_destination(ir_data_access_create_constant(info->options.constant));
     case Expression_Result_Type::DATATYPE:
-        return move_access_to_destination(ir_data_access_create_constant(upcast(types.type_handle), array_create_static_as_bytes(&result_type->type_handle, 1)));
+        return move_access_to_destination(ir_data_access_create_constant(upcast(types.type_handle), object_as_bytes(&result_type->type_handle)));
     case Expression_Result_Type::FUNCTION: {
         // Function pointer read
         IR_Instruction load_instr;
@@ -1495,7 +1495,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             Upp_Slice_Base slice_base;
             slice_base.data = 0;
             slice_base.size = 0;
-            auto slice_constant = constant_pool_add_constant(gen.compilation_data->constant_pool, result_type, array_create_static_as_bytes(&slice_base, 1));
+            auto slice_constant = constant_pool_add_constant(gen.compilation_data->constant_pool, result_type, object_as_bytes(&slice_base));
             assert(slice_constant.success, "Empty slice must succeed!");
 
             auto destination = make_destination_access_on_demand(result_type);
@@ -1586,7 +1586,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
                 Primitive_Operation::NOT_EQUAL,
                 condition_access,
                 ir_data_access_create_member(source, src_struct->tag_member),
-                ir_data_access_create_constant(src_struct->tag_member.datatype, array_create_static_as_bytes<i64>(&child_tag_value, 1))
+                ir_data_access_create_constant(src_struct->tag_member.datatype, object_as_bytes(&child_tag_value))
             );
 
             IR_Instruction if_instr;

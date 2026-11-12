@@ -1380,7 +1380,7 @@ void c_generator_output_constant_access(C_Generator* generator, Upp_Constant& co
 void output_memory_as_new_constant(C_Generator* generator, byte* base_memory, Datatype* base_type, bool requires_memory_address, int current_indentation_level)
 {
     Constant_Pool* pool = generator->compilation_data->constant_pool;
-    auto result = constant_pool_add_constant(pool, base_type, array_create_static<byte>(base_memory, base_type->memory_info.value.size));
+    auto result = constant_pool_add_constant(pool, base_type, array_make<byte>(base_memory, base_type->memory_info.value.size));
     assert(result.success, "Should always work");
     c_generator_output_constant_access(generator, result.options.constant, requires_memory_address, current_indentation_level);
 }

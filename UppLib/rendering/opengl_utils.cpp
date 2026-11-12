@@ -5,6 +5,138 @@
 #include "../utility/file_io.hpp"
 #include <gl/GL.h>
 
+GLenum shader_part_type_to_opengl_type(Shader_Part_Type type)
+{
+    switch (type)
+    {
+    case Shader_Part_Type::VERTEX: return GL_VERTEX_SHADER;
+    case Shader_Part_Type::FRAGMENT: return GL_FRAGMENT_SHADER;
+    case Shader_Part_Type::TESSELATION_EVALUATION: return GL_TESS_EVALUATION_SHADER;
+    case Shader_Part_Type::TESSELATION_CONTROL: return GL_TESS_CONTROL_SHADER;
+    case Shader_Part_Type::GEOMETRY: return GL_GEOMETRY_SHADER;
+    case Shader_Part_Type::COMPUTE: return GL_COMPUTE_SHADER;
+    default: panic("");
+    }
+    return (GLenum)0;
+}
+
+void opengl_utils_detach_all_shaders_from_program(GLuint program_id)
+{
+    SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+    if (!glIsProgram(program_id)) {
+        return;
+    }
+
+    GLsizei shader_count;
+    glGetProgramiv(program_id, GL_ATTACHED_SHADERS, &shader_count);
+    if (shader_count <= 0) {
+        return;
+    }
+    Array<GLuint> attached_shader_ids = scratch_arena->allocate_array<GLuint>((int)shader_count);
+    glGetAttachedShaders(program_id, shader_count, &shader_count, attached_shader_ids.data);
+    for (int i = 0; i < attached_shader_ids.size; i++) {
+        glDetachShader(program_id, attached_shader_ids[i]);
+    }
+}
+
+// Returns true if no errors
+bool opengl_utils_check_shader_compile_status(GLuint shader_id, DynString* out_errors)
+{
+    if (shader_id == 0) {
+        out_errors->append("Shader_id is 0");
+        return false;
+    }
+
+    // Check if compilation worked
+    GLint isCompiled = 0;
+    glGetShaderiv(shader_id, GL_COMPILE_STATUS, &isCompiled);
+    if (isCompiled == GL_FALSE)
+    {
+        GLint maxLength = 0;
+        glGetShaderiv(shader_id, GL_INFO_LOG_LENGTH, &maxLength);
+
+        out_errors->append("Shader-Compilation Error:\n");
+        out_errors->reserve_capacity(out_errors->size + maxLength + 1);
+        glGetShaderInfoLog(shader_id, maxLength, &maxLength, &out_errors->characters[out_errors->size]);
+        out_errors->size += maxLength;
+        out_errors->append("\n");
+        return false;
+    }
+
+    return true;
+}
+
+bool opengl_utils_check_program_link_status(GLuint program_id, DynString* out_errors)
+{
+    int isLinked = 0;
+    glGetProgramiv(program_id, GL_LINK_STATUS, &isLinked);
+    if (isLinked == GL_FALSE)
+    {
+        GLint maxLength = 0;
+        glGetProgramiv(program_id, GL_INFO_LOG_LENGTH, &maxLength);
+
+        out_errors->append("Program Linking failed:\n");
+        out_errors->reserve_capacity(out_errors->size + maxLength + 1);
+        glGetProgramInfoLog(program_id, maxLength, &maxLength, &out_errors->characters[out_errors->size]);
+        out_errors->size += maxLength;
+        out_errors->append("\n");
+        return false;
+    }
+    return true;
+}
+
+Shader_Compile_Result opengl_utils_compile_shader_from_parts(Array<Shader_Part> parts, Arena* arena, GLuint program_id)
+{
+    Shader_Compile_Result result;
+    result.success = true;
+    result.program_id = program_id;
+
+    // If program != 0, detach all shaders
+    if (result.program_id != 0) 
+    {
+        if (glIsProgram(result.program_id)) {
+            opengl_utils_detach_all_shaders_from_program(result.program_id);
+        }
+        else {
+            result.program_id = glCreateProgram();
+            assert(program_id != 0, "glCreateProgram failed");
+        }
+    }
+
+    DynString error_string = DynString::create(arena);
+    for (int i = 0; i < parts.size; i++)
+    {
+        Shader_Part& part = parts[i];
+        GLuint shader_id = glCreateShader(shader_part_type_to_opengl_type(part.type));
+        assert(shader_id != 0, "glCreateShader failed");
+
+        GLint length = part.source_code.size;
+        glAttachShader(result.program_id, shader_id); // We can attach shaders at all times
+        glShaderSource(shader_id, 1, &part.source_code.characters, &length);
+        glCompileShader(shader_id);
+        bool compile_success = opengl_utils_check_shader_compile_status(shader_id, &error_string);
+        if (!compile_success) {
+            result.success = false;
+        }
+        glDeleteShader(shader_id); // This only flags for deletion, which is delayed until it is no longer in use
+    }
+
+    // If all shaders were compiled successfully, try to link program
+    // We always link the program even if shaders aren't compiled
+    glLinkProgram(result.program_id);
+    if (result.success) {
+        bool link_success = opengl_utils_check_program_link_status(result.program_id, &error_string);
+        if (!link_success) {
+            result.success = false;
+        }
+    }
+
+    // Also we always detach shaders so they are deleted once the shader is not in use anymore?
+    opengl_utils_detach_all_shaders_from_program(result.program_id);
+    result.error_message = error_string.to_string();
+    return result;
+}
+
 bool opengl_utils_check_shader_compilation_status(GLuint shader_id)
 {
     if (shader_id == 0) {
@@ -23,7 +155,7 @@ bool opengl_utils_check_shader_compilation_status(GLuint shader_id)
         GLint maxLength = 0;
         glGetShaderiv(shader_id, GL_INFO_LOG_LENGTH, &maxLength);
 
-        tmp_string.reserve(maxLength + 1);
+        tmp_string.reserve_capacity(maxLength + 1);
 
         glGetShaderInfoLog(shader_id, maxLength, &maxLength, tmp_string.characters);
         logg("ERROR COMPILING SHADER:\n");
@@ -184,14 +316,15 @@ GLuint opengl_utils_create_program_from_single_file(String filepath)
 
 GLuint opengl_utils_create_program_from_filepaths(Array<String> filepaths)
 {
+    SCRATCH_ARENA_MAKE_SCOPED(nullptr);
+
     if (filepaths.size == 1) {
         if (string_ends_with(filepaths[0], string_make(".glsl"))) {
             return opengl_utils_create_program_from_single_file(filepaths[0]);
         }
     }
 
-    Array<GLuint> shader_ids = array_create<GLuint>(filepaths.size);
-    SCOPE_EXIT(array_destroy(&shader_ids));
+    Array<GLuint> shader_ids = scratch_arena->allocate_array<GLuint>(filepaths.size);
 
     int compiled_shader_count = 0;
     for (int i = 0; i < filepaths.size; i++) {

@@ -148,6 +148,8 @@ bool opengl_load_all_functions()
     glGetQueryObjectui64v = (PFNGLGETQUERYOBJECTUI64VPROC)opengl_get_function_address("glGetQueryObjectui64v");
     glQueryCounter = (PFNGLQUERYCOUNTERPROC)opengl_get_function_address("glQueryCounter");
 
+    glIsProgram = (PFNGLISPROGRAMPROC)opengl_get_function_address("glIsProgram");
+    glGetAttachedShaders = (PFNGLGETATTACHEDSHADERSPROC)opengl_get_function_address("glGetAttachedShaders");
 
     bool success = true;
     success = success &&
@@ -244,6 +246,8 @@ bool opengl_load_all_functions()
         (glGetQueryObjecti64v != NULL) &&
         (glGetQueryObjectui64v != NULL) &&
         (glQueryCounter != NULL) &&
+        (glIsProgram != NULL) &&
+        (glGetAttachedShaders != NULL) &&
         (true); // Just so we can copy paste lines without having to worry about the last &&
 
     // Load extensions
@@ -366,3 +370,5 @@ PFNGLGETQUERYOBJECTUIVPROC glGetQueryObjectuiv;
 PFNGLGETQUERYOBJECTI64VPROC glGetQueryObjecti64v;
 PFNGLGETQUERYOBJECTUI64VPROC glGetQueryObjectui64v;
 PFNGLQUERYCOUNTERPROC glQueryCounter;
+PFNGLISPROGRAMPROC glIsProgram;
+PFNGLGETATTACHEDSHADERSPROC glGetAttachedShaders;

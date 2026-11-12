@@ -10,7 +10,7 @@ bool deduplication_info_is_equal(Deduplication_Info* a, Deduplication_Info* b) {
 
 u64 hash_deduplication(Deduplication_Info* info) {
     u64 hash = hash_memory(info->memory);
-    hash = hash_combine(hash, hash_i32(&info->memory.size));
+    hash = hash_combine(hash, hash_u64(&info->memory.size));
     hash = hash_combine(hash, hash_pointer(info->type));
     return hash;
 }
@@ -32,14 +32,14 @@ Constant_Pool* constant_pool_create(Compilation_Data* compilation_data)
         {
             bool value_bool = false;
             Constant_Pool_Result add_result = constant_pool_add_constant(
-                result, upcast(types.bool_type), array_create_static_as_bytes<bool>(&value_bool, 1)
+                result, upcast(types.bool_type), object_as_bytes(&value_bool)
             );
             assert(add_result.success, "");
             predef.bool_true = add_result.options.constant;
 
             value_bool = false;
             add_result = constant_pool_add_constant(
-                result, upcast(types.bool_type), array_create_static_as_bytes<bool>(&value_bool, 1)
+                result, upcast(types.bool_type), object_as_bytes(&value_bool)
             );
             assert(add_result.success, "");
             predef.bool_false = add_result.options.constant;
@@ -66,7 +66,7 @@ Constant_Pool* constant_pool_create(Compilation_Data* compilation_data)
 
         void* ptr = nullptr;
         Constant_Pool_Result add_result = constant_pool_add_constant(
-            result, upcast(types.rawptr), array_create_static_as_bytes<void*>(&ptr, 1)
+            result, upcast(types.rawptr), object_as_bytes<void*>(&ptr)
         );
         assert(add_result.success, "");
         predef.nil = add_result.options.constant;
@@ -368,7 +368,7 @@ Constant_Pool_Result constant_pool_add_constant(Constant_Pool* constant_pool, Da
 Upp_Constant add_valid_primitive(Constant_Pool* pool, void* value_ptr, Datatype* datatype) {
     assert(datatype->memory_info.value.size != 0, "");
     Constant_Pool_Result result = constant_pool_add_constant(
-        pool, datatype, array_create_static<byte>((byte*)value_ptr, datatype->memory_info.value.size)
+        pool, datatype, array_make<byte>((byte*)value_ptr, datatype->memory_info.value.size)
     );
     assert(result.success, "");
     return result.options.constant;
@@ -413,7 +413,7 @@ Upp_Constant Constant_Pool::add_f32(f32 value)
 {
     auto& types = this->compilation_data->type_system->predefined_types;
     Constant_Pool_Result result = constant_pool_add_constant(
-        this, upcast(types.f32_type), array_create_static_as_bytes<f32>(&value, 1)
+        this, upcast(types.f32_type), object_as_bytes(&value)
     );
     assert(result.success, "");
     return result.options.constant;
@@ -423,7 +423,7 @@ Upp_Constant Constant_Pool::add_f64(f64 value)
 {
     auto& types = this->compilation_data->type_system->predefined_types;
     Constant_Pool_Result result = constant_pool_add_constant(
-        this, upcast(types.f64_type), array_create_static_as_bytes<f64>(&value, 1)
+        this, upcast(types.f64_type), object_as_bytes(&value)
     );
     assert(result.success, "");
     return result.options.constant;
@@ -433,7 +433,7 @@ Upp_Constant Constant_Pool::add_upp_string_assume_valid(Upp_String string)
 {
     auto& types = this->compilation_data->type_system->predefined_types;
     Constant_Pool_Result result = constant_pool_add_constant(
-        this, upcast(types.string), array_create_static_as_bytes<Upp_String>(&string, 1)
+        this, upcast(types.string), object_as_bytes(&string)
     );
     assert(result.success, "");
     return result.options.constant;
@@ -466,7 +466,7 @@ Upp_Constant Constant_Pool::add_enum_value_assume_valid(Datatype_Enum* enum_type
     assert(DEFAULT_ENUM_SIZE == 8, "Should be i64 currently");
     i64 i64_value = (i64)value;
     Constant_Pool_Result result = constant_pool_add_constant(
-        this, upcast(enum_type), array_create_static_as_bytes<i64>(&i64_value, 1)
+        this, upcast(enum_type), object_as_bytes(&i64_value)
     );
     assert(result.success, "");
     return result.options.constant;
@@ -476,8 +476,7 @@ Upp_Constant Constant_Pool::add_type_handle_assume_valid(Upp_Type_Handle type_ha
 {
     assert((u64)type_handle.index < compilation_data->type_system->types.size, "");
     Constant_Pool_Result result = constant_pool_add_constant(
-        this, compilation_data->type_system->predefined_types.type_handle->upcast(), 
-        array_create_static_as_bytes<Upp_Type_Handle>(&type_handle, 1)
+        this, compilation_data->type_system->predefined_types.type_handle->upcast(), object_as_bytes(&type_handle)
     );
     assert(result.success, "");
     return result.options.constant;

@@ -97,7 +97,7 @@ void word_pool_add_word(Word_Pool* pool, String word)
 	if (word.size <= WORD_POOL_MIN_WORD_SIZE || word.size > WORD_POOL_MAX_WORD_SIZE) return;
 
 	auto query_result = pool->deduplication_table.query(word, true);
-	if (query_result.value_is_in_table)
+	if (query_result.exists)
 	{
 		u32 word_index = query_result.get_value();
 		assert(word_index < pool->words.size, "");
@@ -144,7 +144,7 @@ void word_pool_remove_word(Word_Pool* pool, String word)
 
 	// printf("Removing word: \"%.*s\"\n", word.size, word.characters);
 	auto query_result = pool->deduplication_table.query(word, false);
-	assert(query_result.value_is_in_table, "");
+	assert(query_result.exists, "");
 
 	// Decrease reference count
 	u32 word_index = *pool->deduplication_table.query_to_value(query_result);
@@ -173,7 +173,7 @@ void word_pool_remove_word(Word_Pool* pool, String word)
 	{
 		Refcount_Word swap_view = pool->words[pool->words.size - 1];
 		auto query_result = pool->deduplication_table.query(string_make(swap_view.characters, swap_view.size), false);
-		assert(query_result.value_is_in_table, "");
+		assert(query_result.exists, "");
 		*query_result.get_value_pointer() = word_index;
 	}
 	pool->words.swap_remove(word_index);
@@ -3060,7 +3060,7 @@ void editor_tab_destroy(Editor_Tab* tab)
 	delete tab;
 }
 
-Order_Comparison_Result error_index_sort_fn(int* ap, int* bp, void* userdata)
+bool error_index_in_order_fn(int* ap, int* bp, void* userdata)
 {
 	auto& editor = syntax_editor;
 
@@ -3074,16 +3074,15 @@ Order_Comparison_Result error_index_sort_fn(int* ap, int* bp, void* userdata)
 	int tab_b = compilation_unit_find_tab_index(b.unit);
 
 	if (tab_a != tab_b) {
-		return tab_a < tab_b ? Order_Comparison_Result::LESS : Order_Comparison_Result::GREATER;
+		return tab_a < tab_b;
 	}
 
 	Text_Index start_a = a.ranges.last().start;
 	Text_Index start_b = b.ranges.last().start;
 	if (start_a.line != start_b.line) {
-		return start_a.line < start_b.line ? Order_Comparison_Result::LESS : Order_Comparison_Result::GREATER;
+		return start_a.line < start_b.line;
 	}
-	if (start_a.character == start_b.character) return Order_Comparison_Result::EQUAL;
-	return start_a.character < start_b.character ? Order_Comparison_Result::LESS : Order_Comparison_Result::GREATER;
+	return start_a.character <= start_b.character;
 }
 
 void sort_error_indices()
@@ -3092,12 +3091,11 @@ void sort_error_indices()
 	auto& errors = editor.editor_compilation_data->code_errors;
 	auto& indices = editor.error_indices_sorted;
 
-	indices.reset();
-	indices.reserve(errors.size);
+	indices.reset()->reserve_capacity(errors.size);
 	for (int i = 0; i < errors.size; i++) {
 		indices.push_back(i);
 	}
-	array_sort(indices.as_array(), error_index_sort_fn, nullptr);
+	array_sort(indices.as_array(), error_index_in_order_fn, nullptr);
 }
 
 void syntax_editor_switch_tab(int new_tab_index)
@@ -8082,7 +8080,7 @@ void watch_values_update()
 		}
 
 		// Apply post ops to value
-		byte* value_ptr = byte_buffer.buffer.data;
+		byte* value_ptr = byte_buffer.data;
 		Memory_Source local_source = Memory_Source(nullptr);
 		Datatype* type = result.result_type;
 		for (int i = 0; i < post_ops.size && success; i++)

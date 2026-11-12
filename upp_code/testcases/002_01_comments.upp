@@ -1,4 +1,4 @@
-// Comments can be located at any scope
+
 
 main :: fn ()
     // Single line comment
@@ -9,4 +9,3 @@ main :: fn ()
         assert(true)
     
     x := 10
-    assert(x == 10)

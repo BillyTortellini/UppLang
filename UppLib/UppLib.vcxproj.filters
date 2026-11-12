@@ -112,6 +112,9 @@
     <Filter Include="Source Files\Programs\Rendering_Rework">
       <UniqueIdentifier>{4f254ee8-eb80-4792-b5f8-ad9cc504a65d}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Resource Files\GRX_Shaders">
+      <UniqueIdentifier>{1acb7f67-d887-4b39-b6b3-cc1e7c5a6358}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="datastructures\array.hpp">
@@ -620,6 +623,9 @@
     </None>
     <None Include="..\resources\shaders\core\raster_font_new.glsl">
       <Filter>Resource Files\Shaders\Core</Filter>
+    </None>
+    <None Include="..\resources\grx_shaders\test.glsl">
+      <Filter>Resource Files\GRX_Shaders</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>

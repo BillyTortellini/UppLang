@@ -28,7 +28,7 @@ struct Window_State
     bool in_focus;
 };
 
-Window* window_create(String window_title, int multisample_count);
+Window* window_create(String window_title, int multisample_count, bool with_debug_context);
 void window_close(Window* window); // Causes the window to exit the handle message loop
 void window_destroy(Window* window); // Deletes the window object
 

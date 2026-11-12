@@ -22,7 +22,7 @@ Optional<Array<byte>> file_io_load_binary_file(String path, Arena* arena)
     u64 file_size =  ftell(file);
     fseek(file, 0, SEEK_SET); // Put cursor back to start of file
     if (file_size == 0) {
-        return optional_make_success(array_create_static<byte>(nullptr, 0));
+        return optional_make_success(array_make<byte>(nullptr, 0));
     }
     
     // Allocate memory for result 
@@ -70,7 +70,7 @@ bool file_io_write_binary_file(String path, Array<byte> data)
 
 bool file_io_write_text_file(String path, String text) 
 {
-    return file_io_write_binary_file(path, array_create_static<byte>((byte*)text.characters, text.size));
+    return file_io_write_binary_file(path, array_make<byte>((byte*)text.characters, text.size));
 }
 
 u64 helper_dwords_to_u64(DWORD high, DWORD low) 
@@ -211,8 +211,16 @@ Filename_Parts filename_get_parts(String filename)
     return parts;
 }
 
+bool filepath_is_absolute_path(String filepath)
+{
+    return string_test_char(filepath, 1, ':') && string_test_char(filepath, 2, '/');
+}
+
 void filepath_relative_to_absolute_path(DynString* filepath)
 {
+    if (filepath_is_absolute_path(filepath->to_string())) {
+        return;
+    }
     dynstring_add_null_terminator(filepath);
     char buffer[1024];
     int length = GetFullPathNameA(filepath->characters, 1024, buffer, 0);
@@ -221,4 +229,21 @@ void filepath_relative_to_absolute_path(DynString* filepath)
     }
     filepath->reset()->append(string_make(buffer, length));
     dynstring_replace_character(filepath, '\\', '/');
+}
+
+void filepath_relative_to_full_path_with_start(DynString* filepath, String start_directory)
+{
+    // An absolute path starts with [LETTER]:/
+    if (filepath_is_absolute_path(filepath->to_string())) {
+        return;
+    }
+
+    // Append start_directory at the start of path
+    dynstring_insert(filepath, start_directory, 0);
+    // Check if start_directory ends with /, otherwise insert slash
+    if (!string_test_char(start_directory, start_directory.size - 1, '/')) {
+        dynstring_insert(filepath, string_make("/"), start_directory.size);
+    }
+
+    filepath_relative_to_absolute_path(filepath);
 }

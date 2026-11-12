@@ -43,8 +43,8 @@ struct Memory_Source
     template<typename T>
     bool read_array(void* virtual_address, DynArray<T>* append_to, uint count) 
     {
-        append_to->reserve(append_to->size + count);
-        bool success = read((void*)&append_to->buffer.data[append_to->size], virtual_address, count * sizeof(T));
+        append_to->reserve_space(count);
+        bool success = read((void*)&append_to->data[append_to->size], virtual_address, count * sizeof(T));
         if (!success) return false;
         append_to->size += (uint)count;
         return true;

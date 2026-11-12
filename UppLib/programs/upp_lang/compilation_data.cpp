@@ -1455,10 +1455,10 @@ void compilation_data_update_source_code_information(Compilation_Data* compilati
 		dynamic_array_sort(&compilation_data->semantic_infos, Semantic_Info_Comparator());
 
 		// Find start and length of all semantic infos
-		Array<int> item_info_start_indices = array_create<int>(analysis_item_count);
-		Array<int> item_info_count = array_create<int>(analysis_item_count);
-		SCOPE_EXIT(array_destroy(&item_info_start_indices));
-		SCOPE_EXIT(array_destroy(&item_info_count));
+		Arena* scratch_arena = &compilation_data->tmp_arena;
+		ARENA_MAKE_SCOPED_CHECKPOINT(scratch_arena);
+		Array<int> item_info_start_indices = scratch_arena->allocate_array<int>(analysis_item_count);
+		Array<int> item_info_count         = scratch_arena->allocate_array<int>(analysis_item_count);
 		for (int i = 0; i < analysis_item_count; i++) {
 			item_info_start_indices[i] = -1;
 			item_info_count[i] = 0;

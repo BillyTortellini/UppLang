@@ -178,6 +178,7 @@
     <Text Include="..\resources\TODO.txt" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="..\resources\grx_shaders\test.glsl" />
     <None Include="..\resources\shaders\const_color_2D.glsl" />
     <None Include="..\resources\shaders\core\font_bitmap.glsl" />
     <None Include="..\resources\shaders\core\font_sdf.glsl" />

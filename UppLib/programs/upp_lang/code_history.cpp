@@ -393,8 +393,8 @@ void history_get_changes_between(Code_History* history, History_Timestamp start_
 
     // Info: This is a modifier Breadth-First search, because of the tree structure we only visited each node from exactly one previous node
     //      Also, in this search, we search from the End to the start, so we don't have to reverse the path once we found it
-    auto goto_index = array_create<int>(history->nodes.size);
-    SCOPE_EXIT(array_destroy(&goto_index));
+    SCRATCH_ARENA_MAKE_SCOPED(&history->arena);
+    auto goto_index = scratch_arena->allocate_array<int>(history->nodes.size);
 
     // Find path
     {

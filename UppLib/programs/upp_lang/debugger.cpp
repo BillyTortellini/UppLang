@@ -2271,16 +2271,16 @@ struct Disassembly_Info
     DynArray<INSTRUX> instructions;
 };
 
-Disassembly_Info debugger_disassemble_bytes(Debugger* debugger, u64 virtual_address, u32 read_size, Arena* arena)
+Disassembly_Info debugger_disassemble_bytes(Debugger* debugger, u64 virtual_address, uint read_size, Arena* arena)
 {
     // Read bytes
     Disassembly_Info result;
-    result.bytes = array_create_static<byte>(nullptr, 0);
+    result.bytes = array_make<byte>(nullptr, 0);
     result.instructions = DynArray<INSTRUX>::create(arena);
     Array<byte>& byte_buffer = result.bytes;
 
     uint readable_size = debugger->memory_source.query_max_readable_size((void*)virtual_address);
-    read_size = math_minimum(read_size, (u32)readable_size);
+    read_size = math_minimum(read_size, readable_size);
     result.bytes = arena->allocate_array<byte>(read_size);
     debugger->memory_source.read((void*)byte_buffer.data, (void*)virtual_address, read_size);
 
@@ -2747,7 +2747,7 @@ void source_mapping_generate_ir_instruction_mapping_recursive(IR_Code_Block* blo
     }
 
 	// Push dummy mappings for now
-	debugger->ir_instruction_mapping.reserve(debugger->ir_instruction_mapping.size + block->instructions.size);
+	debugger->ir_instruction_mapping.reserve_space(block->instructions.size);
 	for (int i = 0; i < block->instructions.size; i++)
 	{
 		IR_Instruction_Mapping instr_mapping;
@@ -2796,26 +2796,15 @@ struct Machine_Code_Segment
 	int c_line_index_with_offset;
 };
 
-Order_Comparison_Result machine_code_segment_compare(Machine_Code_Segment* ap, Machine_Code_Segment* bp, void* userdata)
+bool machine_code_segments_in_order(Machine_Code_Segment* ap, Machine_Code_Segment* bp, void* userdata)
 {
     auto& a = *ap;
     auto& b = *bp;
 	if (a.function != b.function) {
-		return a.function->function_index < b.function->function_index ? Order_Comparison_Result::LESS : Order_Comparison_Result::GREATER;
+        return a.function->function_index < b.function->function_index;
 	}
-	return a.virtual_address_start < b.virtual_address_start ? Order_Comparison_Result::LESS : Order_Comparison_Result::GREATER;
+    return a.virtual_address_start < b.virtual_address_start;
 }
-
-struct Segment_Comparator
-{
-	bool operator()(const Machine_Code_Segment& a, const Machine_Code_Segment& b)
-	{
-		if (a.function != b.function) {
-			return a.function->function_index < b.function->function_index;
-		}
-		return a.virtual_address_start < b.virtual_address_start;
-	}
-};
 
 void source_mapping_upp_line_to_machine_code_segments(
 	Debugger* debugger, Compilation_Unit* compilation_unit, int line_index, DynArray<Machine_Code_Segment>* out_machine_code_segments)
@@ -2854,7 +2843,7 @@ void source_mapping_upp_line_to_machine_code_segments(
 	}
 
 	// Sort segments and fuse together...
-    array_sort(out_machine_code_segments->as_array(), machine_code_segment_compare, nullptr);
+    array_sort(out_machine_code_segments->as_array(), machine_code_segments_in_order, nullptr);
 	for (int i = 0; i < out_machine_code_segments->size - 1; i++)
 	{
 		auto& current = out_machine_code_segments->at(i);
@@ -3778,7 +3767,7 @@ bool debugger_start_process(
 		}
 
 		// Add C-Line to IR_Instruction mapping
-        debugger->c_line_mapping.reset()->reserve(c_translation->line_infos.size);
+        debugger->c_line_mapping.reset()->reserve_capacity(c_translation->line_infos.size);
 		for (int i = 0; i < c_translation->line_infos.size; i++)
 		{
 			auto line_info = c_translation->line_infos[i];
@@ -3805,7 +3794,7 @@ bool debugger_start_process(
 		}
 
 		// Add IR_Function-Mapping
-		debugger->ir_function_mapping.reset()->reserve(compilation_data->functions.size);
+		debugger->ir_function_mapping.reset()->reserve_capacity(compilation_data->functions.size);
 		for (int i = 0; i < compilation_data->functions.size; i++) {
 			Upp_Function* function = compilation_data->functions[i];
 			C_Function_Mapping mapping;
@@ -4147,8 +4136,8 @@ Debugger_Value_Read debugger_read_variable_value(
 
 	// Try reading variable location
 	int read_size = value_type->memory_info.value.size;
-    value_buffer->reserve(value_type->memory_info.value.size);
-	void* write_to_ptr = value_buffer->buffer.data;
+    value_buffer->reserve_capacity(value_type->memory_info.value.size);
+	void* write_to_ptr = value_buffer->data;
 
 	CONTEXT thread_context;
 	thread_context.ContextFlags = CONTEXT_ALL;
@@ -4466,7 +4455,7 @@ void debugger_wait_for_console_command(Debugger* debugger)
 				DynString str = dynstring_create(scratch_arena);
 				// TODO: This needs to be able to read memory for e.g. arrays, or simple integer data
                 datatype_append_value_to_string(
-                    value_read.result_type, &str, byte_buffer.buffer.data,
+                    value_read.result_type, &str, byte_buffer.data,
                     datatype_value_format_multi_line(8, 5), 0, Memory_Source(nullptr), debugger->memory_source, debugger->compilation_data->type_system
                 );
                 string_style_remove_codes(&str);

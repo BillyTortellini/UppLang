@@ -1,4 +1,67 @@
 
+String characters --> data (UTF8?)
+String size --> uint
+DynString same
+Also reserve_capacity and reserve_size
+maybe get_substring for both
+
+
+ - Draw-Calls/RenderCommands/RenderPasses?
+GRX_Command --> Draw-Call/Framebuffer switch?
+
+One step at a time:
+ - Global uniform buffer with:
+    * View and Projection Matrix (+ combinations)
+    * time
+    * ivec2 framebuffer size
+
+
+Test Scene:
+ - Spinning Cube with camera controlls
+    --> Camera matrix (m_Model, m_View, m_Perspective)
+ - Spinning == Vertex animation
+ - Position + UVs from Vertex Shader
+ - Normals generated in Geometry shader
+ - UVs in Fragment shader to procedural image
+
+
+Programmable VERTEX PULL:
+ - floatBitsToUint
+ - uintBitsToFloat
+
+// I mean this is pretty fucking awesome...
+
+Some links for modern OpenGL:
+    https://github.com/fendevel/Guide-to-Modern-OpenGL-Functions
+
+
+
+TODO:
+ - Programmable Vertex Pull
+    * One SSBO in core that get's reset every frame and is always bound
+
+ - DrawCall/CommandBuffer design
+ - Uniforms
+ - Shader Infos (Uniform locations, inputs?)
+
+DONE:
+ * Shaders
+
+DSA --> Direct state Access?
+Programmable Vertex pull?
+    Just wanna see how that wo
+Draw-Calls
+Uniforms --> mat4 = vec4 * 4, so better to leave it with a uniform byte-array
+ -> Have
+
+GRX_Shader rework:
+ * Make vert_main and frag_main work
+ * Make includes work
+ * Make overwrites of pipeline state work ()
+
+
+
+
 Check where syntax_editor.arena is used
 Sorting should not be done in the way i'm currently doing it. There should be a less funciton, and if that's wrong, then swap
 string list set should be set_text() or set_string
@@ -115,6 +178,31 @@ Stuff ontop of Base-Library:
  - GUI
 
 
+Why do I want a file listener?
+ - Hot code-reloading of shader files
+
+Pipeline-State:
+ - Depth-Test state
+
+OpenGL-State:
+ - Framebuffer
+ - Texture units
+
+Let's go through pipeline state and see what we have
+
+
+Shader-Design:
+--------------
+ - One shader folder, where all shaders are hot-reloaded
+ - Shaders can define 'changes' to the default pipeline state:
+        * Depth-Test mode
+        * Alpha-Blending mode
+        * Face-Culling and others
+    Why is this usefull?
+    Because these things usually depend on what the shader 'wants' to do.
+    Also this makes it hot-reloadable, which is probably nice for testing
+ - A single shader-file
+ #include "filename.glsl"
 
 Rendering_Layer Rework TODO:
 ----------------------------

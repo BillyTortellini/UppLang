@@ -56,6 +56,10 @@ template <typename T>
 struct Optional {
     bool available;
     T value;
+
+    T unwrap(T alternative) {
+        return available ? value : alternative;
+    }
 };
 
 template <typename T>
@@ -99,7 +103,7 @@ void memory_zero(T* ptr) {
 
 
 // Common Enums
-enum class Order_Comparison_Result
+enum class Comparison_Result
 {
     LESS,
     EQUAL,

@@ -186,25 +186,25 @@ Analysis_Info* pass_get_base_info(Analysis_Pass* pass, AST::Node* node, Info_Que
     {
     case Info_Query::CREATE: 
 	{
-		assert(!query_result.value_is_in_table, "");
+		assert(!query_result.exists, "");
 		break;
     }
     case Info_Query::CREATE_IF_NULL: 
 	{
         // Check if already there
-		if (query_result.value_is_in_table) {
+		if (query_result.exists) {
 			return *query_result.get_value_pointer();
 		}
 		break;
     }
     case Info_Query::READ_NOT_NULL: 
 	{
-		assert(query_result.value_is_in_table, "");
+		assert(query_result.exists, "");
 		return *info_mapping.query_to_value(query_result);
     }
     case Info_Query::TRY_READ: 
 	{
-		if (!query_result.value_is_in_table) {
+		if (!query_result.exists) {
 			return nullptr;
 		}
 		return *info_mapping.query_to_value(query_result);
@@ -1317,7 +1317,7 @@ Optional<Upp_Constant> expression_calculate_comptime_value(
 	}
 
 	assert(!type_size_is_unfinished(comptime_result.data_type), "");
-	auto bytes = array_create_static<byte>((byte*)comptime_result.data, comptime_result.data_type->memory_info.value.size);
+	auto bytes = array_make<byte>((byte*)comptime_result.data, comptime_result.data_type->memory_info.value.size);
 	Constant_Pool_Result result = constant_pool_add_constant(compilation_data->constant_pool, comptime_result.data_type, bytes);
 	if (!result.success) {
 		log_semantic_error(semantic_context, error_message_on_failure, expr);
@@ -1931,7 +1931,7 @@ Workload_Pair workload_pair_create(Workload_Base* workload, Workload_Base* depen
 }
 
 u64 workload_pair_hash(Workload_Pair* pair) {
-	return hash_memory(array_create_static_as_bytes(pair, 1));
+	return hash_memory(object_as_bytes(pair));
 }
 
 bool workload_pair_equals(Workload_Pair* p1, Workload_Pair* p2) {
@@ -2755,7 +2755,7 @@ bool pattern_matcher_match_types(Pattern_Matcher& result, Datatype* type_a, Data
 		if (!type_b->contains_pattern) 
 		{
 			auto pool_result = constant_pool_add_constant(
-				compilation_data->constant_pool, types.type_handle->upcast(), array_create_static_as_bytes(&type_b->type_handle, 1)
+				compilation_data->constant_pool, types.type_handle->upcast(), object_as_bytes(&type_b->type_handle)
 			);
 			assert(pool_result.success, "Type handle must work as constant!");
 
@@ -2913,7 +2913,7 @@ bool pattern_matcher_match_types(Pattern_Matcher& result, Datatype* type_a, Data
 			// Match implicit parameter to element count
 			upp_size size = array_b->element_count;
 			auto pool_result = constant_pool_add_constant(
-				compilation_data->constant_pool, upcast(types.size_type), array_create_static_as_bytes(&size, 1)
+				compilation_data->constant_pool, upcast(types.size_type), object_as_bytes(&size)
 			);
 			assert(pool_result.success, "upp_size type must work as constant");
 
@@ -3384,7 +3384,7 @@ Call_Info call_info_make_with_empty_arguments(Call_Origin origin, Arena* arena)
 	call_info.matching_success = false;
 	call_info.call_node = nullptr;
 	call_info.instanciated = false;
-	call_info.argument_infos = array_create_static<Argument_Info>(nullptr, 0);
+	call_info.argument_infos = array_make<Argument_Info>(nullptr, 0);
 	call_info.parameter_values = arena->allocate_array<Parameter_Value>(origin.signature->parameters.size);
 	for (int i = 0; i < call_info.parameter_values.size; i++) {
 		call_info.parameter_values[i] = parameter_value_make_unset();
@@ -4210,7 +4210,7 @@ u64 hash_poly_instance(Poly_Instance** instance_ptr)
 	for (int i = 0; i < instance->variable_states.size; i++) {
 		hash = hash_combine(hash, hash_pattern_variable_state(&instance->variable_states[i]));
 	}
-	hash = hash_combine(hash, hash_i32(&instance->parameter_types.size));
+	hash = hash_combine(hash, hash_u64(&instance->parameter_types.size));
 	for (int i = 0; i < instance->parameter_types.size; i++) {
 		hash = hash_combine(hash, hash_pointer(instance->parameter_types[i]));
 	}
@@ -5828,18 +5828,8 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 				auto arena_checkpoint = semantic_context->scratch_arena->make_checkpoint();
 				SCOPE_EXIT(arena_checkpoint.rewind());
 				DynString path = dynstring_create(semantic_context->scratch_arena);
-
-				// Replace filename in path with import string (All imports are currently relative)
-				path.append(import_node->options.file_import.node_unit->filepath);
-				Optional<int> last_pos = string_find_character_index_reverse(path.to_string(), '/', path.size - 1);
-				if (last_pos.available) {
-				    dynstring_truncate(&path, last_pos.value + 1);
-				}
-				else {
-				    dynstring_reset(&path);
-				}
-				path.append(import_node->options.file_import.relative_path.string);
-				filepath_relative_to_absolute_path(&path);
+				path.append(import_node->options.file_import.relative_path);
+				filepath_relative_to_full_path_with_start(&path, import_node->options.file_import.node_unit->filepath);
 				imported_unit = compilation_data_add_compilation_unit_unique(compilation_data, path.to_string(), true, true);
 			}
 
@@ -8284,7 +8274,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		default: panic("");
 		}
 		expression_info_set_constant(
-			info, literal_type, array_create_static<byte>((byte*)value_ptr, 
+			info, literal_type, array_make<byte>((byte*)value_ptr, 
 			literal_type->memory_info.value.size), AST::upcast(expr),
 			semantic_context
 		);
@@ -8488,7 +8478,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		// Add result to constant pool
 		void* value_ptr = bytecode_thread_get_return_value_ptr(thread);
 		Constant_Pool_Result pool_result = constant_pool_add_constant(
-			compilation_data->constant_pool, result_type, array_create_static<byte>((byte*)value_ptr, result_type->memory_info.value.size)
+			compilation_data->constant_pool, result_type, array_make<byte>((byte*)value_ptr, result_type->memory_info.value.size)
 		);
 		if (!pool_result.success) {
 			log_semantic_error(semantic_context, "Couldn't serialize bake result", expr, Node_Section::KEYWORD);
@@ -9808,17 +9798,13 @@ Array<Reachable_Table> symbol_table_find_reachable_operators_cached(Symbol_Table
 			if (workload == nullptr) continue;
 			bool success = semantic_context_wait_for_workload(semantic_context, upcast(workload));
 			if (!success) {
-				return array_create_empty<Reachable_Table>();
+				return array_make_empty<Reachable_Table>();
 			}
 		}
 		symbol_table->reachable_operator_tables_workloads_finished = true;
 	}
 
-	return array_create_static<Reachable_Table>(
-		symbol_table->reachable_operator_table_cache.buffer.data, 
-		symbol_table->reachable_operator_table_cache.size
-	);
-}
+	return symbol_table->reachable_operator_table_cache.to_array();}
 
 Optional<Upp_Constant> query_default_value(Semantic_Context* semantic_context, Identifier name, Datatype* datatype, Upp_Function* function)
 {
@@ -10107,7 +10093,7 @@ Custom_Operator_Query_Result query_custom_operator(Custom_Operator_Query operato
 			instance_key.datatypes[1] = operator_query.argument_datatypes[1];
 
 			auto query_result = compilation_data->custom_operator_instances.query(instance_key, true);
-			if (query_result.value_is_in_table) 
+			if (query_result.exists) 
 			{
 				Custom_Operator_Instance_Value* instance_value = compilation_data->custom_operator_instances.query_to_value(query_result);
 
@@ -10814,7 +10800,7 @@ void analyse_custom_operator_node(AST::Definition_Custom_Operator* custom_operat
 			query.datatype = value.datatype;
 			query.name = value.name;
 			auto table_result = symbol_table->default_values.query(query, true);
-			if (table_result.value_is_in_table) {
+			if (table_result.exists) {
 				symbol_table->default_values.query_to_value(table_result)->push_back(value);
 			}
 			else {
@@ -10860,7 +10846,7 @@ void analyse_custom_operator_node(AST::Definition_Custom_Operator* custom_operat
 
 	// Insert query node path
 	auto& query_tree = symbol_table->custom_operator_query_table;
-	query_tree.reserve(query_tree.element_count + query_node_path.size + 1);
+	query_tree.reserve_capacity(query_tree.element_count + query_node_path.size + 1);
 	int parent_index = -1;
 	for (int i = 0; i < query_node_path.size; i++)
 	{
@@ -10877,7 +10863,7 @@ void analyse_custom_operator_node(AST::Definition_Custom_Operator* custom_operat
 
 		// Check if node already exists
 		auto query = query_tree.query(node);
-		if (query.value_is_in_table)
+		if (query.exists)
 		{
 			Custom_Operator_Query_Node_Value* value = query_tree.query_to_value(query);
 			parent_index = value->index;
@@ -10908,7 +10894,7 @@ void analyse_custom_operator_node(AST::Definition_Custom_Operator* custom_operat
 	while (true)
 	{
 		auto query = query_tree.query(result_node);
-		if (!query.value_is_in_table) {
+		if (!query.exists) {
 			query_tree.insert_with_query(query, result_node, result_node_value);
 			break;
 		}

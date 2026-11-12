@@ -48,7 +48,7 @@ struct Allocator_Base
 			result.size = 0;
 			return result;
 		}
-		return array_create_static<T>((T*) allocate_raw(sizeof(T) * size, alignof(T)), size); 
+		return array_make<T>((T*) allocate_raw(sizeof(T) * size, alignof(T)), size); 
 	} 
 
 	template<typename T> 
@@ -110,16 +110,16 @@ struct Arena
 
 	template<typename T> 
 	T* allocate() {	return (T*)allocate_raw(sizeof(T), alignof(T)); } 
-	
+
 	template<typename T> 
-	Array<T> allocate_array(int size) { 
+	Array<T> allocate_array(uint size) { 
 		if (size == 0) {
 			Array<T> result;
 			result.data = nullptr;
 			result.size = 0;
 			return result;
 		}
-		return array_create_static<T>((T*) allocate_raw(sizeof(T) * size, alignof(T)), size); 
+		return array_make<T>((T*) allocate_raw(sizeof(T) * size, alignof(T)), size); 
 	} 
 
 	Arena_Checkpoint make_checkpoint();
@@ -187,17 +187,18 @@ template<typename T>
 struct DynArray
 {
 	Arena* arena;
-	Array<T> buffer;
+	T* data;
+	uint capacity;
 	uint size;
 
 	static DynArray<T> create(Arena* arena, uint capacity = 0)
 	{
 		DynArray<T> result;
 		result.arena = arena;
-		result.buffer.data = nullptr;
-		result.buffer.size = 0;
+		result.data = nullptr;
+		result.capacity = 0;
 		result.size = 0;
-		result.reserve(capacity);
+		result.reserve_capacity(capacity);
 		return result;
 	}
 
@@ -206,64 +207,67 @@ struct DynArray
 		return this;
 	}
 
-	void reserve(uint requested_size) 
+	void reserve_capacity(uint requested_capacity) 
 	{
-		if (buffer.size >= requested_size) return;
+		if (capacity >= requested_capacity) return;
 
 		// Figure out new size
-		uint new_size = math_maximum(requested_size, (uint) (buffer.size * 3) / 2 + 1);
+		uint new_capacity = math_maximum(requested_capacity, (capacity * 3) / 2 + 1);
 
-		if (buffer.data == nullptr) {
-			buffer = arena->allocate_array<T>((int) new_size);
+		if (this->data == nullptr) {
+			this->data = (T*)arena->allocate_raw(sizeof(T) * new_capacity, alignof(T));
+			this->capacity = new_capacity;
 			return;
 		}
 
 		// Check if resize possible
-		if (arena->resize(buffer.data, buffer.size * sizeof(T), new_size * sizeof(T))) {
-			buffer.size = (int) new_size;
+		if (arena->resize(data, capacity * sizeof(T), new_capacity * sizeof(T))) {
+			capacity = new_capacity;
 			return;
 		}
 
 		// Otherwise create new buffer and move data
-		Array<T> new_buffer = arena->allocate_array<T>((int) new_size);
-		memory_copy(new_buffer.data, buffer.data, size * sizeof(T));
-		buffer = new_buffer;
+		T* new_data = (T*)arena->allocate_raw(sizeof(T) * new_capacity, alignof(T));
+		memory_copy(new_data, data, size * sizeof(T));
+		data = new_data;
+		capacity = new_capacity;
+	}
+
+	void reserve_space(uint new_item_count) {
+		this->reserve_capacity(size + new_item_count);
 	}
 
 	void push_back(const T& value) {
-		reserve(size + 1);
-		buffer[size] = value;
+		this->reserve_space(1);
+		data[size] = value;
 		size += 1;
 	}
-	
-	void insert_ordered(const T& value, int insert_before_index)
-	{
-		assert(insert_before_index >= 0 && insert_before_index <= size, "");
-		reserve(size + 1);
-		size += 1;
-		for (int i = size - 1; i - 1 >= insert_before_index; i -= 1) {
-			buffer[i] = buffer[i - 1];
-		}
-		buffer[insert_before_index] = value;
+
+	void append(const T& value) {
+		push_back(value);
 	}
 
 	void insert_array(Array<T> values, int insert_index)
 	{
-		if (values.size == 0) return;
-		if (insert_index < 0) {
-			insert_index = 0;
-		}
+		assert(insert_index >= 0 && insert_index <= (int)size, "");
+		reserve_space(values.size);
 
-		reserve(size + values.size);
-		if (insert_index < size) {
-			memory_copy(&buffer.data[insert_index + values.size], &buffer.data[insert_index], (size - insert_index) * sizeof(T));
-		}
-		else {
-			insert_index = size;
-		}
-
-		memory_copy(&buffer.data[insert_index], values.data, values.size * sizeof(T));
+		// Move values to create 'hole' for values in array
+		memory_copy(&data[insert_index + values.size], &data[insert_index], (size - insert_index) * sizeof(T));
+		// Move values into hole
+		memory_copy(&data[insert_index], values.data, values.size * sizeof(T));
 		size += values.size;
+	}
+	
+	void insert_ordered(const T& value, int insert_before_index) {
+		assert(insert_before_index >= 0 && insert_before_index <= (int)size, "");
+		int insert_index = insert_before_index;
+		reserve_space(1);
+		// Move values to create 'hole' for values in array
+		memory_copy(&data[insert_index + 1], &data[insert_index], (size - insert_index) * sizeof(T));
+		// Insert value
+		data[insert_index] = value;
+		size += 1;
 	}
 
 	void append_array(Array<T> values)
@@ -278,23 +282,18 @@ struct DynArray
 		count = math_minimum(count, (int)size - start);
 		if (count <= 0) return;
 
-		memory_copy(&buffer[start], &buffer[start + count], size - (start + count));
+		memory_copy(&data[start], &data[start + count], size - (start + count));
 		size -= count;
 	}
 
 	void swap_remove(int index) {
-		assert(index >= 0 && index < size, "");
-		if (index != size - 1) {
-			buffer[index] = buffer[size - 1];
-		}
+		assert(size > 0 && index >= 0 && index < size, "");
+		data[index] = data[size - 1];
 		size -= 1;
 	}
 
 	void remove_ordered(int index) {
-		for (int i = index; i + 1 < size; i++) {
-			buffer.data[i] = buffer.data[i + 1];
-		}
-		size -= 1;
+		remove_range_ordered(index, 1);
 	}
 
 	void rollback_to_size(int new_size)
@@ -305,28 +304,39 @@ struct DynArray
 
 	T& last() {
 		assert(size > 0, "");
-		return buffer[size - 1];
+		return data[size - 1];
+	}
+
+	T* last_ptr() {
+		return &data[size];
 	}
 
 	T& at(int index) {
 		assert(index < size && index >= 0, "");
-		return buffer.data[index];
+		return data[index];
 	}
 
 	T& operator[](int index) {
 		assert(index < size && index >= 0, "");
-		return buffer.data[index];
+		return data[index];
 	}
 
 	Array<T> as_array() {
-		return array_create_static<T>(buffer.data, (int) size);
+		return array_make<T>(data, size);
+	}
+
+	Array<T> to_array() {
+		return array_make<T>(data, size);
+	}
+
+	Array<byte> to_byte_array() {
+		return array_make<byte>((byte*)data, size * sizeof(T));
 	}
 };
 
 
 
 // DynSet
-
 u64 find_next_suitable_prime_hashset_size(u64 value);
 
 const float DYNSET_MAX_LOAD_FACTOR = 0.7f;
@@ -366,7 +376,7 @@ struct DynSet
 		result.entries.size = 0;
 		result.element_count = 0;
 		if (expected_element_count != 0) {
-			result.reserve(expected_element_count);
+			result.reserve_capacity(expected_element_count);
 		}
 		return result;
 	}
@@ -389,16 +399,16 @@ struct DynSet
 		element_count = 0;
 	}
 
-	void reserve(uint expected_element_count)
+	void reserve_capacity(uint expected_element_count)
 	{
 		uint min_size = (uint)((float)expected_element_count / DYNSET_MAX_LOAD_FACTOR) + 1;
 		if (entries.size >= min_size) return;
-		min_size = math_maximum((entries.size * 3) / 2 + 1, (int)min_size);
+		min_size = math_maximum((entries.size * 3) / 2 + 1, min_size);
 		uint new_size = find_next_suitable_prime_hashset_size(min_size);
 		assert(new_size >= expected_element_count, "");
 
 		if (entries.data == nullptr) {
-			entries = arena->allocate_array<DynSet_Entry<T>>((int)new_size);
+			entries = arena->allocate_array<DynSet_Entry<T>>(new_size);
 			reset();
 			return;
 		}
@@ -452,7 +462,7 @@ struct DynSet
 
 	bool insert_with_hash(T& value, u64 value_hash)
 	{
-		reserve(element_count + 1);
+		reserve_capacity(element_count + 1);
 		for (int sonding_index = 0; sonding_index < entries.size; sonding_index += 1)
 		{
 			auto& entry = entries[hash_to_entry_index(value_hash, sonding_index)];
@@ -588,7 +598,7 @@ struct DynTable_Query_Result
 	K query_key;
 	u64 hash;
 	int index; // If value is in table, then this is the entry-index, otherwise it's the sonding index for insert
-	bool value_is_in_table;
+	bool exists;
 
 	K get_key() {
 		return *table->query_to_key(*this);
@@ -642,7 +652,7 @@ struct DynTable
 		result.entries.size = 0;
 		result.element_count = 0;
 		if (expected_element_count != 0) {
-			result.reserve(expected_element_count);
+			result.reserve_capacity(expected_element_count);
 		}
 		return result;
 	}
@@ -665,19 +675,19 @@ struct DynTable
 		element_count = 0;
 	}
 
-	void reserve(uint expected_element_count)
+	void reserve_capacity(uint expected_element_count)
 	{
 		uint min_size = (uint)((float)expected_element_count / DYNSET_MAX_LOAD_FACTOR) + 1;
 		if (entries.size >= min_size) return;
 
 		// Calculate new size
-		min_size = math_maximum((entries.size * 3) / 2 + 1, (int)min_size);
+		min_size = math_maximum((entries.size * 3) / 2 + 1, min_size);
 		uint new_size = find_next_suitable_prime_hashset_size(min_size);
 		assert(new_size >= expected_element_count, "");
 
 		// Handle empty table
 		if (entries.data == nullptr) {
-			entries = arena->allocate_array<DynTable_Entry<K, V>>((int)new_size);
+			entries = arena->allocate_array<DynTable_Entry<K, V>>(new_size);
 			reset();
 			return;
 		}
@@ -691,13 +701,13 @@ struct DynTable
 			checkpoint = arena->make_checkpoint();
 			old_entries = arena->allocate_array<DynTable_Entry<K,V>>(entries.size);
 			memory_copy(old_entries.data, entries.data, entries.size * sizeof(DynTable_Entry<K,V>));
-			entries.size = (int)new_size;
+			entries.size = new_size;
 		}
 		else
 		{
 			// Allocate new buffer
 			old_entries = entries;
-			entries = arena->allocate_array<DynTable_Entry<K,V>>((int)new_size);
+			entries = arena->allocate_array<DynTable_Entry<K,V>>(new_size);
 			checkpoint = arena->make_checkpoint();
 		}
 
@@ -736,11 +746,11 @@ struct DynTable
 		result.table = this;
 		result.hash = hash;
 		result.index = query_for_insert ? -1 : -2;
-		result.value_is_in_table = false;
+		result.exists = false;
 		result.query_key = key;
 
 		if (query_for_insert) {
-			reserve(element_count + 1);
+			reserve_capacity(element_count + 1);
 		}
 
 		for (int sonding_index = 0; sonding_index < entries.size; sonding_index++)
@@ -754,7 +764,7 @@ struct DynTable
 			{
 				// Check if element is already inserted (No duplicate values)
 				if (entry.hash == result.hash && equals_function(&entry.key, &key)) {
-					result.value_is_in_table = true;
+					result.exists = true;
 					result.index = entry_index;
 					return result;
 				}
@@ -772,7 +782,7 @@ struct DynTable
 			}
 			case DynSet_Entry_State::FREE: 
 			{
-				result.value_is_in_table = false;
+				result.exists = false;
 				if (result.index == -1) {
 					result.index = sonding_index; // We can insert at this sonding_index
 				}
@@ -801,7 +811,7 @@ struct DynTable
 	{
 		// Find entry to insert
 		DynTable_Entry<K, V>* entry = nullptr;
-		if (result.value_is_in_table) 
+		if (result.exists) 
 		{
 			// If entry is in table, then we overwrite the value
 			entry = &entries[result.index];
@@ -809,7 +819,7 @@ struct DynTable
 		else
 		{
 			assert(result.index >= 0, "Must be true, otherwise we searched without insert query");
-			reserve(element_count + 1);
+			reserve_capacity(element_count + 1);
 			element_count += 1;
 			entry = &entries[hash_to_entry_index(result.hash, result.index)];
 
@@ -834,19 +844,19 @@ struct DynTable
 
 	void remove_with_query(DynTable_Query_Result<K, V>& result)
 	{
-		if (!result.value_is_in_table) return;
+		if (!result.exists) return;
 		element_count -= 1;
 		assert(entries[result.index].state == DynSet_Entry_State::OCCUPIED, "");
 		entries[result.index].state = DynSet_Entry_State::FREE_AGAIN;
 	}
 
 	K* query_to_key(DynTable_Query_Result<K, V>& result) {
-		assert(result.value_is_in_table, "");
+		assert(result.exists, "");
 		return &entries[result.index].key;
 	}
 
 	V* query_to_value(DynTable_Query_Result<K, V>& result) {
-		assert(result.value_is_in_table, "");
+		assert(result.exists, "");
 		return &entries[result.index].value;
 	}
 
@@ -856,14 +866,14 @@ struct DynTable
 	void insert(const K& key, const V& value)
 	{
 		auto result = query(key);
-		assert(!result.value_is_in_table, "");
+		assert(!result.exists, "");
 		insert_with_query(result, key, value);
 	}
 
 	bool try_insert(const K& key, const V& value)
 	{
 		auto result = query(key);
-		if (result.value_is_in_table) {
+		if (result.exists) {
 			return false;
 		}
 		result.insert_key_value(key, value);
@@ -875,12 +885,12 @@ struct DynTable
 	{
 		auto result = query(key, false);
 		remove_with_query(result);
-		return result.value_is_in_table;
+		return result.exists;
 	}
 
 	V* find(const K& key) {
 		auto result = query(key, false);
-		if (!result.value_is_in_table) return nullptr;
+		if (!result.exists) return nullptr;
 		return query_to_value(result);
 	}
 
@@ -942,6 +952,16 @@ struct DynTable
 		assert(next_index == element_count, "");
 		return result;
 	}
+
+	void for_each(void (*function_ptr)(K* key, V* value, void* userdata), void* userdata)
+	{
+		for (int i = 0; i < entries.size; i++)
+		{
+			auto& entry = entries[i];
+			if (entry.state != DynSet_Entry_State::OCCUPIED) continue;
+			function_ptr(&entry.key, &entry.value, userdata);
+		}
+	}
 };
 
 
@@ -971,6 +991,10 @@ struct List
 		result.tail = nullptr;
 		result.element_count = 0;
 		return result;
+	}
+
+	static Free_List create_suitable_free_list(Arena* arena) {
+		return Free_List::create<List_Node<T>>(arena->upcast());
 	}
 
 	void reset()
