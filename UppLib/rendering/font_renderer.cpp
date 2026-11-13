@@ -292,7 +292,7 @@ void Raster_Font::push_line(ivec2 pos, String text, vec3 color)
 
     for (int i = 0; i < text.size; i++)
     {
-        unsigned char character = text.characters[i];
+        unsigned char character = text[i];
         if (character >= char_to_glyph_index.size) continue;
         const Font_Glyph_Info& glyph_info = glyph_infos[char_to_glyph_index[character]];
 

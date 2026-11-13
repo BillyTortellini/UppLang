@@ -165,7 +165,7 @@ void source_code_fill_from_string(Source_Code* code, String text)
 
         // Find line end
         int line_start_index = index;
-        while (index < text.size && text.characters[index] != '\n') {
+        while (index < text.size && text.data[index] != '\n') {
             index += 1;
         }
         int line_end_index = index;
@@ -240,7 +240,7 @@ void source_text_remove_invalid_whitespaces(DynString* text)
     while (index < text->size)
     {
         char curr = (*text)[index];
-        // Remove control characters from line, like \n, \t, \r and others
+        // Remove control data from line, like \n, \t, \r and others
         if (curr < ' '){
             dynstring_remove_character(text, index);
         }

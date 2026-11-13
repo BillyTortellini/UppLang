@@ -966,7 +966,7 @@ void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Un
         }
         if (compilation_data->compile_type == Compile_Type::BUILD_CODE)
         {
-            //logg("\n\n\n\n\n\n\n\n\n\n\n\n--------SOURCE CODE--------: \n%s\n\n", source_code->characters);
+            //logg("\n\n\n\n\n\n\n\n\n\n\n\n--------SOURCE CODE--------: \n%s\n\n", source_code->data);
             if (do_analysis && output_type_system) {
                 logg("\n--------TYPE SYSTEM RESULT--------:\n");
                 type_system_print(compilation_data->type_system);
@@ -1724,7 +1724,7 @@ void compiler_run_testcases(bool force_run)
             continue;
         }
 
-        logg("Testcase #%4d: %.*s\n", test_case_count, name.size, name.characters);
+        logg("Testcase #%4d: %.*s\n", test_case_count, name.size, name.data);
         test_case_count += 1;
 
         Compilation_Data* compilation_data = compilation_data_create(fiber_pool);
@@ -1734,7 +1734,7 @@ void compiler_run_testcases(bool force_run)
         path.reset()->append("upp_code/testcases/")->append(name);
         Compilation_Unit* main_unit = compilation_data_add_compilation_unit_unique(compilation_data, path.to_string(), true, false);
         if (main_unit == nullptr) {
-            dynstring_append_formated(&result, "ERROR:   Test %.*s could not load test file\n", name.size, name.characters);
+            dynstring_append_formated(&result, "ERROR:   Test %.*s could not load test file\n", name.size, name.data);
             errors_occured = true;
             continue;
         }
@@ -1743,7 +1743,7 @@ void compiler_run_testcases(bool force_run)
         Exit_Code exit_code = compiler_execute(compilation_data);
         if (exit_code.type != Exit_Code_Type::SUCCESS && case_should_succeed)
         {
-            dynstring_append_formated(&result, "ERROR:   Test %.*s exited with Code ", name.size, name.characters);
+            dynstring_append_formated(&result, "ERROR:   Test %.*s exited with Code ", name.size, name.data);
             exit_code_append_to_string(&result, exit_code);
             dynstring_append_formated(&result, "\n");
             if (exit_code.type == Exit_Code_Type::COMPILATION_FAILED)
@@ -1754,11 +1754,11 @@ void compiler_run_testcases(bool force_run)
             errors_occured = true;
         }
         else if (exit_code.type == Exit_Code_Type::SUCCESS && !case_should_succeed) {
-            dynstring_append_formated(&result, "ERROR:   Test %.*s successfull, but should fail!\n", name.size, name.characters);
+            dynstring_append_formated(&result, "ERROR:   Test %.*s successfull, but should fail!\n", name.size, name.data);
             errors_occured = true;
         }
         else {
-            dynstring_append_formated(&result, "SUCCESS: Test %.*s\n", name.size, name.characters);
+            dynstring_append_formated(&result, "SUCCESS: Test %.*s\n", name.size, name.data);
         }
     }
 
@@ -1792,11 +1792,11 @@ void compiler_run_testcases(bool force_run)
     {
         DynString cut_code = dynstring_create(scratch_arena);
         for (int j = 0; j < i; j++) {
-            char c = code.characters[j];
+            char c = code[j];
 			cut_code.append(c);
         }
 
-        //logg("Cut code:\n-----------------------\n%s", cut_code.characters);
+        //logg("Cut code:\n-----------------------\n%s", cut_code.data);
         //compiler_compile(&compiler, cut_code, false);
         if (i % (code.size / 10) == 0) {
             logg("Stresstest (Simple): %d/%d characters\n", i, code.size);
@@ -1811,7 +1811,7 @@ void compiler_run_testcases(bool force_run)
         DynString cut_code = dynstring_create(scratch_arena);
         for (int j = 0; j < i; j++)
         {
-            char c = code.characters[j];
+            char c = code[j];
             bool is_parenthesis = true;
             bool is_open = true;
             char counter_type = '}';
@@ -1847,7 +1847,7 @@ void compiler_run_testcases(bool force_run)
             }
         }
 
-        //logg("Cut code:\n-----------------------\n%s", cut_code.characters);
+        //logg("Cut code:\n-----------------------\n%s", cut_code.data);
         //compiler_compile(&compiler, cut_code, false);
         if (i % (code.size / 10) == 0) {
             logg("Stresstest (Parenthesis): %d/%d characters\n", i, code.size);

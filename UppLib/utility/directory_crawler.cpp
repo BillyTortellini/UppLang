@@ -61,8 +61,8 @@ void directory_crawler_set_path_to_file_dir(Directory_Crawler* crawler, String f
 void directory_crawler_set_to_working_directory(Directory_Crawler* crawler) {
     int path_length = GetCurrentDirectory(0, 0);
     crawler->path.reset()->reserve_capacity(path_length + 1);
-    int written_string_length = GetCurrentDirectory(crawler->path.capacity, crawler->path.characters);
-    crawler->path.size = strlen(crawler->path.characters);
+    int written_string_length = GetCurrentDirectory(crawler->path.capacity, crawler->path.data);
+    crawler->path.size = strlen(crawler->path.data);
     crawler->path_changed = true;
     filepath_relative_to_absolute_path(&crawler->path);
 }
@@ -86,7 +86,7 @@ bool directory_crawler_go_down_one_directory(Directory_Crawler* crawler, int dir
     if (dir_index < 0 || dir_index >= files.size) return false;
     auto file = files[dir_index];
     if (!file.is_directory) return false;
-    dynstring_append_formated(&crawler->path, "/%s", file.filename.characters);
+    crawler->path.append("/")->append(file.filename);
     crawler->path_changed = true;
     return true;
 }
@@ -132,10 +132,10 @@ Array<Directory_Item> directory_crawler_get_content(Directory_Crawler* crawler)
 void directory_crawler_print_all_files(Directory_Crawler* crawler) 
 {
     auto files = directory_crawler_get_content(crawler);
-    logg("Directory: %s\n", crawler->path.characters);
+    logg("Directory: %.*s\n", crawler->path.size, crawler->path.data);
     for (int i = 0; i < files.size; i++) {
         Directory_Item& file = files[i];
-        logg("    %.%s %s\n", files[i].filename.size, files[i].filename.characters, file.is_directory ? "d" : "");
+        logg("    %.*s %s\n", files[i].filename.size, files[i].filename.data, file.is_directory ? "d" : "");
     }
 }
     

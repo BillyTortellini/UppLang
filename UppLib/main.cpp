@@ -29,10 +29,10 @@ void syntax_renaming()
 
     printf("Directory to scan: ");
     dynstring_reset(&input_line);
-    fgets(input_line.characters, input_line.capacity - 1, stdin);
-    input_line.size = (int)strlen(input_line.characters);
-    if (input_line.size > 0 && input_line.characters[input_line.size - 1] == '\n') {
-        input_line.characters[input_line.size - 1] = '\0';
+    fgets(input_line.data, input_line.capacity - 1, stdin);
+    input_line.size = (int)strlen(input_line.data);
+    if (input_line.size > 0 && input_line[input_line.size - 1] == '\n') {
+        input_line.data[input_line.size - 1] = '\0';
         input_line.size -= 1;
     }
     dynstring_replace_character(&input_line, '\\', '/');
@@ -43,9 +43,9 @@ void syntax_renaming()
     for (int i = 0; i < files.size; i++)
     {
         // Load file
-        auto file = files[i];
+        auto& file = files[i];
         if (file.is_directory) continue;
-        printf("Editing file %.*s\n", file.filename.size, file.filename.characters);
+        printf("Editing file %.*s\n", file.filename.size, file.filename.data);
         
         filepath.reset()->append(input_line);
         if (!string_ends_with(filepath.to_string(), string_make("/"))) {
@@ -74,10 +74,10 @@ void syntax_renaming()
             if (replace_index != -1) 
             {
                 printf("Found assert line: \n");
-                printf("----%s\n", new_line.characters);
+                printf("----%.*s\n", new_line.size, new_line.data);
                 dynstring_remove_substring(&new_line, replace_index, replace_index + replace_text.size);
                 dynstring_insert(&new_line, replace_with, replace_index);
-                printf("----%s\n", new_line.characters);
+                printf("----%.*s\n", new_line.size, new_line.data);
             }
             result_text.append(new_line);
             if (line_index != lines.size - 1) {
@@ -89,7 +89,7 @@ void syntax_renaming()
     }
 
     printf("Enter to exit");
-    fgets(input_line.characters, input_line.capacity - 1, stdin);
+    fgets(input_line.data, input_line.capacity - 1, stdin);
 }
 
 struct Node
@@ -268,7 +268,7 @@ int count_lines_of_code()
 
                 DynString path = dynstring_create(&arena);
                 path.append(dir);
-                if (path.size > 0 && path.characters[path.size - 1] != '/') {
+                if (path.size > 0 && path.data[path.size - 1] != '/') {
                     path.append('/');
                 }
                 path.append(file_info.filename);
@@ -281,11 +281,11 @@ int count_lines_of_code()
                 {
                     int dot_index = -1;
                     for (int i = path.size - 1; i >= 0; i -= 1) {
-                        if (path.characters[i] == '.') {
+                        if (path.data[i] == '.') {
                             dot_index = i;
                             break;
                         }
-                        else if (path.characters[i] == '/') {
+                        else if (path.data[i] == '/') {
                             break;
                         }
                     }
@@ -332,7 +332,7 @@ int count_lines_of_code()
     for (int i = 0; i < line_infos.size; i++)
     {
         File_Line_Info& info = line_infos[i];
-        printf("%5d %s\n", info.line_count, info.filename.characters);
+        printf("%5d %s\n", info.line_count, info.filename.data);
     }
     printf("-------------\n");
     printf("Total: #%d\n\n", line_count_total);

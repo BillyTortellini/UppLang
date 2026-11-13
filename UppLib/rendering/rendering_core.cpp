@@ -779,10 +779,10 @@ void shader_add_shader_stage(Shader* shader, Shader_Stage stage, String source_c
     }
 
     GLint shader_id = glCreateShader(gl_stage);
-    const char* sources[] = { source_code.characters };
+    const char* sources[] = { source_code.data };
     const GLint lengths[] = { source_code.size };
     glShaderSource(shader_id, 1, sources, lengths);
-    // logg("compiling shader: \n\n%s\n\n", source_code.characters);
+    // logg("compiling shader: \n\n%s\n\n", source_code.data);
     glCompileShader(shader_id);
     opengl_utils_check_shader_compilation_status(shader_id);
     glAttachShader(shader->program_id, shader_id);
@@ -843,14 +843,14 @@ bool shader_compile(Shader* shader)
             GLint array_size; // Size, e.g. for arrays? or vector components?
             glGetActiveUniform(
                 shader->program_id, (GLuint)i, tmp_string.capacity, &tmp_string.size,
-                &array_size, &type, (GLchar*)tmp_string.characters
+                &array_size, &type, (GLchar*)tmp_string.data
             );
-            tmp_string.size = strlen(tmp_string.characters);
+            tmp_string.size = strlen(tmp_string.data);
 
             Shader_Uniform info;
             info.array_size = array_size;
             info.name = String_List::create(core->free_list_strings.upcast(), tmp_string.to_string());
-            info.location = glGetUniformLocation(shader->program_id, tmp_string.characters);
+            info.location = glGetUniformLocation(shader->program_id, tmp_string.data);
 
             switch (type)
             {
@@ -950,7 +950,7 @@ void shader_hotreload_fn(void* userdata, String filename)
                     continue; // Next line
                 }
                 String stage_name = words[1];
-                if (stage_name.size > 0 && stage_name.characters[words[1].size - 1] == '\r') {
+                if (stage_name.size > 0 && stage_name[words[1].size - 1] == '\r') {
                     stage_name.size -= 1;
                 }
 
@@ -1006,7 +1006,7 @@ void shader_hotreload_fn(void* userdata, String filename)
                     if (var_name.size == 0) {
                         panic("Shouldnt happen with split...");
                     }
-                    if (var_name.size >= 1 && var_name.characters[var_name.size - 1] == ';') {
+                    if (var_name.size >= 1 && var_name[var_name.size - 1] == ';') {
                         var_name.size -= 1;
                     }
                     if (var_name.size == 0) {
@@ -1045,7 +1045,7 @@ void shader_hotreload_fn(void* userdata, String filename)
                         logg("Expected valid suffix");
                         continue;
                     }
-                    if (suffix.size > 0 && suffix.characters[suffix.size - 1] == '\r') {
+                    if (suffix.size > 0 && suffix[suffix.size - 1] == '\r') {
                         suffix.size -= 1;
                     }
                     if (suffix.size <= 0) {

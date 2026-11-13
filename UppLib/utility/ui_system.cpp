@@ -454,7 +454,7 @@ void glyph_atlas_rasterize_font(Glyph_Atlas_* glyph_atlas, Bitmap_Atlas_Writer* 
 		ivec2 pixel_size = ivec2(face->glyph->bitmap.width, face->glyph->bitmap.rows);
 		if (pixel_size.x != 0 && pixel_size.y != 0)
 		{
-			// Special handling for Space ' ', or other characters without any pixels (Which use the empty pixel box)
+			// Special handling for Space ' ', or other data without any pixels (Which use the empty pixel box)
 			Bitmap glyph_bitmap = bitmap_create_static(pixel_size, face->glyph->bitmap.buffer, face->glyph->bitmap.pitch);
 			atlas_position = bitmap_atlas_add_sub_image(atlas_writer, glyph_bitmap, true);
 			if (bbox_is_empty(atlas_position)) {
@@ -519,7 +519,7 @@ void mesh_push_text(Mesh* mesh, Glyph_Atlas_* atlas, String text, ivec2 position
 
 	for (int i = 0; i < text.size; i++)
 	{
-		char c = text.characters[i];
+		char c = text[i];
 		Glyph_Information_& glyph = atlas->glyph_informations[atlas->character_to_glyph_map[(int)c]];
 
 		ivec2 screen_pos = ivec2(
@@ -574,7 +574,7 @@ void mesh_push_text_clipped(Mesh* mesh, Glyph_Atlas_* atlas, String text, ivec2 
 	vec2 screen_size = vec2(rendering_core.render_information.backbuffer_width, rendering_core.render_information.backbuffer_height);
 	vec2 bitmap_size = vec2(atlas->bitmap_atlas_size.x, atlas->bitmap_atlas_size.y);
 
-	// Figure out how many characters are going to be visible
+	// Figure out how many data are going to be visible
 	int char_start_index = 0;
 	int char_end_index = text.size; // Exclusive index
 	{
@@ -593,7 +593,7 @@ void mesh_push_text_clipped(Mesh* mesh, Glyph_Atlas_* atlas, String text, ivec2 
 
 	for (int i = char_start_index; i < char_end_index; i++)
 	{
-		unsigned char c = text.characters[i];
+		unsigned char c = text[i];
 		if (c == ' ') continue;
 		Glyph_Information_& glyph = atlas->glyph_informations[atlas->character_to_glyph_map[c]];
 
@@ -1368,7 +1368,7 @@ UI_String ui_system_add_string(String string)
 
 String ui_string_to_string(UI_String string) {
 	String result;
-	result.characters = &ui_system.string_buffer[string.start_index];
+	result.data = &ui_system.string_buffer[string.start_index];
 	result.size = string.length;
 	return result;
 };

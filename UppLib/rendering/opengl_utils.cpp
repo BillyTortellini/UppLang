@@ -57,7 +57,7 @@ bool opengl_utils_check_shader_compile_status(GLuint shader_id, DynString* out_e
 
         out_errors->append("Shader-Compilation Error:\n");
         out_errors->reserve_capacity(out_errors->size + maxLength + 1);
-        glGetShaderInfoLog(shader_id, maxLength, &maxLength, &out_errors->characters[out_errors->size]);
+        glGetShaderInfoLog(shader_id, maxLength, &maxLength, &out_errors->data[out_errors->size]);
         out_errors->size += maxLength;
         out_errors->append("\n");
         return false;
@@ -77,7 +77,7 @@ bool opengl_utils_check_program_link_status(GLuint program_id, DynString* out_er
 
         out_errors->append("Program Linking failed:\n");
         out_errors->reserve_capacity(out_errors->size + maxLength + 1);
-        glGetProgramInfoLog(program_id, maxLength, &maxLength, &out_errors->characters[out_errors->size]);
+        glGetProgramInfoLog(program_id, maxLength, &maxLength, &out_errors->data[out_errors->size]);
         out_errors->size += maxLength;
         out_errors->append("\n");
         return false;
@@ -112,7 +112,7 @@ Shader_Compile_Result opengl_utils_compile_shader_from_parts(Array<Shader_Part> 
 
         GLint length = part.source_code.size;
         glAttachShader(result.program_id, shader_id); // We can attach shaders at all times
-        glShaderSource(shader_id, 1, &part.source_code.characters, &length);
+        glShaderSource(shader_id, 1, &part.source_code.data, &length);
         glCompileShader(shader_id);
         bool compile_success = opengl_utils_check_shader_compile_status(shader_id, &error_string);
         if (!compile_success) {
@@ -157,9 +157,9 @@ bool opengl_utils_check_shader_compilation_status(GLuint shader_id)
 
         tmp_string.reserve_capacity(maxLength + 1);
 
-        glGetShaderInfoLog(shader_id, maxLength, &maxLength, tmp_string.characters);
+        glGetShaderInfoLog(shader_id, maxLength, &maxLength, tmp_string.data);
         logg("ERROR COMPILING SHADER:\n");
-        logg("Could not compile shader, error msg: \n %s\n", tmp_string.characters);
+        logg("Could not compile shader, error msg: \n %*.s\n", tmp_string.size, tmp_string.data);
         return false;
     }
 
@@ -188,7 +188,7 @@ GLuint opengl_utils_create_shader_from_file(String filepath)
         shaderType = GL_TESS_CONTROL_SHADER;
     }
     else {
-        logg("CreateShaderFromFile: Could not determine shadertype from file extension of: \"%.%s\"\n", filepath.size, filepath.characters);
+        logg("CreateShaderFromFile: Could not determine shadertype from file extension of: \"%.%s\"\n", filepath.size, filepath.data);
         return 0;
     }
 
@@ -209,7 +209,7 @@ GLuint opengl_utils_create_shader_from_file(String filepath)
 
     // Compile
     GLint length = shader_file_content.size;
-    glShaderSource(result, 1, &shader_file_content.characters, &length);
+    glShaderSource(result, 1, &shader_file_content.data, &length);
     glCompileShader(result);
 
     if (!opengl_utils_check_shader_compilation_status(result)) {
@@ -290,7 +290,7 @@ GLuint opengl_utils_create_program_from_single_file(String filepath)
         if (string_test_substring(file_content.to_string(), 0, possible_shader_defines[i]))
         {
             GLint shader_id = glCreateShader(possible_shader_define_types[i]);
-            const char* sources[] = {"#version 430 core\n", "#define ", possible_shader_defines[i].characters, "\n", file_content.characters};
+            const char* sources[] = {"#version 430 core\n", "#define ", possible_shader_defines[i].data, "\n", file_content.data};
             glShaderSource(shader_id, 5, sources, 0);
             glCompileShader(shader_id);
             

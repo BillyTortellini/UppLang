@@ -458,7 +458,7 @@ void c_generator_output_type_reference(C_Generator* generator, Datatype* type)
         // Generate array definition
         C_Type_Dependency* dependency = get_type_dependency(generator, type);
         gen.text = &dependency->type_definition;
-        dynstring_append_formated(gen.text, "struct %s {\n", access_name.characters);
+        dynstring_append_formated(gen.text, "struct %.*s {\n", access_name.size, access_name.data);
         string_add_indentation(gen.text, 1);
         // Note: Here we use the non-const type, because:
         //      In type_system, if the element_type is constant, the array_type is also constant
@@ -480,7 +480,7 @@ void c_generator_output_type_reference(C_Generator* generator, Datatype* type)
 
         // We return early because we don't want to insert into the translation table twice
         gen.text = backup_text;
-        gen.text->append(access_name.characters);
+        gen.text->append(access_name);
         return;
     }
     case Datatype_Type::POINTER: 
@@ -997,7 +997,7 @@ C_Program_Translation* c_backend_generate_program(Compilation_Data* compilation_
         {
             int line_offset = 0;
             for (int i = 0; i < function_implementation_char_index; i++) {
-                auto c = source_code.characters[i];
+                auto c = source_code[i];
                 if (c == '\n') {
                     line_offset += 1;
                 }
@@ -1408,7 +1408,7 @@ void c_generator_output_parameter_access(C_Generator* generator, Upp_Function* f
     gen.name_counter++;
 
     gen.program_translation.name_mapping.insert(translation, string_allocate_copy(new_name.to_string(), gen.perma_arena->upcast()));
-    gen.text->append(new_name.characters);
+    gen.text->append(new_name);
 }
 
 void c_generator_output_global_access(C_Generator* generator, int global_index)
@@ -1713,7 +1713,7 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
                 fn_translation.options.function = call->options.function;
                 String* fn_name = gen.program_translation.name_mapping.find(fn_translation);
                 assert(fn_name != 0, "Hey");
-                dynstring_append_formated(gen.text, fn_name->characters);
+                gen.text->append(fn_name);
                 break;
             }
             case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL: {
@@ -1890,7 +1890,7 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
             fn_translation.options.function = addr_of->function;
             String* fn_name = gen.program_translation.name_mapping.find(fn_translation);
             assert(fn_name != 0, "HEY");
-            dynstring_append_formated(gen.text, "&%s;\n", fn_name->characters);
+            gen.text->append("&")->append(fn_name)->append(";\n");
             break;
         }
         case IR_Instruction_Type::MOVE:

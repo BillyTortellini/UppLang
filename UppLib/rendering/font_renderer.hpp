@@ -30,7 +30,7 @@ struct Font_Glyph_Info
 struct Raster_Font
 {
 	Font_Renderer* renderer;
-	ivec2 char_size; // Maximum size of a characters bitmap
+	ivec2 char_size; // Maximum size of a data bitmap
 	int base_line_offset; // Number of pixels for descender
 	Array<Font_Glyph_Info> glyph_infos; // Glyph 0 is always 'error' glyph
 	Array<u8> char_to_glyph_index;

@@ -44,12 +44,12 @@ const int MIN_CURSOR_DISTANCE = 2;
 // WORD_POOL
 struct Refcount_Word
 {
-	char* characters;
+	char* data;
 	u32 size;
 	u32 reference_count;
 
 	String to_string() {
-		return string_make(characters, size);
+		return string_make(data, size);
 	}
 };
 
@@ -105,7 +105,7 @@ void word_pool_add_word(Word_Pool* pool, String word)
 		word.reference_count += 1;
 		return;
 	}
-	// printf("Adding word: \"%.*s\"\n", word.size, word.characters);
+	// printf("Adding word: \"%.*s\"\n", word.size, word.data);
 
 	// Find suitable free-list
 	Word_Free_List* free_list = nullptr;
@@ -124,25 +124,25 @@ void word_pool_add_word(Word_Pool* pool, String word)
 	allocated_word.reference_count = 1;
 	if (free_list->next_free == nullptr) 
 	{
-		allocated_word.characters = (char*) pool->arena->allocate_raw(free_list->element_size, 8); // Alignment of 8 because of free-list
+		allocated_word.data = (char*) pool->arena->allocate_raw(free_list->element_size, 8); // Alignment of 8 because of free-list
 	}
 	else
 	{
-		allocated_word.characters = (char*) free_list->next_free;
+		allocated_word.data = (char*) free_list->next_free;
 		free_list->next_free = *(void**)free_list->next_free;
 	}
-	memory_copy(allocated_word.characters, (void*)word.characters, word.size);
+	memory_copy(allocated_word.data, (void*)word.data, word.size);
 
 	// Add to table and dynamic_array
 	pool->words.push_back(allocated_word);
-	query_result.insert_key_value(string_make(allocated_word.characters, word.size), pool->words.size - 1);
+	query_result.insert_key_value(string_make(allocated_word.data, word.size), pool->words.size - 1);
 }
 
 void word_pool_remove_word(Word_Pool* pool, String word)
 {
 	if (word.size <= WORD_POOL_MIN_WORD_SIZE || word.size > WORD_POOL_MAX_WORD_SIZE) return;
 
-	// printf("Removing word: \"%.*s\"\n", word.size, word.characters);
+	// printf("Removing word: \"%.*s\"\n", word.size, word.data);
 	auto query_result = pool->deduplication_table.query(word, false);
 	assert(query_result.exists, "");
 
@@ -163,8 +163,8 @@ void word_pool_remove_word(Word_Pool* pool, String word)
 		}
 	}
 	assert(free_list != nullptr, "");
-	*(void**)refcount_word.characters = free_list->next_free;
-	free_list->next_free = (void*)refcount_word.characters;
+	*(void**)refcount_word.data = free_list->next_free;
+	free_list->next_free = (void*)refcount_word.data;
 
 	// Remove from hashtable
 	pool->deduplication_table.remove_with_query(query_result);
@@ -172,7 +172,7 @@ void word_pool_remove_word(Word_Pool* pool, String word)
 	if (word_index != pool->words.size - 1) 
 	{
 		Refcount_Word swap_view = pool->words[pool->words.size - 1];
-		auto query_result = pool->deduplication_table.query(string_make(swap_view.characters, swap_view.size), false);
+		auto query_result = pool->deduplication_table.query(string_make(swap_view.data, swap_view.size), false);
 		assert(query_result.exists, "");
 		*query_result.get_value_pointer() = word_index;
 	}
@@ -1186,7 +1186,7 @@ namespace Motions
         String text = line_index_get_text(pos.line);
         int p = pos.character + offset;
         if (p < 0 || p >= text.size) return invalid_char;
-        return text.characters[p];
+        return text.data[p];
     }
 
     void move_while_in_set(Text_Index& pos, Char_Group group, bool forward = true, bool move_out_of = false)
@@ -1250,7 +1250,7 @@ namespace Motions
         int string_start = -1;
         while (index < text.size)
         {
-            char c = text.characters[index];
+            char c = text.data[index];
             if (c == '\"') 
 			{
 				if (inside_string && pos.character >= string_start && pos.character <= index) {
@@ -1438,7 +1438,7 @@ namespace Parsing
 
         if (index >= cmd.size) return parse_result_completable<Movement>();
 
-        switch (cmd.characters[index])
+        switch (cmd[index])
         {
             // Single character movements
         case 'h': index += 1; return parse_result_success(movement_make(Movement_Type::MOVE_LEFT, repeat_count));
@@ -1501,16 +1501,16 @@ namespace Parsing
         case 'T': 
 		{
             Movement_Type type;
-            if (cmd.characters[index] == 'f') {
+            if (cmd[index] == 'f') {
                 type = Movement_Type::SEARCH_FORWARDS_FOR;
             }
-            else if (cmd.characters[index] == 'F') {
+            else if (cmd[index] == 'F') {
                 type = Movement_Type::SEARCH_BACKWARDS_FOR;
             }
-            else if (cmd.characters[index] == 't') {
+            else if (cmd[index] == 't') {
                 type = Movement_Type::SEARCH_FORWARDS_TO;
             }
-            else if (cmd.characters[index] == 'T') {
+            else if (cmd[index] == 'T') {
                 type = Movement_Type::SEARCH_BACKWARDS_TO;
             }
             else {
@@ -1524,7 +1524,7 @@ namespace Parsing
 				    return parse_result_completable<Movement>();
 				}
 
-				auto result = parse_result_success(movement_make(type, repeat_count, cmd.characters[index + 1], cmd.characters[index + 2]));
+				auto result = parse_result_success(movement_make(type, repeat_count, cmd[index + 1], cmd[index + 2]));
 				index += 3;
 				return result;
 			}
@@ -1533,19 +1533,19 @@ namespace Parsing
                 return parse_result_completable<Movement>();
             }
 
-            auto result = parse_result_success(movement_make(type, repeat_count, cmd.characters[index + 1]));
+            auto result = parse_result_success(movement_make(type, repeat_count, cmd[index + 1]));
             index += 2;
             return result;
         }
         case 's': 
         case 'S': 
 		{
-            Movement_Type type = cmd.characters[index] == 's' ? Movement_Type::SNEAK_FORWARDS : Movement_Type::SNEAK_BACKWARDS;
+            Movement_Type type = cmd[index] == 's' ? Movement_Type::SNEAK_FORWARDS : Movement_Type::SNEAK_BACKWARDS;
             if (index + 2 >= cmd.size) {
                 return parse_result_completable<Movement>();
             }
 
-            auto result = parse_result_success(movement_make(type, repeat_count, cmd.characters[index + 1], cmd.characters[index + 2]));
+            auto result = parse_result_success(movement_make(type, repeat_count, cmd[index + 1], cmd[index + 2]));
             index += 3;
             return result;
         }
@@ -3389,10 +3389,10 @@ void syntax_editor_save_text_file()
 		auto path = tab->filepath;
 		auto success = file_io_write_text_file(path, tmp_string.to_string());
 		if (!success) {
-			logg("Saving file failed for path \"%.*s\"\n", path.size, path.characters);
+			logg("Saving file failed for path \"%.*s\"\n", path.size, path.data);
 		}
 		else {
-			// logg("Saved file \"%s\"!\n", path.characters);
+			// logg("Saved file \"%s\"!\n", path.data);
 		}
 	}
 }
@@ -3808,7 +3808,7 @@ void syntax_editor_load_session(String file_path)
 		String setting = string_make_substring(line, 0, seperator.value);
 		String value = string_make_substring(line, seperator.value + 1, line.size);
 		if (setting.size == 0 || value.size == 0) continue;
-		// printf("  %.*s = %.*s\n", setting.size, setting.characters, value.size, value.characters);
+		// printf("  %.*s = %.*s\n", setting.size, setting.data, value.size, value.data);
 
 		int* int_value_to_set = nullptr;
 		if (setting == string_make("open_tab")) {
@@ -3910,7 +3910,7 @@ void syntax_editor_load_session(String file_path)
 			}
 
 			if (toggle_option_index == -1) {
-				logg("Unrecognized session option: %.*s\n", setting.size, setting.characters);
+				logg("Unrecognized session option: %.*s\n", setting.size, setting.data);
 			}
 			else 
 			{
@@ -4732,7 +4732,7 @@ bool text_index_inside_comment_or_string_literal(Text_Index index, bool& out_ins
 	bool prev_was_slash = false;
 	for (int i = 0; i < index.character; i++)
 	{
-		char curr = text.characters[i];
+		char curr = text[i];
 		if (curr == '\"') {
 			if (!prev_was_backslash) {
 				in_literal = !in_literal;
@@ -4855,7 +4855,7 @@ void code_completion_find_suggestions()
 	if (complete_with_words)
 	{
 		auto helper_string_get_char = [](String str, int index) -> char {
-			if (index >= 0 && index < str.size) return str.characters[index];
+			if (index >= 0 && index < str.size) return str[index];
 			return '\0';
 		};
 		String line_text = line_index_get_text(cursor.line);
@@ -4917,7 +4917,7 @@ void code_completion_find_suggestions()
 
 	auto helper_test_char = [&](int index, char c) -> bool {
 		if (index < 0 || index >= line_text.size) return false;
-		return line_text.characters[index] == c;
+		return line_text[index] == c;
 	};
 	auto helper_test_token = [&](int token_index, Token_Type type) -> bool {
 		if (token_index < 0 || token_index >= tokens.size) return false;
@@ -6351,7 +6351,7 @@ void syntax_editor_insert_yank(bool before_cursor)
 		int last_line_start = 0;
 		for (int i = 0; i < editor.yank_string.size; i++)
 		{
-			char c = editor.yank_string.characters[i];
+			char c = editor.yank_string[i];
 			if (c == '\n')
 			{
 				Yank_Line yank;
@@ -7654,7 +7654,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 		{
 			if (msg.key_code == Key_Code::L && msg.ctrl_down && msg.key_down) {
 				dynstring_reset(&editor.command_buffer);
-				logg("Command canceled: \"%.*s\"!\n", editor.command_buffer.size, editor.command_buffer.characters);
+				logg("Command canceled: \"%.*s\"!\n", editor.command_buffer.size, editor.command_buffer.data);
 				return;
 			}
 			// Filter out messages (Key Up messages + random shift or alt or ctrl clicks)
@@ -7709,7 +7709,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 			dynstring_reset(&cmd_buffer);
 		}
 		else if (result.type == Parse_Result_Type::FAILURE) {
-			logg("Command parsing failed: \"%.*s\"!\n", editor.command_buffer.size, editor.command_buffer.characters);
+			logg("Command parsing failed: \"%.*s\"!\n", editor.command_buffer.size, editor.command_buffer.data);
 			dynstring_reset(&cmd_buffer);
 		}
 
@@ -7844,7 +7844,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 
 			// Special code path for file search
 			String search_text = editor.fuzzy_search_text.to_string();
-			if (search_text.size >= 2 && search_text.characters[0] == '.' && search_text.characters[1] == '/') {
+			if (search_text.size >= 2 && search_text[0] == '.' && search_text[1] == '/') {
 				search_text = string_make_substring(search_text, 2, editor.fuzzy_search_text.size);
 				suggestions_fill_with_file_directory(search_text);
 				break;
@@ -7988,7 +7988,7 @@ void watch_values_update()
 			int index = 0;
 			int first_op_index = text.size + 1;
 
-			// Skip characters until first . or [
+			// Skip data until first . or [
 			while (index < text.size)
 			{
 				char c = text[index];
@@ -9750,11 +9750,11 @@ void syntax_editor_render()
 
 			String text = line_index_get_text(display_line.line_index);
 			int leading_whitespaces = 0;
-			while (leading_whitespaces < text.size && text.characters[leading_whitespaces] == ' '){
+			while (leading_whitespaces < text.size && text[leading_whitespaces] == ' '){
 				leading_whitespaces += 1;
 			}
 			int trailing_whitespace_start = text.size;
-			while (trailing_whitespace_start - 1 > 0 && text.characters[trailing_whitespace_start - 1] == ' ') {
+			while (trailing_whitespace_start - 1 > 0 && text[trailing_whitespace_start - 1] == ' ') {
 				trailing_whitespace_start -= 1;
 			}
 
@@ -9961,7 +9961,7 @@ void syntax_editor_render()
 			max_suggestion_length = math_maximum(max_suggestion_length, (int)suggestions[i].text.size);
 		}
 
-		// Limit suggestion length to 36 characters?
+		// Limit suggestion length to 36 data?
 		max_suggestion_length = math_minimum(max_suggestion_length, 36);
 
 		for (int i = 0; i < suggestions.size; i++)

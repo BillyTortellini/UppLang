@@ -442,7 +442,7 @@ Upp_Constant Constant_Pool::add_upp_string_assume_valid(Upp_String string)
 Upp_Constant Constant_Pool::add_string(String string)
 {
     Upp_String upp_string;
-    upp_string.data = (void*)string.characters;
+    upp_string.data = (void*)string.data;
     upp_string.size = string.size;
     return add_upp_string_assume_valid(upp_string);
 }
@@ -450,7 +450,7 @@ Upp_Constant Constant_Pool::add_string(String string)
 Upp_Constant Constant_Pool::add_identifier(Identifier id)
 {
     Upp_String upp_string;
-    upp_string.data = (void*)id.string->characters;
+    upp_string.data = (void*)id.string->data;
     upp_string.size = id.string->size;
     return add_upp_string_assume_valid(upp_string);
 }

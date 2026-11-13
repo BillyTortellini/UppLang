@@ -1699,7 +1699,7 @@ void type_system_print(Type_System* system)
 	}
 	dynstring_append_formated(&msg, "\n");
 	string_style_remove_codes(&msg);
-	logg("%s", msg.characters);
+	logg("%.*s", msg.size, msg.data);
 }
 
 Optional<Enum_Member> enum_type_find_member_by_value(Datatype_Enum* enum_type, int value)
@@ -1911,7 +1911,7 @@ Type_Modifier_Info datatype_get_modifier_info(Datatype* datatype)
 Upp_String upp_string_from_id(Identifier id)
 {
 	Upp_String result;
-	result.data = (void*)id.string->characters;
+	result.data = (void*)id.string->data;
 	result.size = id.string->size;
 	return result;
 }

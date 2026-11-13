@@ -153,7 +153,7 @@ LRESULT CALLBACK window_message_callback(HWND hwnd, UINT msg_type, WPARAM wparam
     {
         int key = (int)wparam;
         // 9 == tab, we want to have a \t char here
-        if (key != 9 && (key > 255 || key < 32)) { // TODO handle UTF8/UTF16 also, currently we just ignore non-ascii characters
+        if (key != 9 && (key > 255 || key < 32)) { // TODO handle UTF8/UTF16 also, currently we just ignore non-ascii data
             break;
         }
         if (window_for_message_callback->put_next_char_into_last_key_message) {
@@ -1226,8 +1226,8 @@ void window_initialize_dxgi_output()
                 tmp_string.reset();
                 tmp_string.reserve_capacity(64);
                 size_t converted_size;
-                wcstombs_s(&converted_size, tmp_string.characters, 32, desc.DeviceName, 64);
-                tmp_string.size = strlen(tmp_string.characters);
+                wcstombs_s(&converted_size, tmp_string.data, 32, desc.DeviceName, 64);
+                tmp_string.size = strlen(tmp_string.data);
                 logg("Import output: %s\n", tmp_string.to_cstring());
 
                 break;
@@ -1267,9 +1267,9 @@ void window_calculate_vsynch_beat(double& vsync_start, double& time_between_vsyn
     ///         int len = lstrlenW(desc.DeviceName);
     ///         auto tmp = string_create(32);
     ///         SCOPE_EXIT(string_destroy(&tmp));
-    ///         wcstombs(tmp.characters, desc.DeviceName, 32);
-    ///         tmp.size = strlen(tmp.characters);
-    ///         logg("%s\n", tmp.characters);
+    ///         wcstombs(tmp.data, desc.DeviceName, 32);
+    ///         tmp.size = strlen(tmp.data);
+    ///         logg("%s\n", tmp.data);
 
     ///         // Do something stupid here, like measuring 3 time spots right after wait for vsynch
     ///         const int timestamp_count = 20;

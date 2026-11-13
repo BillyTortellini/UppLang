@@ -188,7 +188,7 @@ bool Memory_Source::read_string_null_terminated_generic(void* virtual_address, D
 wchar_t* wide_string_from_utf8(String string, Arena* arena)
 {
 	// Note: I think (string.size + 1) * sizeof(wchar_t) should be enough (+1 for null-terminator),
-	//   but the MultiByteToWideChar size parameter is in characters, and I don't know if microsoft
+	//   but the MultiByteToWideChar size parameter is in data, and I don't know if microsoft
 	//   means 2 bytes for a wchar or possible 4 bytes (UTF16 extended chars)
 	Array<byte> buffer = arena->allocate_array<byte>((string.size + 1) * sizeof(wchar_t) * 2);
 
@@ -198,7 +198,7 @@ wchar_t* wide_string_from_utf8(String string, Arena* arena)
         return (wchar_t*) buffer.data;
     }
 
-    int written_chars = MultiByteToWideChar(CP_UTF8, NULL, string.characters, string.size, (LPWSTR) buffer.data, buffer.size / 2);
+    int written_chars = MultiByteToWideChar(CP_UTF8, NULL, string.data, string.size, (LPWSTR) buffer.data, buffer.size / 2);
     if (written_chars == 0) {
 		*((wchar_t*) &buffer.data[0]) = (wchar_t)0;
     }
@@ -208,12 +208,12 @@ wchar_t* wide_string_from_utf8(String string, Arena* arena)
 void wide_string_to_utf8(const wchar_t* wide_string, DynString* string)
 {
     int character_count = lstrlenW(wide_string) + 1;
-    dynstring_reserve(string, string->size + character_count * 4); // Max 4 bytes per char in UTF-8
-    int written_bytes = WideCharToMultiByte(CP_UTF8, 0, wide_string, character_count, &string->characters[string->size], string->capacity - string->size, 0, 0);
+    dynstring_reserve_capacity(string, string->size + character_count * 4); // Max 4 bytes per char in UTF-8
+    int written_bytes = WideCharToMultiByte(CP_UTF8, 0, wide_string, character_count, &string->data[string->size], string->capacity - string->size, 0, 0);
 	string->size += written_bytes;
 	
 	// I think WideCharToMultiByte writes null-terminator, so we remove that if bytes were written
-	if (written_bytes != 0 && string->characters[string->size - 1] == '\0') {
+	if (written_bytes != 0 && string->data[string->size - 1] == '\0') {
 		string->size -= 1;
 	}
 }

@@ -70,7 +70,7 @@ bool file_io_write_binary_file(String path, Array<byte> data)
 
 bool file_io_write_text_file(String path, String text) 
 {
-    return file_io_write_binary_file(path, array_make<byte>((byte*)text.characters, text.size));
+    return file_io_write_binary_file(path, array_make<byte>((byte*)text.data, text.size));
 }
 
 u64 helper_dwords_to_u64(DWORD high, DWORD low) 
@@ -223,7 +223,7 @@ void filepath_relative_to_absolute_path(DynString* filepath)
     }
     dynstring_add_null_terminator(filepath);
     char buffer[1024];
-    int length = GetFullPathNameA(filepath->characters, 1024, buffer, 0);
+    int length = GetFullPathNameA(filepath->data, 1024, buffer, 0);
     if (length == 0 || length >= 1024) {
         return;
     }

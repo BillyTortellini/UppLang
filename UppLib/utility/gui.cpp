@@ -1304,7 +1304,7 @@ void gui_update_and_render(Render_Pass* render_pass)
     //     String str = string_create(1);
     //     SCOPE_EXIT(string_destroy(&str));
     //     gui_append_to_string(&str, 0, 0);
-    //     logg("%s\n\n", str.characters);
+    //     logg("%s\n\n", str.data);
     // }
 }
 
@@ -2056,7 +2056,7 @@ void gui_push_example_gui()
     DynString* str = gui_store_string(window, "");
     gui_push_text_edit(window, str, gui.default_text_size);
     if (gui_push_button(window, string_make("Test me!"))) {
-        logg("%s\n", str->characters);
+        logg("%.*s\n", str->size, str->data);
     }
     auto time = rendering_core.render_information.current_time_in_seconds;
 

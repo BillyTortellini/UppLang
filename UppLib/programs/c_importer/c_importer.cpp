@@ -344,10 +344,10 @@
 //         switch (token->type)
 //         {
 //         case C_Token_Type::IDENTIFIER_NAME:
-//             dynstring_append_formated(&str, token->attribute.id->characters);
+//             dynstring_append_formated(&str, token->attribute.id->data);
 //             break;
 //         case C_Token_Type::STRING_LITERAL:
-//             dynstring_append_formated(&str, "\"%s\"",  token->attribute.id->characters);
+//             dynstring_append_formated(&str, "\"%s\"",  token->attribute.id->data);
 //             break;
 //         case C_Token_Type::BOOLEAN_LITERAL:
 //             dynstring_append_formated(&str, "%s", token->attribute.bool_value ? "TRUE": "FALSE");
@@ -363,7 +363,7 @@
 //         }
 //         dynstring_append_formated(&str, " ");
 //     }
-//     logg(str.characters);
+//     logg(str.data);
 // }
 // 
 // void print_tokens_till_newline(Dynamic_Array<C_Token> tokens, DynString source, int token_index)
@@ -379,12 +379,12 @@
 //     DynString t2_content = string_create_substring(&source, token->source_code_index, end_pos + 1);
 //     SCOPE_EXIT(string_destroy(&t2_content));
 //     for (int i = 0; i < t2_content.size; i++) {
-//         if (t2_content.characters[i] == '\n' || t2_content.characters[i] == '\r') {
-//             t2_content.characters[i] = '\0';
+//         if (t2_content.data[i] == '\n' || t2_content.data[i] == '\r') {
+//             t2_content.data[i] = '\0';
 //             t2_content.size = i;
 //         }
 //     }
-//     printf("%s", t2_content.characters);
+//     printf("%s", t2_content.data);
 // }
 // 
 // void c_import_type_append_to_string(C_Import_Type* type, DynString* string, int indentation, bool print_array_members);
@@ -648,7 +648,7 @@
 //                     SCOPE_EXIT(string_destroy(&str));
 //                     string_append_formated(&str, "Structure def: ");
 //                     c_import_type_append_to_string(def_sym.data_type, &str, 0, parser, true);
-//                     logg("%s\n", str.characters);
+//                     logg("%s\n", str.data);
 //                 }
 //                 */
 // 
@@ -1299,7 +1299,7 @@
 //             dynstring_append_formated(string, "STRUCT");
 //         }
 //         if (!type->structure.is_anonymous) {
-//             dynstring_append_formated(string, " %s", type->structure.id->characters);
+//             dynstring_append_formated(string, " %s", type->structure.id->data);
 //         }
 //         if (print_array_members)
 //         {
@@ -1311,7 +1311,7 @@
 //             {
 //                 C_Import_Structure_Member* member = &type->structure.members[i];
 //                 c_import_type_append_to_string(member->type, string, indentation + 1, false);
-//                 dynstring_append_formated(string, "%s\n",  member->id->characters);
+//                 dynstring_append_formated(string, "%s\n",  member->id->data);
 //             }
 //             string_indent(string, indentation);
 //             dynstring_append_formated(string, "}");
@@ -1321,12 +1321,12 @@
 //     case C_Import_Type_Type::ENUM: {
 //         dynstring_append_formated(string, "ENUM ");
 //         if (!type->enumeration.is_anonymous) {
-//             dynstring_append_formated(string, " %s", type->enumeration.id->characters);
+//             dynstring_append_formated(string, " %s", type->enumeration.id->data);
 //         }
 //         dynstring_append_formated(string, " {");
 //         for (int i = 0; i < type->enumeration.members.size; i++) {
 //             C_Import_Enum_Member* member = &type->enumeration.members[i];
-//             dynstring_append_formated(string, "%s = %d, ", member->id->characters, member->value);
+//             dynstring_append_formated(string, "%s = %d, ", member->id->data, member->value);
 //         }
 //         dynstring_append_formated(string, "}");
 //         break;
@@ -1339,7 +1339,7 @@
 //             C_Import_Parameter* parameter = &type->function_signature.parameters[i];
 //             c_import_type_append_to_string(parameter->type, string, 0, false);
 //             if (parameter->has_name) {
-//                 dynstring_append_formated(string, " %s", parameter->id->characters);
+//                 dynstring_append_formated(string, " %s", parameter->id->data);
 //             }
 //             if (i != type->function_signature.parameters.size - 1) {
 //                 string_append(string, ", ");
@@ -1478,9 +1478,9 @@
 //                 String str = string_create(256);
 //                 SCOPE_EXIT(string_destroy(&str));
 //                 string_append_formated(&str, "%s: ", is_typedef ? "typedef " : "function ");
-//                 string_append_formated(&str, "%s = ", identifier_pool_index_to_string(parser->code_source, var_def.instances[0].id).characters);
+//                 string_append_formated(&str, "%s = ", identifier_pool_index_to_string(parser->code_source, var_def.instances[0].id).data);
 //                 c_import_type_append_to_string(registered_function, &str, 0, parser, true);
-//                 logg("%s\n", str.characters);
+//                 logg("%s\n", str.data);
 //                 */
 //             }
 // 
@@ -1509,9 +1509,9 @@
 //                 String str = string_create(256);
 //                 SCOPE_EXIT(string_destroy(&str));
 //                 string_append_formated(&str, "%s: ", is_typedef ? "typedef " : "global: ");
-//                 string_append_formated(&str, "%s = ", identifier_pool_index_to_string(parser->code_source, instance->id).characters);
+//                 string_append_formated(&str, "%s = ", identifier_pool_index_to_string(parser->code_source, instance->id).data);
 //                 c_import_type_append_to_string(symbol.data_type, &str, 0, parser, true);
-//                 logg("%s\n", str.characters);
+//                 logg("%s\n", str.data);
 //                 */
 //             }
 // 
@@ -1658,20 +1658,20 @@
 //         SCOPE_EXIT(string_destroy(&command));
 //         for (int i = 0; i < include_dirs.size; i++) {
 //             DynString str = include_dirs[i];
-//             if (str.size > 0 && str.characters[0] == '\"') {
-//                 dynstring_append_formated(&command, " /I%s", str.characters);
+//             if (str.size > 0 && str.data[0] == '\"') {
+//                 dynstring_append_formated(&command, " /I%s", str.data);
 //             }
 //             else {
-//                 dynstring_append_formated(&command, " /I\"%s\"", str.characters);
+//                 dynstring_append_formated(&command, " /I\"%s\"", str.data);
 //             }
 //         }
 //         for (int i = 0; i < defines.size; i++) {
 //             DynString str = defines[i];
-//             dynstring_append_formated(&command, " /D%s", str.characters);
+//             dynstring_append_formated(&command, " /D%s", str.data);
 //         }
 //         string_append(&command, " /FI");
 //         dynstring_append_formated(&command, file_name);
-//         logg("Compiling with %s\n", command.characters);
+//         logg("Compiling with %s\n", command.data);
 // 
 //         Optional<Process_Result> result = process_start(command);
 //         SCOPE_EXIT(process_result_destroy(&result));
@@ -1679,7 +1679,7 @@
 //             return optional_make_failure<C_Import_Package>();
 //         }
 //         if (result.value.exit_code != 0) {
-//             logg("Error: %s\n", result.value.output.characters);
+//             logg("Error: %s\n", result.value.output.data);
 //             return optional_make_failure<C_Import_Package>();
 //         }
 //     }
@@ -1737,7 +1737,7 @@
 //                         dynstring_append_formated(
 //                             &output_program,
 //                             "    printf(\"%%zd\\n%%zd\\n\", sizeof(%s), alignof(%s));\n",
-//                             symbol_name->characters, symbol_name->characters
+//                             symbol_name->data, symbol_name->data
 //                         );
 //                         dynamic_array_push_back(&destinations, print_destination_make(true, false, false, symbol, 0));
 //                         dynamic_array_push_back(&destinations, print_destination_make(false, true, false, symbol, 0));
@@ -1750,8 +1750,8 @@
 //                             dynstring_append_formated(
 //                                 &output_program,
 //                                 "    printf(\"%%zd\\n\", myoffsetof(%s, %s));\n",
-//                                 symbol_name->characters,
-//                                 member->id->characters
+//                                 symbol_name->data,
+//                                 member->id->data
 //                             );
 //                             dynamic_array_push_back(&destinations, print_destination_make(false, false, true, 0, member));
 //                         }
@@ -1766,7 +1766,7 @@
 //                 else {
 //                     dynstring_append_formated(&found_symbols, "Global: ");
 //                 }
-//                 dynstring_append_formated(&found_symbols, " %s\n", (*iter.key)->characters);
+//                 dynstring_append_formated(&found_symbols, " %s\n", (*iter.key)->data);
 //             }
 //             hashtable_iterator_next(&iter);
 //         }
@@ -1780,19 +1780,19 @@
 //         string_append(&command, " backend/c_importer/sizeof_program.cpp");
 //         for (int i = 0; i < include_dirs.size; i++) {
 //             DynString str = include_dirs[i];
-//             if (str.size > 0 && str.characters[0] == '\"') {
-//                 dynstring_append_formated(&command, " /I %s", str.characters);
+//             if (str.size > 0 && str.data[0] == '\"') {
+//                 dynstring_append_formated(&command, " /I %s", str.data);
 //             }
 //             else {
-//                 dynstring_append_formated(&command, " /I \"%s\"", str.characters);
+//                 dynstring_append_formated(&command, " /I \"%s\"", str.data);
 //             }
 //         }
 //         for (int i = 0; i < defines.size; i++) {
 //             DynString str = defines[i];
-//             dynstring_append_formated(&command, " /D%s", str.characters);
+//             dynstring_append_formated(&command, " /D%s", str.data);
 //         }
 //         string_append(&command, " /link /OUT:backend/c_importer/sizeof_program.exe");
-//         logg("Size-of Programm Command: %s\n", command.characters);
+//         logg("Size-of Programm Command: %s\n", command.data);
 //         Optional<Process_Result> sizeof_comp = process_start(command);
 //         SCOPE_EXIT(process_result_destroy(&sizeof_comp));
 // 
@@ -1802,7 +1802,7 @@
 //         }
 //         if (sizeof_comp.value.exit_code != 0) {
 //             logg("Sizeof program compilation failed\n");
-//             logg("C-Compiler output:\n%s\n", sizeof_comp.value.output.characters);
+//             logg("C-Compiler output:\n%s\n", sizeof_comp.value.output.data);
 //             c_import_package_destroy(&package);
 //             return optional_make_failure<C_Import_Package>();
 //         }
@@ -1813,7 +1813,7 @@
 //             return optional_make_failure<C_Import_Package>();
 //         }
 //         if (sizeof_res.value.exit_code != 0) {
-//             logg("Sizeof program execution failed, output:\n%s\n", sizeof_res.value.output.characters);
+//             logg("Sizeof program execution failed, output:\n%s\n", sizeof_res.value.output.data);
 //             c_import_package_destroy(&package);
 //             return optional_make_failure<C_Import_Package>();
 //         }
@@ -1823,14 +1823,14 @@
 //         int index = 0;
 //         while (index < sizeof_res.value.output.size)
 //         {
-//             char* parse = &sizeof_res.value.output.characters[index];
+//             char* parse = &sizeof_res.value.output.data[index];
 //             char* end_ptr;
 //             int size = strtol(parse, &end_ptr, 10);
 //             if (end_ptr == parse) {
 //                 break;
 //             }
 //             dynamic_array_push_back(&sizes, size);
-//             index = end_ptr - sizeof_res.value.output.characters;
+//             index = end_ptr - sizeof_res.value.output.data;
 //         }
 // 
 //         if (sizes.size != destinations.size) {
@@ -1869,7 +1869,7 @@
 //     // }
 // 
 //     // Parse header if not in cache
-//     Optional<C_Import_Package> parsed_package = c_importer_parse_header(header_name.characters, &importer->identifier_pool, include_directories, defines);
+//     Optional<C_Import_Package> parsed_package = c_importer_parse_header(header_name.data, &importer->identifier_pool, include_directories, defines);
 //     if (parsed_package.available)
 //     {
 //         String cache_file_name = string_allocate_copy(header_name, importer->arena->upcast());

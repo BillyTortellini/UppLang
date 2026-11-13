@@ -262,7 +262,7 @@ void glyph_atlas_print_glyph_information(Font_Information* atlas)
         message.append("\t"),
         glyph_information_append_to_string(&atlas->glyph_informations.data[i], &message);
     }
-    logg("\n%s\n", message.characters);
+    logg("\n%.*s\n", message.size, message.data);
 }
 
 void glyph_atlas_destroy(Font_Information* atlas)

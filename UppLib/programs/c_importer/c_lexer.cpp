@@ -169,9 +169,9 @@
 //     int start_index = *index;
 //     int start_char = *character_pos;
 //     int line_start = *line_number;
-//     if (code->characters[*index] == '/' && code->characters[*index + 1] == '/') 
+//     if (code->data[*index] == '/' && code->data[*index + 1] == '/') 
 //     {
-//         while (*index < code->size && code->characters[*index] != '\n') {
+//         while (*index < code->size && code->data[*index] != '\n') {
 //             *index = *index + 1;
 //             *character_pos = *character_pos + 1;
 //         }
@@ -187,15 +187,15 @@
 //         return true;
 //     }
 // 
-//     if (code->characters[*index] == '/' && code->characters[*index + 1] == '*') 
+//     if (code->data[*index] == '/' && code->data[*index + 1] == '*') 
 //     {
 //         *character_pos = *character_pos + 2;
 //         *index = *index + 2;
 //         int comment_depth = 1;
 //         while (*index + 1 < code->size) 
 //         {
-//             char current = code->characters[*index];
-//             char next = code->characters[*index+1];
+//             char current = code->data[*index];
+//             char next = code->data[*index+1];
 //             if (current == '/' && next == '*') {
 //                 comment_depth++;
 //                 *index = *index + 2;
@@ -222,7 +222,7 @@
 //         // To prevent errors when the last comment isnt closed
 //         if (comment_depth != 0 && *index == code->size-1) 
 //         {
-//             if (code->characters[*index] == '\n') {
+//             if (code->data[*index] == '\n') {
 //                 *line_number = *line_number + 1;
 //                 *character_pos = 0;
 //             }
@@ -245,7 +245,7 @@
 // bool code_parse_newline(C_Lexer* lexer, DynString* code, int* index, int* character_pos, int* line_number)
 // {
 //     int i = *index;
-//     if (i < code->size && code->characters[i] == '\n') 
+//     if (i < code->size && code->data[i] == '\n') 
 //     {
 //         dynamic_array_push_back(&lexer->tokens, token_make(
 //             C_Token_Type::NEW_LINE, 
@@ -266,7 +266,7 @@
 //     int start = *index;
 //     int char_start = *character_pos;
 //     bool changed = false;
-//     while (*index < code->size && string_contains_character(string_create_static("\t \r"), code->characters[*index]))
+//     while (*index < code->size && string_contains_character(string_create_static("\t \r"), code->data[*index]))
 //     {
 //         (*character_pos)++;
 //         *index = *index + 1;
@@ -404,10 +404,10 @@
 //         }
 // 
 //         // Get current character
-//         int current_character = code->characters[index];
+//         int current_character = code->data[index];
 //         int next_character = -1;
 //         if (index + 1 < code->size) {
-//             next_character = code->characters[index + 1];
+//             next_character = code->data[index + 1];
 //         }
 // 
 //         switch (current_character)
@@ -486,7 +486,7 @@
 //         case '*': {
 //             if (index + 2 < code->size) 
 //             {
-//                 if (code->characters[index + 1] == '=' && code->characters[index + 2] == '=') {
+//                 if (code->data[index + 1] == '=' && code->data[index + 2] == '=') {
 //                     dynamic_array_push_back(
 //                         &lexer->tokens, token_make(C_Token_Type::COMPARISON_POINTER_EQUAL, token_attribute_make_empty(), line_number, character_pos, 3, index)
 //                     );
@@ -494,7 +494,7 @@
 //                     index += 3;
 //                     continue;
 //                 }
-//                 else if (code->characters[index + 1] == '!' && code->characters[index + 2] == '=') {
+//                 else if (code->data[index + 1] == '!' && code->data[index + 2] == '=') {
 //                     dynamic_array_push_back(
 //                         &lexer->tokens, token_make(C_Token_Type::COMPARISON_POINTER_NOT_EQUAL, token_attribute_make_empty(), line_number, character_pos, 3, index)
 //                     );
@@ -519,7 +519,7 @@
 //             index++;
 //             continue;
 //         case '=':
-//             // Check for ambiguities between one and two characters (< and <=, = and ==, ! and !=, ...)
+//             // Check for ambiguities between one and two data (< and <=, = and ==, ! and !=, ...)
 //             if (next_character == '=') {
 //                 dynamic_array_push_back(&lexer->tokens, token_make(C_Token_Type::COMPARISON_EQUAL, token_attribute_make_empty(), line_number, character_pos, 2, index));
 //                 index += 2;
@@ -629,7 +629,7 @@
 //             {
 //                 if (last_was_escape)
 //                 {
-//                     switch (code->characters[index])
+//                     switch (code->data[index])
 //                     {
 //                     case 'n':
 //                         string_append_character(&identifier_string, '\n');
@@ -659,22 +659,22 @@
 //                 }
 //                 else
 //                 {
-//                     if (code->characters[index] == '\"') {
+//                     if (code->data[index] == '\"') {
 //                         index++;
 //                         character_pos++;
 //                         terminated_successfull = true;
 //                         break;
 //                     }
-//                     else if (code->characters[index] == '\n') {
+//                     else if (code->data[index] == '\n') {
 //                         terminated_successfull = false;
 //                         break;
 //                     }
-//                     last_was_escape = code->characters[index] == '\\';
+//                     last_was_escape = code->data[index] == '\\';
 //                     if (!last_was_escape) {
-//                         string_append_character(&identifier_string, code->characters[index]);
+//                         string_append_character(&identifier_string, code->data[index]);
 //                     }
 //                 }
-//                 if (code->characters[index] == '\n') {
+//                 if (code->data[index] == '\n') {
 //                     line_number++;
 //                     character_pos = 0;
 //                 }
@@ -722,29 +722,29 @@
 //                 character_pos += 2;
 //             }
 //             if (index < code->size) {
-//                 current_character = code->characters[index];
+//                 current_character = code->data[index];
 //             }
 //             else {
 //                 break;
 //             }
 //             next_character = -1;
 //             if (index + 1 < code->size) {
-//                 next_character = code->characters[index + 1];
+//                 next_character = code->data[index + 1];
 //             }
 //         }
 //         if (number_base_is_valid_character(base, current_character))
 //         {
 //             int pre_comma_start_index = index;
 //             int pre_comma_end_index = index;
-//             // Parse number characters
-//             while (pre_comma_end_index < code->size && number_base_is_valid_character(base, code->characters[pre_comma_end_index])) {
+//             // Parse number data
+//             while (pre_comma_end_index < code->size && number_base_is_valid_character(base, code->data[pre_comma_end_index])) {
 //                 pre_comma_end_index++;
 //             }
 //             pre_comma_end_index--;
 // 
 //             bool comma_exists = false;
 //             int post_comma_start_index, post_comma_end_index;
-//             if (pre_comma_end_index + 1 < code->size && code->characters[pre_comma_end_index + 1] == '.')
+//             if (pre_comma_end_index + 1 < code->size && code->data[pre_comma_end_index + 1] == '.')
 //             {
 //                 comma_exists = true;
 //                 post_comma_start_index = pre_comma_end_index + 2;
@@ -755,7 +755,7 @@
 //                 else {
 //                     post_comma_end_index = post_comma_start_index;
 //                     while (post_comma_end_index < code->size &&
-//                         number_base_is_valid_character(base, code->characters[post_comma_end_index])) {
+//                         number_base_is_valid_character(base, code->data[post_comma_end_index])) {
 //                         post_comma_end_index++;
 //                     }
 //                     post_comma_end_index--;
@@ -765,7 +765,7 @@
 //             int int_value = 0;
 //             int base_value = (int)base;
 //             for (int i = pre_comma_start_index; i <= pre_comma_end_index; i++) {
-//                 int num_value = number_base_character_to_value(base, code->characters[i]);
+//                 int num_value = number_base_character_to_value(base, code->data[i]);
 //                 int_value = (int_value * base_value) + num_value;
 //             }
 //             if (comma_exists)
@@ -774,7 +774,7 @@
 //                 float fractional_value = 0.0f;
 //                 float multiplier = 1.0f / base_value;
 //                 for (int i = post_comma_start_index; i <= post_comma_end_index; i++) {
-//                     int num_value = number_base_character_to_value(base, code->characters[i]);
+//                     int num_value = number_base_character_to_value(base, code->data[i]);
 //                     fractional_value += num_value * multiplier;
 //                     multiplier *= 0.1f;
 //                 }
@@ -808,31 +808,31 @@
 //         }
 // 
 //         // Identifiers, keywords or error
-//         if (!(character_is_letter(code->characters[index]) || character_is_digit(code->characters[index]) || code->characters[index] == '_'))
+//         if (!(character_is_letter(code->data[index]) || character_is_digit(code->data[index]) || code->data[index] == '_'))
 //         {
 //             // Error, parse till next Delimiter
 //             int error_end_index = index;
 //             while (error_end_index < code->size && !(
-//                 code->characters[error_end_index] == ';' ||
-//                 code->characters[error_end_index] == ',' ||
-//                 code->characters[error_end_index] == '.' ||
-//                 code->characters[error_end_index] == '(' ||
-//                 code->characters[error_end_index] == ')' ||
-//                 code->characters[error_end_index] == '{' ||
-//                 code->characters[error_end_index] == '}' ||
-//                 code->characters[error_end_index] == '[' ||
-//                 code->characters[error_end_index] == ']' ||
-//                 code->characters[error_end_index] == '=' ||
-//                 code->characters[error_end_index] == '+' ||
-//                 code->characters[error_end_index] == '*' ||
-//                 code->characters[error_end_index] == '%' ||
-//                 code->characters[error_end_index] == '-' ||
-//                 code->characters[error_end_index] == '/' ||
-//                 code->characters[error_end_index] == '\n' ||
-//                 code->characters[error_end_index] == ' ' ||
-//                 code->characters[error_end_index] == '\r' ||
-//                 code->characters[error_end_index] == '\t' ||
-//                 code->characters[error_end_index] == '!'
+//                 code->data[error_end_index] == ';' ||
+//                 code->data[error_end_index] == ',' ||
+//                 code->data[error_end_index] == '.' ||
+//                 code->data[error_end_index] == '(' ||
+//                 code->data[error_end_index] == ')' ||
+//                 code->data[error_end_index] == '{' ||
+//                 code->data[error_end_index] == '}' ||
+//                 code->data[error_end_index] == '[' ||
+//                 code->data[error_end_index] == ']' ||
+//                 code->data[error_end_index] == '=' ||
+//                 code->data[error_end_index] == '+' ||
+//                 code->data[error_end_index] == '*' ||
+//                 code->data[error_end_index] == '%' ||
+//                 code->data[error_end_index] == '-' ||
+//                 code->data[error_end_index] == '/' ||
+//                 code->data[error_end_index] == '\n' ||
+//                 code->data[error_end_index] == ' ' ||
+//                 code->data[error_end_index] == '\r' ||
+//                 code->data[error_end_index] == '\t' ||
+//                 code->data[error_end_index] == '!'
 //                 )) {
 //                 error_end_index++;
 //             }
@@ -849,19 +849,19 @@
 //         {
 //             int identifier_end_index = index;
 //             while (identifier_end_index < code->size && (
-//                 character_is_letter(code->characters[identifier_end_index]) ||
-//                 character_is_digit(code->characters[identifier_end_index]) ||
-//                 code->characters[identifier_end_index] == '_'
+//                 character_is_letter(code->data[identifier_end_index]) ||
+//                 character_is_digit(code->data[identifier_end_index]) ||
+//                 code->data[identifier_end_index] == '_'
 //                 )) {
 //                 identifier_end_index++;
 //             }
 //             identifier_end_index--;
 // 
 //             int identifier_string_length = identifier_end_index - index + 1;
-//             dynstring_reserve(&identifier_string, identifier_string_length);
-//             memory_copy_no_overlap(identifier_string.characters, code->characters + index, identifier_string_length + 1);
+//             dynstring_reserve_capacity(&identifier_string, identifier_string_length);
+//             memory_copy_no_overlap(identifier_string.data, code->data + index, identifier_string_length + 1);
 //             identifier_string.size = identifier_string_length;
-//             identifier_string.characters[identifier_string.size] = 0;
+//             identifier_string.data[identifier_string.size] = 0;
 // 
 //             // Check if identifier is a keyword
 //             C_Token_Type* keyword_type = hashtable_find_element(&lexer->keywords, identifier_string);
@@ -922,12 +922,12 @@
 //             token_type_to_string(token.type), token.position.start.line_index, token.position.start.character,
 //             math_maximum(token.position.end.character - token.position.start.character, 0));
 //         if (token.type == C_Token_Type::IDENTIFIER_NAME) {
-//             dynstring_append_formated(&msg, " = %s", token.attribute.id->characters);
+//             dynstring_append_formated(&msg, " = %s", token.attribute.id->data);
 //         }
 //         else if (token.type == C_Token_Type::INTEGER_LITERAL) {
 //             dynstring_append_formated(&msg, " = %d", token.attribute.integer_value);
 //         }
 //         dynstring_append_formated(&msg, "\n");
 //     }
-//     logg("\n%s\n", msg.characters);
+//     logg("\n%s\n", msg.data);
 // }

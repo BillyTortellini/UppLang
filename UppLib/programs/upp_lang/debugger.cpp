@@ -1663,7 +1663,7 @@ namespace PE_Analysis
                         }
                         else {
                             symbol.name = optional_make_success(string_allocate_copy(tmp_string.to_string(), pe_info->arena->upcast()));
-                            // printf("    Found symbol: \"%s\"\n", symbol.name.value.characters);
+                            // printf("    Found symbol: \"%s\"\n", symbol.name.value.data);
                         }
                     }
                 }
@@ -2243,7 +2243,7 @@ void print_closest_symbol_name(Debugger* debugger, Closest_Symbol_Info symbol_in
     SCRATCH_ARENA_MAKE_SCOPED(nullptr);
     DynString tmp = dynstring_create(scratch_arena);
     closest_symbol_info_append_to_string(debugger, symbol_info, &tmp);
-    printf("%.*s\n", tmp.size, tmp.characters);
+    printf("%.*s\n", tmp.size, tmp.data);
 }
 
 u64 debugger_find_address_of_c_line_from_pdb_info(Debugger* debugger, int line_index)
@@ -2350,9 +2350,9 @@ void assembly_print(Disassembly_Info& disassembly, u64 start_address, int indent
         }
 
         // Print instruction
-        NdToText(&instr, start_address + byte_index, str.capacity - 1, str.characters);
-        str.size = (int)strlen(str.characters);
-        printf("%s\n", str.characters);
+        NdToText(&instr, start_address + byte_index, str.capacity - 1, str.data);
+        str.size = (int)strlen(str.data);
+        printf("%s\n", str.data);
         byte_index += instr.Length;
     }
 }
@@ -3081,7 +3081,7 @@ void debugger_handle_last_debug_event(Debugger* debugger)
             }
 
             exit_code_append_to_string(&tmp, exit_code);
-            printf("Debug Process exited with code: %.*s\n", tmp.size, tmp.characters);
+            printf("Debug Process exited with code: %.*s\n", tmp.size, tmp.data);
         }
 
 		// Note: ContinueDebugEvent closes the process handle and the thread handle received through the create_process_debug_event
@@ -3111,13 +3111,13 @@ void debugger_handle_last_debug_event(Debugger* debugger)
 			if (DEBUG_OUTPUT_ENABLED)
 			{
 				if (pe_info->name.size > 0) {
-					printf("\"%s\" ", pe_info->name.characters);
+					printf("\"%.*s\" ", pe_info->name.size, pe_info->name.data);
 				}
 				else {
 					printf("Analysis success, but name not retrievable ");
 				}
 				if (pe_info->pdb_name.size > 0) {
-					printf("pdb: \"%s\" ", pe_info->pdb_name.characters);
+					printf("pdb: \"%.*s\" ", pe_info->pdb_name.size, pe_info->pdb_name.data);
 				}
 				printf("\n");
 			}
@@ -3137,7 +3137,7 @@ void debugger_handle_last_debug_event(Debugger* debugger)
 			if (pe_info->base_address == dll_base && i != debugger->exe_pe_info_index) {
                 // Note: we currently don't free dlls when they get de-allocated
                 // which shouldn't happen regularly unless we are dealing with hot-reloading or something like that
-				printf("%.*s", pe_info->name.size, pe_info->name.characters);
+				printf("%.*s", pe_info->name.size, pe_info->name.data);
 				debugger->pe_infos.swap_remove(i);
 				break;
 			}
@@ -4319,8 +4319,8 @@ void debugger_wait_for_console_command(Debugger* debugger)
 				if (function != nullptr)
 				{
 					printf(
-						"Found function: %s, section: %d, offset: %lld\n",
-						function->name.characters, function->location.section_index, function->location.offset
+						"Found function: %.*s, section: %d, offset: %lld\n",
+						function->name.size, function->name.data, function->location.section_index, function->location.offset
 					);
 					u64 fn_address = static_location_to_virtual_address(debugger, function->location);
 					if (fn_address != 0) {
@@ -4431,8 +4431,8 @@ void debugger_wait_for_console_command(Debugger* debugger)
 				auto& src_info = debugger->pdb_info->source_infos[i];
 				auto& fn_info = debugger->pdb_info->functions[src_info.function_index];
 				printf(
-					"  %s, address: 0x%08llX, length: %lld\n",
-					fn_info.name.characters,
+					"  %.*s, address: 0x%08llX, length: %lld\n",
+					fn_info.name.size, fn_info.name.data,
 					static_location_to_virtual_address(debugger, fn_info.location),
 					fn_info.length
 				);
@@ -4459,18 +4459,18 @@ void debugger_wait_for_console_command(Debugger* debugger)
                     datatype_value_format_multi_line(8, 5), 0, Memory_Source(nullptr), debugger->memory_source, debugger->compilation_data->type_system
                 );
                 string_style_remove_codes(&str);
-				printf("Variable-value: \"%.*s\"\n", str.size, str.characters);
+				printf("Variable-value: \"%.*s\"\n", str.size, str.data);
 
 			}
 			else {
-				printf("%.*s\n", value_read.error_msg.size, value_read.error_msg.characters);
+				printf("%.*s\n", value_read.error_msg.size, value_read.error_msg.data);
 			}
 		}
 		else if (string_equals(command, string_make("k")) || string_equals(command, string_make("stack"))) {
 			debugger_print_stack_frames(debugger);
 		}
 		else {
-			printf("Invalid command: \"%s\"\nRetry: ", command.characters);
+			printf("Invalid command: \"%.*s\"\nRetry: ", command.size, command.data);
 		}
 	}
 }
@@ -4540,7 +4540,7 @@ Array<Stack_Frame> debugger_get_stack_frames(Debugger* debugger)
 
 void debugger_print_line_translation(Debugger* debugger, Compilation_Unit* compilation_unit, int line_index, Compilation_Data* compilation_data)
 {
-	printf("Mapping info for line #%d of %s\n", line_index, compilation_unit->filepath.characters);
+	printf("Mapping info for line #%d of %.*s\n", line_index, compilation_unit->filepath.size, compilation_unit->filepath.data);
 
     SCRATCH_ARENA_MAKE_SCOPED(&debugger->arena);
 
@@ -4566,7 +4566,7 @@ void debugger_print_line_translation(Debugger* debugger, Compilation_Unit* compi
 	{
 		auto stat_map = line_map.statements[i];
 		AST::base_append_to_string(upcast(stat_map->statement), &tmp);
-		printf("Statement #%d: %.*s\n", i, tmp.size, tmp.characters);
+		printf("Statement #%d: %.*s\n", i, tmp.size, tmp.data);
 		dynstring_reset(&tmp);
 
 		for (int j = 0; j < stat_map->ir_instructions.size; j++)
@@ -4574,7 +4574,7 @@ void debugger_print_line_translation(Debugger* debugger, Compilation_Unit* compi
 			auto ir_instr_map = stat_map->ir_instructions[j];
 			ir_instruction_append_to_string(
 				&ir_instr_map->code_block->instructions[ir_instr_map->instruction_index], &tmp, 0, ir_instr_map->code_block, compilation_data);
-			printf("  IR-Instr: #%d: %.*s\n", j, tmp.size, tmp.characters);
+			printf("  IR-Instr: #%d: %.*s\n", j, tmp.size, tmp.data);
 			dynstring_reset(&tmp);
 
 			for (int k = 0; k < ir_instr_map->c_lines.size; k++)
@@ -4586,7 +4586,7 @@ void debugger_print_line_translation(Debugger* debugger, Compilation_Unit* compi
 					continue;
 				}
 				tmp.append(c_line_array[c_index]);
-				printf("    C-Line: #%d: %.*s\n", c_index, tmp.size, tmp.characters);
+				printf("    C-Line: #%d: %.*s\n", c_index, tmp.size, tmp.data);
 				dynstring_reset(&tmp);
 
 				// Print disassembly

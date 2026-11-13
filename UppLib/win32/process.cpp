@@ -68,7 +68,7 @@ Process_Result process_start(String command, bool wait_for_exit, DynString* outp
 
     bool success = CreateProcessA(
         0,
-        null_terminated_command.characters,
+        null_terminated_command.data,
         NULL, // Security Stuff
         NULL, // Primary thread security stuff
         TRUE, // Inherit handles

@@ -15,7 +15,7 @@ struct Allocator_Base;
 // Strings are immutable views of strings, which may not be null-terminated
 struct String
 {
-    const char* characters;
+    const char* data;
     int size;
 
     const char& at(int index);
@@ -32,7 +32,7 @@ struct String_Split_Pair
 };
 
 String string_make(const char* c_string);
-String string_make(const char* characters, int size);
+String string_make(const char* data, int size);
 String string_make_substring(String other, int start, int end_exclusive);
 
 String string_allocate_copy(String other, Allocator_Base* allocator);
@@ -77,7 +77,7 @@ struct String_List_Node
     String_List_Node* next;
 };
 
-// A string list with <= SMALL_STRING_SIZE characters does not allocate any memowy
+// A string list with <= SMALL_STRING_SIZE data does not allocate any memowy
 struct String_List
 {
     Allocator_Base* allocator;
@@ -99,7 +99,7 @@ struct String_List
 
 
 
-// For unique identifier (See Identifier_Pool
+// For unique identifier (See Identifier_Pool)
 struct Identifier
 {
 	String* string;
@@ -115,7 +115,7 @@ struct Identifier
 // DynString
 struct DynString
 {
-    char* characters;
+    char* data;
     int size;
     int capacity;
     Arena* arena;
@@ -135,17 +135,19 @@ struct DynString
     DynString* append(Identifier identifier);
 
     DynString* reset();
-    void reserve_capacity(int new_capacity);
+    DynString* reserve_capacity(int new_capacity);
+    DynString* reserve_space(int required_space);
     String to_string();
     const char* to_cstring(); // Adds nullterminator if none available
     char& operator[](int index);
+    char& at(int index);
 };
 
 DynString dynstring_create(Arena* arena);
 DynString dynstring_create_copy(String string, Arena* arena);
 
 String dynstring_to_string(DynString string);
-void dynstring_reserve(DynString* string, int new_capacity);
+void dynstring_reserve_capacity(DynString* string, int new_capacity);
 void dynstring_reset(DynString* string);
 void dynstring_truncate(DynString* string, int size);
 void dynstring_set(DynString* string, String set_to);

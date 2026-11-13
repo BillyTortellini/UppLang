@@ -273,7 +273,7 @@ struct GRX_Core
 void grx_core_log(GRX_Core* core, String msg)
 {
     if (!core->logging_enabled) return;
-    printf("GRX_Core log: %.*s\n", msg.size, msg.characters);
+    printf("GRX_Core log: %.*s\n", msg.size, msg.data);
 }
 
 void grx_shader_compile(GRX_Shader* shader)
@@ -343,6 +343,7 @@ void grx_shader_compile(GRX_Shader* shader)
             bool is_part_start = false;
             Shader_Part_Type part_type;
             bool is_part_end = false;
+            bool skip_line = false;
             if (string_starts_with(line, string_make("//@VERTEX"))) {
                 is_part_start = true;
                 part_type = Shader_Part_Type::VERTEX;
@@ -354,9 +355,15 @@ void grx_shader_compile(GRX_Shader* shader)
             else if (string_starts_with(line, string_make("//@END"))) {
                 is_part_end = true;
             }
+            else if (string_starts_with(line, string_make("#version"))) { // We skip versions because we insert them automatically
+                skip_line = true;
+            }
 
             // Handle parsed info
-            if (is_part_start) 
+            if (skip_line) {
+
+            }
+            else if (is_part_start) 
             {
                 if (currently_inside_part) {
                     helper_log_error(string_make("Encountered part start, but we are aleady in a block"), line_index);
@@ -508,8 +515,8 @@ void grx_shader_compile(GRX_Shader* shader)
         shader->valid = false;
         logg(
             "Could not compile shader \"%.*s\", errors: \n%.*s\n\n",
-            filepath.size, filepath.characters,
-            compile_result.error_message.size, compile_result.error_message.characters
+            filepath.size, filepath.data,
+            compile_result.error_message.size, compile_result.error_message.data
         );
     }
 }

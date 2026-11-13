@@ -122,7 +122,7 @@ void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position,
 
     for (int i = 0; i < text.size; i++)
     {
-        char character = text.characters[i];
+        char character = text[i];
         Glyph_Information* glyph_info = &atlas->glyph_informations[atlas->character_to_glyph_map[character]];;
 
         box2 char_box;
@@ -149,7 +149,7 @@ void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position,
             if (char_box.min.y > clip.max.y || char_box.max.y < clip.min.y ||
                 char_box.min.x > clip.max.x || char_box.max.x < clip.min.x) {
                 /*
-                Even though we already trim as much as possible, some characters may still get completely clipped
+                Even though we already trim as much as possible, some data may still get completely clipped
                 because of how they are positioned on the screen (e.g. ascender/descender and general text positioning)
                 */
                 clipped_pos.min = vec2(-10.0f);
@@ -250,7 +250,7 @@ void text_renderer_add_text_int(Text_Renderer* renderer, String text, ivec2 top_
 
     for (int i = 0; i < text.size; i++)
     {
-        char character = text.characters[i];
+        char character = text[i];
         Glyph_Information* glyph_info = &atlas->glyph_informations[atlas->character_to_glyph_map[character]];;
 
         ibox2 char_box;
@@ -339,7 +339,7 @@ void text_renderer_draw(Text_Renderer* renderer, Render_Pass* render_pass)
 
     Character and mapping:
         Glyph       ... A image of a single character
-                        One character can have multiple glyphs (multiple styles, different faces) and multiple characters can share the same glyph
+                        One character can have multiple glyphs (multiple styles, different faces) and multiple data can share the same glyph
         Charmap     ... Convert character codes into glyph indices inside a font file
                         Depends on encoding, files may contain ASCII, Unicode or other encodings
 
@@ -365,7 +365,7 @@ void text_renderer_draw(Text_Renderer* renderer, Render_Pass* render_pass)
 
     Text positioning, and size metrics:
     Per Font Face information:
-        Baseline        ...     Horizontal or vertical line_index on which characters are placed
+        Baseline        ...     Horizontal or vertical line_index on which data are placed
         Pen/Origin      ...     Current position on the baseline (Is always on baseline)
         Ascent          ...     Per character information on height of the character from the baseline (Always positive)
         Descent         ...     Per character information on the lowest part from the baseline (Always negative)

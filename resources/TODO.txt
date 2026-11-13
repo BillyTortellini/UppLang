@@ -1,13 +1,56 @@
 
-String characters --> data (UTF8?)
-String size --> uint
-DynString same
-Also reserve_capacity and reserve_size
-maybe get_substring for both
+What is ASS about the old design:
+ - Better shaders, maybe with main calling it?
+ - Renderpasses are shitty to set up, order of execution is shitty
+ - Meshes and Vertex-Descriptors are huge ass
+    Solution: 
+        * Programmable Vertex Pulling, store meshes in SSBOs
+        * Dynamic data in one big ssbo and one big uniform buffer, with CPU-Mirror
+ - Texture Bindings are pretty shitty:
+    Solution: Bindless textures?
+ - Named/cached shaders 
+     --> I want to create objects without association with the rendering-core (Maybe)
+ - Frame index so things like 
+ - Buffer Bindings (Index-Buffers?)
+    --> Buffers should probably just use Direct State Access (DSA)
 
+Decision: I wanna write that shit again...
+
+
+Some more design questions:
+ - Drawcalls
+ - Drawcalls and framebuffers
+
+ grx_core_start_frame(float current_time, Camera_Data_3D* camera_data_3d = nullptr, Camera_Data_2D camera_2D = nullptr)
+ grx_core_execute_commands(DynArray<GRX_Command> commands, Framebuffer* target, Clear_Type clear_type)
+   --> This executes the commands in a default pipeline-state, unless some shaders have some overwrites
+
+Every shader has an Pipeline_State*
+
+
+Question: Do I want to rewrite my old stuff, or use the new stuff?
 
  - Draw-Calls/RenderCommands/RenderPasses?
 GRX_Command --> Draw-Call/Framebuffer switch?
+
+Soooo....
+
+Text_Render_Batch batch = text_renderer->create_batch();
+batch.add_text(position, string_make("Something"), whatever)
+text_renderer_draw_batch(Batch* batch, DynArray<Render_Command>& commands);
+framebuffer->execute_commands(commands.to_array());
+ui->add_custom_render_commands() --> Just puts commands into some ui-buffer, and the ui adds them at ui-call?
+  --> That just seems so reasonable, and easy...
+Render_Commands = SET_UNIFORM, DRAW_SOMETHING (Shader, Shader + mesh, whatever...)
+    Starts with default pipeline state, shaders set state to their given thing
+
+Textures can kinda stay the same 
+   --> I guess I may want multiple objects with Texture_2D and others
+Texture_2D::create_empty(size, size);
+
+TODO:
+ - Maybe checkout bindless textures?
+
 
 One step at a time:
  - Global uniform buffer with:
@@ -43,6 +86,7 @@ TODO:
  - DrawCall/CommandBuffer design
  - Uniforms
  - Shader Infos (Uniform locations, inputs?)
+   * Query after compile? I don't think thats too bad...
 
 DONE:
  * Shaders

@@ -50,7 +50,7 @@ void string_style_remove_codes(DynString* str)
             i += 1 + (style_code_has_color(code) ? 1 : 0); // - 1 because continue also increments i
             continue;
         }
-        str->characters[next] = c;
+        str->data[next] = c;
         next += 1;
     }
     str->size = next;

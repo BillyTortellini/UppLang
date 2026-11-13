@@ -2210,7 +2210,7 @@ void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* co
 				ARENA_MAKE_SCOPED_CHECKPOINT(scratch_arena);
 				DynString tmp = dynstring_create(scratch_arena);
 				analysis_workload_append_to_string(workload, &tmp);
-				logg("Executing workload: %s\n", tmp.characters);
+				logg("Executing workload: %.*s\n", tmp.size, tmp.data);
 			}
 
 			// TIMING

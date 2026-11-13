@@ -52,12 +52,12 @@ bool line_editor_feed_key_message(Line_Editor& editor, DynString* text, Key_Mess
         if (!forwards) {
             i = i - 1;
         }
-        char c = text->characters[i];
+        char c = text->at(i);
 
         // Goto next non-valid identifier
         while (i < text->size && i >= 0) 
         {
-            char ic = text->characters[i];
+            char ic = text->at(i);
             if (char_is_valid_identifier(c)) {
                 if (!char_is_valid_identifier(ic)) {
                     break;

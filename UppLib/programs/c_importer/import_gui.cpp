@@ -199,13 +199,13 @@
 //             importer.name_counter += 1;
 //         }
 //         else {
-//             string_append(&access_name, type->enumeration.id->characters);
+//             string_append(&access_name, type->enumeration.id->data);
 //         }
 // 
-//         dynstring_append_formated(&importer.struct_definitions, "%s :: enum\n", access_name.characters);
+//         dynstring_append_formated(&importer.struct_definitions, "%s :: enum\n", access_name.data);
 //         for (int i = 0; i < type->enumeration.members.size; i++) {
 //             auto& member = type->enumeration.members[i];
-//             dynstring_append_formated(&importer.struct_definitions, "    %s :: %d\n", member.id->characters, member.value);
+//             dynstring_append_formated(&importer.struct_definitions, "    %s :: %d\n", member.id->data, member.value);
 //         }
 //         string_append(&importer.struct_definitions, "\n");
 //         break;
@@ -224,7 +224,7 @@
 //             }
 // 
 //             if (param.has_name) {
-//                 string_append(&access_name, param.id->characters);
+//                 string_append(&access_name, param.id->data);
 //             }
 //             else {
 //                 dynstring_append_formated(&access_name, "param_%d", i);
@@ -255,7 +255,7 @@
 //             importer.name_counter += 1;
 //         }
 //         else {
-//             string_append(&access_name, structure.id->characters);
+//             string_append(&access_name, structure.id->data);
 //         }
 // 
 //         // Struct can contain pointers to themselves, so we need to store the access_name before generating members
@@ -264,7 +264,7 @@
 //         // Note: Since this function is called recursively, we cannot just append to struct_definitions here, but we have to write to intermediate string
 //         DynString definition = dynstring_create(8);
 //         SCOPE_EXIT(string_destroy(&definition));
-//         dynstring_append_formated(&definition, "%s :: %s\n", access_name.characters, structure.is_union ? "union" : "struct");
+//         dynstring_append_formated(&definition, "%s :: %s\n", access_name.data, structure.is_union ? "union" : "struct");
 // 
 //         // Note: From headers we sometimes only know the forward definition, but not the content, in this case the c-generator return 0/0 as size
 //         //      There is probably a better way to handle these cases
@@ -279,7 +279,7 @@
 //             {
 //                 auto& member = structure.members[i];
 //                 string_append(&definition, "\t");
-//                 string_append(&definition, member.id->characters);
+//                 string_append(&definition, member.id->data);
 //                 string_append(&definition, ": ");
 //                 importer.text = &definition;
 //                 output_c_import_type(member.type, false);
@@ -287,10 +287,10 @@
 //             }
 //             string_append(&definition, "\n");
 //         }
-//         dynstring_append_formated(&definition, "extern struct %s\n", access_name.characters);
+//         dynstring_append_formated(&definition, "extern struct %s\n", access_name.data);
 // 
-//         string_append(&importer.struct_definitions, definition.characters);
-//         string_append(backup, access_name.characters);
+//         string_append(&importer.struct_definitions, definition.data);
+//         string_append(backup, access_name.data);
 //         return;
 //     }
 //     default: panic("");
@@ -300,7 +300,7 @@
 //     hashtable_insert_element(&importer.type_translations, type, access_name);
 // 
 //     // Output access name
-//     string_append(backup, access_name.characters);
+//     string_append(backup, access_name.data);
 //     return;
 // }
 // 
@@ -318,20 +318,20 @@
 //     // Append sources
 //     {
 //         for (int i = 0; i < importer.libs->size; i++) {
-//             dynstring_append_formated(&result, "extern lib \"%s\"\n", importer.libs->data[i].characters);
+//             dynstring_append_formated(&result, "extern lib \"%s\"\n", importer.libs->data[i].data);
 //         }
 //         for (int i = 0; i < importer.lib_dirs->size; i++) {
-//             dynstring_append_formated(&result, "extern lib_dir \"%s\"\n", importer.lib_dirs->data[i].characters);
+//             dynstring_append_formated(&result, "extern lib_dir \"%s\"\n", importer.lib_dirs->data[i].data);
 //         }
 //         for (int i = 0; i < importer.sources->size; i++) {
-//             dynstring_append_formated(&result, "extern source \"%s\"\n", importer.sources->data[i].characters);
+//             dynstring_append_formated(&result, "extern source \"%s\"\n", importer.sources->data[i].data);
 //         }
 //         for (int i = 0; i < importer.include_dirs->size; i++) {
-//             dynstring_append_formated(&result, "extern header_dir \"%s\"\n", importer.include_dirs->data[i].characters);
+//             dynstring_append_formated(&result, "extern header_dir \"%s\"\n", importer.include_dirs->data[i].data);
 //         }
-//         dynstring_append_formated(&result, "extern header \"%s\"\n", importer.header_filepath.characters);
+//         dynstring_append_formated(&result, "extern header \"%s\"\n", importer.header_filepath.data);
 //         for (int i = 0; i < importer.defines->size; i++) {
-//             dynstring_append_formated(&result, "extern definition \"%s\"\n", importer.defines->data[i].characters);
+//             dynstring_append_formated(&result, "extern definition \"%s\"\n", importer.defines->data[i].data);
 //         }
 //         string_append(&result, "\n");
 //     }
@@ -347,14 +347,14 @@
 //         {
 //         case C_Import_Symbol_Type::FUNCTION: {
 //             importer.text = &result;
-//             dynstring_append_formated(importer.text, "extern function %s: ", symbol.name->characters);
+//             dynstring_append_formated(importer.text, "extern function %s: ", symbol.name->data);
 //             output_c_import_type(symbol.c_symbol->data_type, false);
 //             string_append(importer.text, "\n");
 //             break;
 //         }
 //         case C_Import_Symbol_Type::GLOBAL_VARIABLE: {
 //             importer.text = &result;
-//             dynstring_append_formated(importer.text, "extern global %s: ", symbol.name->characters);
+//             dynstring_append_formated(importer.text, "extern global %s: ", symbol.name->data);
 //             output_c_import_type(symbol.c_symbol->data_type, false);
 //             string_append(importer.text, "\n");
 //             break;
@@ -640,7 +640,7 @@
 //                     gui_push_toggle(symbol_area, &symbol.enabled);
 // 
 //                     dynstring_reset(&tmp);
-//                     string_append(&tmp, symbol.name->characters);
+//                     string_append(&tmp, symbol.name->data);
 //                     switch (symbol.c_symbol->type)
 //                     {
 //                     case C_Import_Symbol_Type::FUNCTION: string_append(&tmp, " fn: "); break;

@@ -753,7 +753,7 @@ namespace AST
 		SCRATCH_ARENA_MAKE_SCOPED(nullptr);
 		DynString text = dynstring_create(scratch_arena);
 		base_append_to_string_recursive(node, &text, 0);
-		logg("AST:\n------------------------\n%.%s\n", text.size, text.characters);
+		logg("AST:\n------------------------\n%.%s\n", text.size, text.data);
 	}
 
 	int binop_priority(Binop binop)

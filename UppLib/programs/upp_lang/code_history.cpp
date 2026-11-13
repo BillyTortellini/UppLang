@@ -269,7 +269,7 @@ void history_insert_text(Code_History* history, Text_Index index, String string)
         return;
     }
     else if (string.size == 1) {
-        history_insert_char(history, index, string.characters[0]);
+        history_insert_char(history, index, string.data[0]);
         return;
     }
 

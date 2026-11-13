@@ -137,8 +137,8 @@ void fuzzy_search_add_item(String item_name, int user_index)
             int missmatch_count = 0;
             while (start + length < option.size && typed_index + length < typed.size)
             {
-                auto char_o = option.characters[start + length];
-                auto char_t = typed.characters[typed_index + length];
+                auto char_o = option[start + length];
+                auto char_t = typed[typed_index + length];
                 bool used = used_chars[start + length];
                 if (used) {
                     break;
@@ -198,7 +198,7 @@ void fuzzy_search_add_item(String item_name, int user_index)
             continue;
         }
 
-        // Flag characters as already used
+        // Flag data as already used
         for (int i = 0; i < sub_length; i++) {
             used_chars[sub_start_index + i] = true;
         }

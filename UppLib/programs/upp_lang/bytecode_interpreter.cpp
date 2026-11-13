@@ -438,14 +438,14 @@ void bytecode_thread_print_state(Bytecode_Thread* interpreter)
     if (current_function_index == -1) panic("Should not happen!\n");
 
     logg("\n\n\n\n---------------------- CURRENT STATE ----------------------\n");
-    logg("Current Function: %s\n", identifier_pool_index_to_string(&thread->compiler->code_source, func->name_handle).characters);
+    logg("Current Function: %s\n", identifier_pool_index_to_string(&thread->compiler->code_source, func->name_handle).data);
     logg("Current Stack offset: %d\n", thread->stack.data - thread->stack_pointer);
     logg("Instruction Index: %d\n", current_instruction_index);
     {
         String tmp = string_create(64);
         SCOPE_EXIT(string_destroy(&tmp));
         bytecode_instruction_append_to_string(&tmp, thread->generator->instructions[current_instruction_index]);
-        logg("Instruction: %s\n", tmp.characters);
+        logg("Instruction: %s\n", tmp.data);
     }
     */
     /*
@@ -460,7 +460,7 @@ void bytecode_thread_print_state(Bytecode_Thread* interpreter)
         }
         else if (reg->type == Intermediate_Register_Type::VARIABLE) {
             logg("Variable %s (Offset %d): ",
-                identifier_pool_index_to_string(thread->generator->im_generator->analyser->parser->code_source, reg->id).characters,
+                identifier_pool_index_to_string(thread->generator->im_generator->analyser->parser->code_source, reg->id).data,
                 stack_offset
             );
         }

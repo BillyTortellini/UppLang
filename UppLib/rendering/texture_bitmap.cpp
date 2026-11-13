@@ -216,7 +216,7 @@ void distance_field_find_hull_parabolas(Array<float> row, Array<vec2>& hull_vert
     for (int i = 0; i <= last_vertex_index; i++) {
         string_append_formated(&message, "%2.2f/%2.2f ", hull_vertices[i].x, hull_vertices[i].y);
     }
-    //logg("%s\n", message.characters);
+    //logg("%s\n", message.data);
     */
 }
 
@@ -240,7 +240,7 @@ void distance_field_horizontal_pass(Array<float> row)
         row[i] = delta_x*delta_x + hull_vertices[current_vertex].y;
         //string_append_formated(&row_data, "%3.2f ", row[i]);
     }
-    //logg("%s\n", row_data.characters);
+    //logg("%s\n", row_data.data);
 }
 
 void float_array_transpose(Array<float> distances, int size)

@@ -22,7 +22,7 @@ bool clipboard_store_text(String string)
         return false;
     }
     data_ptr[string.size] = '\0';
-    memory_copy(data_ptr, (void*)string.characters, string.size);
+    memory_copy(data_ptr, (void*)string.data, string.size);
     GlobalUnlock(global_handle);
 
     SetClipboardData(CF_TEXT, global_handle);
